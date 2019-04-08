@@ -72,6 +72,8 @@ module Tunewich
 			@playerApplicationThreads = []
 			@forceStreaming = false
 			@commandHistory = []
+			@commandHistoryIndex = nil
+			@commandUserInput = nil
 			@streamingServerType = nil
 			@youtubeDLTrackTypes = ['youtube', 'soundcloud']
 			@isPlayerPlaying = false
@@ -3874,6 +3876,183 @@ module Tunewich
 			nil
 		end
 
+		def processCommandsWithInput commandLoopInput, commands, leftoverAction
+			while commandLoopInput && !commandLoopInput.empty? && commandLoopInput[0] == '/'
+				whisper("parsing commands, input: #{commandLoopInput}", 3)
+				commandParts = commandLoopInput.match(/^\/([^\s]*)\s*(.*)/)
+				if commandParts
+					commandName = commandParts[1]
+					commandInput = commandParts[2]
+
+					if !commands.has_key? commandName
+						possibleCommands = []
+						commands.each { |name, command|
+							if name.start_with? commandName
+								possibleCommands << name
+							end
+						}
+						if possibleCommands.length == 1
+							whisper("matched #{commandName} -> #{possibleCommands[0]}", 1)
+							commandName = possibleCommands[0]
+						else
+							commandName = ''
+							commandLoopInput = nil
+							putsRealtime "Did you mean #{possibleCommands.join ", or "}?" if possibleCommands.length > 1
+						end
+					end
+				else
+					commandName = ''
+				end
+
+				if commands.has_key? commandName
+					commandInfo = {
+						:name => commandName,
+						:commandLoopInput => commandInput,
+						:output => nil
+					}
+					begin
+						commandInfo[:output] = commands[commandName]['action'].call(commandInput)
+					rescue Exception => e
+						putsRealtime "There was a problem running '#{commandName}' with input '#{commandInput}'"
+						whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 3)
+					end
+					whisper("command info: #{commandInfo}", 3)
+					if commandInfo[:output] && commandInfo[:output][:action]
+						whisper("chained command calling action (#{commandInfo[:output][:action]})", 3)
+						leftoverAction.call commandInfo[:output][:action]
+					end
+					if commandInfo[:output] && commandInfo[:output][:chainedInput] && commandInfo[:output][:chainedInput].length > 0
+						whisper("chained commandLoopInput: #{commandInfo[:output][:chainedInput]}", 3)
+						if commandInfo[:output][:bindChainToEvent]
+							commandLoopInput = nil
+							whisper("binding deferred chained commands to event '#{commandInfo[:output][:bindChainToEvent]}'", 3)
+							bindOnce commandInfo[:output][:bindChainToEvent], Proc.new {
+								whisper("running deferred chained commands", 1)
+								whisper("deferred commands: #{commandInfo[:output][:chainedInput]}", 2)
+								commandLoopInput = processCommandsWithInput(commandInfo[:output][:chainedInput], commands, leftoverAction)
+							}, commandInfo[:output][:bindingGroupName]
+							break
+						else
+							commandLoopInput = commandInfo[:output][:chainedInput]
+						end
+					else
+						whisper("no chained commandLoopInput", 3)
+						commandLoopInput = nil
+						break
+					end
+				end
+				# break if shouldBreakCommandLoop # leftover from bad refactor
+			end
+
+			whisper("no more commands to execute (for now)", 3)
+
+			commandLoopInput
+		end
+
+		def handleInputLine inputLine, commands, leftoverAction
+			@commandHistory.unshift inputLine
+			@shouldShowPlaybackInfo = true
+
+			whisper("received input: #{inputLine}", 3)
+			if commands
+				inputLine = processCommandsWithInput(inputLine, commands, leftoverAction)
+			end
+
+			handledActionResponse = true
+			if leftoverAction && inputLine && inputLine.length > 0
+				whisper("input left over after commands: passing to action (#{inputLine})", 3)
+				handledActionResponse = leftoverAction.call inputLine
+			end
+
+			handledActionResponse
+		end
+
+		def handleInputCharacter inputCharacter, prompt, commands, leftoverAction
+			result = true
+
+			if inputCharacter == "" # control-c character
+				whisper("interrupt character, is that you?", 3)
+				@shouldShowPlaybackInfo = true
+				result = false
+			elsif inputCharacter == "" # backspace
+				if @commandUserInput
+					@commandUserInput = @commandUserInput[0,@commandUserInput.length - 1]
+					if @commandUserInput.length > 0
+						printRepeat @commandUserInput
+					else
+						@commandUserInput = nil
+						@shouldShowPlaybackInfo = true;
+					end
+				end
+			elsif inputCharacter == "" # stop job
+				Process.kill("STOP", Process.pid) # TODO: 1gG4ko
+			elsif inputCharacter == "" # clear line
+				if @commandUserInput
+					@commandInputTyped = nil
+					@commandUserInput = ''
+					printRepeat @commandUserInput
+				end
+				@commandInputTyped = nil
+			elsif /[\n\r]/.match inputCharacter
+				actionResponse = handleInputLine(@commandUserInput, commands, leftoverAction)
+
+				if actionResponse
+					prompt.call
+				else
+					result = false
+				end
+			else
+				if not @commandUserInput
+					@commandUserInput = ''
+					@shouldShowPlaybackInfo = false
+					if inputCharacter == '/'
+						@commandinputStartPlayerTime = @currentPlayerTime
+					end
+				end
+
+				if inputCharacter == "\e[A" # up arrow
+					if @commandInputTyped
+						matchingCommands = @commandHistory.select { |command|
+							command.start_with? @commandInputTyped
+						}
+						if matchingCommands && matchingCommands.length > 0
+							@commandUserInput = matchingCommands.last
+						end
+					else
+						@commandHistoryIndex = (@commandHistoryIndex ? @commandHistoryIndex + 1 : 0) % @commandHistory.length
+						@commandUserInput = @commandHistory[@commandHistoryIndex]
+					end
+
+					printRepeat @commandUserInput
+				elsif inputCharacter == "\e[B" # down arrow
+					if @commandInputTyped
+						matchingCommands = @commandHistory.select { |command|
+							command.start_with? @commandInputTyped
+						}
+						if matchingCommands && matchingCommands.length > 0
+							@commandUserInput = matchingCommands.first
+						end
+					else
+						@commandHistoryIndex = (@commandHistoryIndex ? @commandHistoryIndex - 1 : 0) % @commandHistory.length
+						@commandUserInput = @commandHistory[@commandHistoryIndex]
+					end
+
+					printRepeat @commandUserInput
+				elsif inputCharacter == "\e[C" # right arrow
+					whisper("TODO: move cursor right", 3)
+				elsif inputCharacter == "\e[D" # left arrow
+					whisper("TODO: move cursor left", 3)
+				else
+					@commandUserInput += inputCharacter
+					@commandInputTyped = @commandUserInput
+				end
+
+				printRepeat @commandUserInput
+			end
+
+			result
+		end
+
 		def commandPrompt message = nil, commands = nil, action = nil
 			shouldBreakCommandLoop = false
 			commandLoopExitBinding = bindOnce 'before_exit', Proc.new {
@@ -3888,213 +4067,31 @@ module Tunewich
 			}
 			prompt.call
 
-			response = {
-				:input => nil,
-				:commands => []
-			}
-
 			whisper("waiting for user input on STDIN", 3)
-			input = nil
-			commandHistoryIndex = nil
+			@commandHistoryIndex = nil
 
-			processCommandsWithInput = Proc.new { |commandLoopInput, leftoverAction|
-				while commandLoopInput && !commandLoopInput.empty? && commandLoopInput[0] == '/'
-					whisper("parsing commands, input: #{commandLoopInput}", 3)
-					commandParts = commandLoopInput.match(/^\/([^\s]*)\s*(.*)/)
-					if commandParts
-						commandName = commandParts[1]
-						commandInput = commandParts[2]
-
-						if !commands.has_key? commandName
-							possibleCommands = []
-							commands.each { |name, command|
-								if name.start_with? commandName
-									possibleCommands << name
-								end
-							}
-							if possibleCommands.length == 1
-								whisper("matched #{commandName} -> #{possibleCommands[0]}", 1)
-								commandName = possibleCommands[0]
-							else
-								commandName = ''
-								commandLoopInput = nil
-								putsRealtime "Did you mean #{possibleCommands.join ", or "}?" if possibleCommands.length > 1
-							end
-						end
-					else
-						commandName = ''
-					end
-
-					if commands.has_key? commandName
-						commandInfo = {
-							:name => commandName,
-							:commandLoopInput => commandInput,
-							:output => nil
-						}
-						begin
-							commandInfo[:output] = commands[commandName]['action'].call(commandInput)
-						rescue Exception => e
-							putsRealtime "There was a problem running '#{commandName}' with input '#{commandInput}'"
-							whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 3)
-						end
-						response[:commands] << commandInfo
-						whisper("command info: #{commandInfo}", 3)
-						if commandInfo[:output] && commandInfo[:output][:action]
-							whisper("chained command calling action (#{commandInfo[:output][:action]})", 3)
-							leftoverAction.call commandInfo[:output][:action]
-						end
-						if commandInfo[:output] && commandInfo[:output][:chainedInput] && commandInfo[:output][:chainedInput].length > 0
-							whisper("chained commandLoopInput: #{commandInfo[:output][:chainedInput]}", 3)
-							if commandInfo[:output][:bindChainToEvent]
-								commandLoopInput = nil
-								whisper("binding deferred chained commands to event '#{commandInfo[:output][:bindChainToEvent]}'", 3)
-								bindOnce commandInfo[:output][:bindChainToEvent], Proc.new {
-									whisper("running deferred chained commands", 1)
-									whisper("deferred commands: #{commandInfo[:output][:chainedInput]}", 2)
-									commandLoopInput = processCommandsWithInput.call(commandInfo[:output][:chainedInput], leftoverAction)
-								}, commandInfo[:output][:bindingGroupName]
-								break
-							else
-								commandLoopInput = commandInfo[:output][:chainedInput]
-							end
-						else
-							whisper("no chained commandLoopInput", 3)
-							commandLoopInput = nil
-							break
-						end
-					end
-
-					break if shouldBreakCommandLoop
-				end
-
-				whisper("no more commands to execute (for now)", 3)
-
-				commandLoopInput
-			}
-
-			handleInputLine = Proc.new { |inputLine, leftoverAction|
-				whisper("received input: #{inputLine}", 3)
-				if commands
-					inputLine = processCommandsWithInput.call(inputLine, leftoverAction)
-				end
-
-				handledActionResponse = true
-				if leftoverAction && inputLine && inputLine.length > 0
-					whisper("input left over after commands: passing to action (#{inputLine})", 3)
-					handledActionResponse = leftoverAction.call inputLine
-				end
-
-				handledActionResponse
-			}
-
-			handleInputCharacter = Proc.new { |inputCharacter, leftoverAction|
-				result = true
-
-				if inputCharacter == "" # control-c character
-					whisper("interrupt character, is that you?", 3)
-					@shouldShowPlaybackInfo = true
-					result = false
-				elsif inputCharacter == "" # backspace
-					if input
-						input = input[0,input.length - 1]
-						if input.length > 0
-							printRepeat input
-						else
-							input = nil
-							@shouldShowPlaybackInfo = true;
-						end
-					end
-				elsif inputCharacter == "" # stop job
-					Process.kill("STOP", Process.pid)
-					# TODO: 1gG4ko
-				elsif inputCharacter == "" # clear line
-					if input
-						@commandInputTyped = nil
-						input = ''
-						printRepeat input
-					end
-					@commandInputTyped = nil
-				elsif /[\n\r]/.match inputCharacter
-					@commandHistory.unshift input
-					@shouldShowPlaybackInfo = true
-					response[:input] = input
-
-					actionResponse = handleInputLine.call(input, leftoverAction)
-
-					input = nil
-
-					if actionResponse
-						prompt.call
-					else
-						result = false
-					end
-				else
-					if not input
-						input = ''
-						@shouldShowPlaybackInfo = false
-						if inputCharacter == '/'
-							@commandinputStartPlayerTime = @currentPlayerTime
-						end
-					end
-
-					if inputCharacter == "\e[A" # up arrow
-						if @commandInputTyped
-							matchingCommands = @commandHistory.select { |command|
-								command.start_with? @commandInputTyped
-							}
-							if matchingCommands && matchingCommands.length > 0
-								input = matchingCommands.last
-							end
-						else
-							commandHistoryIndex = (commandHistoryIndex ? commandHistoryIndex + 1 : 0) % @commandHistory.length
-							input = @commandHistory[commandHistoryIndex]
-						end
-
-						printRepeat input
-					elsif inputCharacter == "\e[B" # down arrow
-						if @commandInputTyped
-							matchingCommands = @commandHistory.select { |command|
-								command.start_with? @commandInputTyped
-							}
-							if matchingCommands && matchingCommands.length > 0
-								input = matchingCommands.first
-							end
-						else
-							commandHistoryIndex = (commandHistoryIndex ? commandHistoryIndex - 1 : 0) % @commandHistory.length
-							input = @commandHistory[commandHistoryIndex]
-						end
-
-						printRepeat input
-					elsif inputCharacter == "\e[C" # right arrow
-						whisper("TODO: move cursor right", 3)
-					elsif inputCharacter == "\e[D" # left arrow
-						whisper("TODO: move cursor left", 3)
-					else
-						input += inputCharacter
-						@commandInputTyped = input
-					end
-
-					printRepeat input
-				end
-
-				result
-			}
+			@commandUserInput = nil
 
 			externalInputHandlerId = bind('external_input', Proc.new { |extInputChar|
-				handleInputCharacter(extInputChar, action)
+				handleInputCharacter(extInputChar, prompt, commands, action)
 			});
 			externalCommandHandlerId = bind('external_command', Proc.new { |extInput|
-				handleInputLine(extInput, action)
+				handleInputLine(extInput, commands, action)
 			});
 
 			while directInputCharacter = readCharacter
-				inputResult = handleInputCharacter.call(directInputCharacter, action)
+				inputResult = handleInputCharacter(directInputCharacter, prompt, commands, action)
 				break if shouldBreakCommandLoop || !inputResult
 			end
 
 			unbind(commandLoopExitBinding)
 			unbind(externalCommandHandlerId)
 			unbind(externalInputHandlerId)
+
+
+			response = {
+				:input => @commandHistory[@commandHistory.length - 1] # FIXME: @hack
+			}
 
 			whisper("closing command \"#{message}\" prompt (response #{response})", 3)
 
