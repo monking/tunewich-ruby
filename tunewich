@@ -3772,14 +3772,19 @@ module Tunewich
       isAMatch
     end
 
-    def getDescendantTagNames ancestorTagName, depth = 0
-      whisper("getDescendantTagNames: depth #{depth}", 4)
+    def getDescendantTagNames ancestorTagName, chain = []
+      chain << ancestorTagName
       allDescendantTags = []
       @library['tags'].each { |tagName, tag|
         if tag.has_key?('parents') && tag['parents'].include?(ancestorTagName)
-          allDescendantTags << tagName
-          whisper("#{ancestorTagName} #{">" * (depth + 1)} #{tagName}", 4)
-          allDescendantTags += getDescendantTagNames tagName, (depth + 1)
+          chainIndex = chain.index(tagName)
+          if chainIndex
+            whisper("Skipping circular tag reference: #{chain[chainIndex, chain.length - chainIndex].join(" > ")} > #{tagName}", 2)
+          else
+            allDescendantTags << tagName
+            whisper("#{ancestorTagName} #{">" * (chain.length)} #{tagName}", 4)
+            allDescendantTags += getDescendantTagNames(tagName, chain[0, chain.length]) # pass chain array value
+          end
         end
       }
       allDescendantTags
@@ -3863,7 +3868,7 @@ module Tunewich
             end
           }
 
-          whisper("expanded filter tag list with descendants: #{selectedTags}", 4)
+          whisper("expanded filter tag list with descendants: #{selectedTags.map { |t| t[:name] }.join(", ")}", 4)
           if selectedTags.length > 0
             # TODO 1gG4jP: make a list of IDs and filter tracks against it once, rather than filtering separately for each tag @performance
             selectedTags.each { |tagInfo|
