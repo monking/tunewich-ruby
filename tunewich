@@ -1891,6 +1891,11 @@ module Tunewich
 				matchingTag['tracks'] ||= []
 				whisper("adding track to tag #{tagName}", 4)
 				matchingTag['tracks'] << track['id']
+
+				matchingTag['score'] ||= {}
+				matchingTag['score'][track['id']] ||= 0
+				matchingTag['score'][track['id']] = matchingTag['score'][track['id']] + 1
+
 				matchingTag['tracks'].uniq!
 			}
 		end
