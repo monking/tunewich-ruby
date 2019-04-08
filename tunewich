@@ -166,9 +166,10 @@ module Tunewich
 
 				# TODO: catch C-t, or something like it, to pass commands to the script during playback
 				#  -: rating down
-				#  +: rating up
+				#  =/+: rating up
 				#  1-5: explicit rating
 				#  t: prompt for tag
+				#  l: copy a link to share the source
 				#  x: remove from library
 				#  d: download
 				playerOutput = play track, chapterIndex
@@ -1013,10 +1014,15 @@ module Tunewich
 		# YouTube Methods
 		##
 
+		def looksLikeAYouTubeID? string
+      youtubeIdPattern = /^[A-Za-z0-9_-]+$/
+			!! string.match(youtubeIdPattern)
+		end
+
 		def getYoutubeIdFromUrl url
-      youtubeIdPattern = /^.*youtu(\.be\/|be\.com.*v=)([^&\/]+)/
-			matches = url.match(youtubeIdPattern)
-      matches ? matches[1] : false
+      youtubeIDInURLPattern = /^.*youtu(\.be\/|be\.com.*v=)([^&\/]+)/
+			matches = url.match(youtubeIDInURLPattern)
+      matches ? matches[2] : false
 		end
 
 		def searchYouTube query, offset = 0, count = 20
@@ -1029,6 +1035,7 @@ module Tunewich
 		end
 
 		def getYouTubeTracksFromPage url
+			url = "https://youtu.be/#{url}" if looksLikeAYouTubeID?(url)
 			queryResultIds = []
 			open(url) do |handle|
         html = []
