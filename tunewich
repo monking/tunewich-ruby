@@ -29,6 +29,7 @@ module Tunewich
 		CHAPTER_SELECT_TIMEOUT = 15
 		FILTER_HELP_1 = "Filter tracks by rules, in the format 'key=value,key=value 2,key'."
 		FILTER_HELP_2 = "Available rules are: [min-,max-]rating=<#0-5>,title=<query>,tag=<tag>,chapters,last=<[[[DD:]HH:]MM:]SS>."
+		FILTER_HELP_3 = "Prepend an 'x-' to your rule to add it to the exclusion filters."
 		TAG_INPUT_SPLIT = /[,\s]+/
 
 		def initialize
@@ -116,7 +117,8 @@ module Tunewich
 					'action' => Proc.new { |query|
 						filtersList = @trackFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackFilters
 						filtersList ||= []
-						@trackFilters = parseOptionParameters editListInVim(filtersList).join ','
+						instructions = "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}"
+						@trackFilters = parseOptionParameters editListInVim(filtersList, instructions).join ','
 						useTracks @tracks, false
 					}
 				},
@@ -835,7 +837,7 @@ module Tunewich
 					}
 				},
 				'keep' => {
-					'info' => "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}",
+					'info' => "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}",
 					'action' => Proc.new { |filterString|
 						cleanupSelection = cloneLibrary @library['library'] if cleanupSelection.length == 0
 						# FIXME: lots of back and forth from arrays to hashes here. Want to pick one?
@@ -1213,7 +1215,7 @@ module Tunewich
 				@keepUnattachedDownload = keep
 			end
 
-			parser.on("-f", "--filter RULES", Player::FILTER_HELP_1, Player::FILTER_HELP_2, " ") do |rules|
+			parser.on("-f", "--filter RULES", Player::FILTER_HELP_1, Player::FILTER_HELP_2, Player::FILTER_HELP_3, " ") do |rules|
 				@trackFilters = parseOptionParameters rules
 			end
 
@@ -1340,6 +1342,11 @@ module Tunewich
 
 		def parseOptionParameters serialized
 			hash = {}
+			# TODO: parse normal & negated options from one list
+			# hash = {
+			# 	:normal => [],
+			# 	:negate => []
+			# }
 
 			serialized.split(',').each { |clump|
 				pair = clump.split '='
