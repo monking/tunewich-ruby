@@ -1279,6 +1279,12 @@ module Tunewich
 				tracks.send(action) { |track| !track['rating'] || track['rating'] <= filters['max-rating'].to_i }
 			end
 
+			if filters.has_key? 'no-rating'
+				tracks.send(action) { |track|
+					!track.has_key? 'rating'
+				}
+			end
+
 			if filters['tag']
 				# TODO: add a tag fuzzy factor: include tags of tracks that have the current tag (only 1 degree separation to start)
 				selectedTags = []
@@ -1299,6 +1305,7 @@ module Tunewich
 				}
 
 				if selectedTags.length > 0
+					# TODO: make a list of IDs and filter tracks against it once, rather than filtering separately for each tag
 					selectedTags.each { |tagInfo|
 						foundTagName = "\"#{tagInfo[:name]}\""
 						if tagInfo[:tag]['aliases'] && tagInfo[:tag]['aliases'].length > 0
@@ -1309,6 +1316,14 @@ module Tunewich
 				else
 					puts "No matches for \"#{filters['tag']}\". Available tags are: #{listAllTagsWithAliases.join ", "}"
 				end
+			end
+
+			if filters.has_key? 'no-tag'
+				@library['tags'].each { |name, libraryTag|
+					tracks.send(action) { |t|
+						!libraryTag['tracks'].index(t['id'])
+					}
+				}
 			end
 
 			if filters['title']
