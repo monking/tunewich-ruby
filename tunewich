@@ -21,6 +21,12 @@ module Tunewich
 			@enableDownload = false
 			@keepUnattachedDownload = false
 
+			if ENV.key? 'TUNEWICH_MPLAYER_OPTS'
+				@mplayerDefaultOptions = ENV['TUNEWICH_MPLAYER_OPTS']
+			else
+				puts "You can add `export TUNEWICH_MPLAYER_OPTS=\"<mplayer options>\"` to your ~/.profile or similar file."
+			end
+
 			if ENV.key? 'TUNEWICH_DIR'
 				setLibraryPath ENV['TUNEWICH_DIR']
 			else
@@ -472,7 +478,7 @@ module Tunewich
 				mplayerCommands << "-loop 0" if track['loop'] or @loop
 			end
 
-			mplayerCommands += ["-novideo", "-af scaletempo"]
+			mplayerCommands += [@mplayerDefaultOptions] if @mplayerDefaultOptions
 			mplayerCommands += @mplayerOverrideCommands
 
 			mplayerStartTime = Time.now.to_f
