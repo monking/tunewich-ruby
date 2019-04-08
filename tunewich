@@ -183,7 +183,6 @@ module Tunewich
 				end
 
 				if !track['unattached'] && @ratingsPromptDuration
-
 					new_rating = timedTextPrompt @ratingsPromptDuration, "rating (#{track['rating']}): "
 
 					if new_rating && new_rating.length > 0
@@ -195,7 +194,6 @@ module Tunewich
 				writeLibraryToFile if changesToWrite
 
 				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
-
 			end
 		end
 
@@ -311,7 +309,7 @@ module Tunewich
 
 					if @youtubeSearchPage && !@noNetwork
 						@youtubeSearchPage += 1
-						addTracks searchYouTube(@youtubeSearchQuery, (@youtubeSearchPage - 1) * 20)
+						addTracks searchYouTube(@youtubeSearch, (@youtubeSearchPage - 1) * 20)
 					else
 						@trackIndex %= @tracks.length
 					end
@@ -562,9 +560,9 @@ module Tunewich
 		# Library Methods
 		##
 
-		def usePlaylist(name)
+		def usePlaylist(name, append = false)
 			@playlistName = name
-			clearTracks
+			clearTracks if not append
 			tracks = []
 
 			@library['playlists'][@playlistName]['tracks'].each do |trackReference|
@@ -1053,7 +1051,7 @@ module Tunewich
 			end
 
 			if @youtubeSearch && !@noNetwork
-				@youtubeSearchPage = 0
+				@youtubeSearchPage = 1
 				addTracks searchYouTube @youtubeSearch
 			end
 
@@ -1082,7 +1080,7 @@ module Tunewich
 						writeLibraryToFile
 					end
 
-					usePlaylist playlistName
+					usePlaylist playlistName, true
 				end
 			end
 
