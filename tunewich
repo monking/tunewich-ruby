@@ -1,9 +1,12 @@
 #!/usr/bin/env ruby
 
+require "io/console"
 require "open-uri"
 require "optparse"
 require "json"
 require "digest"
+
+$clearLineCharacter = "\033[0K"
 
 module Tunewich
 
@@ -48,6 +51,7 @@ module Tunewich
 			@noNetwork = false
 			@playlistName = nil
 			@volume = 25
+			@currentVolume = 25
 			@enableDownload = false
 			@preferredFileFormat = 'bestaudio'
 			@keepUnattachedDownload = false
@@ -72,7 +76,9 @@ module Tunewich
 			end
 
 			@volume = getMplayerConfigNumericProperty('volume')
+			@currentVolume = @volume
 			@speed = getMplayerConfigNumericProperty('speed', 1.0)
+			@currentSpeed = @speed
 
 			interactivePlayback
 
@@ -412,7 +418,7 @@ module Tunewich
 							tracks.shift # remove the first track, which will be the main video on the page
 							@trackIndex = @tracks.length
 							@trackFilters = nil
-							useTracks tracks, true # and set track index to the first 
+							useTracks tracks, true # and set track index to the first
 							commandRequiresNext = true
 						end
 						{:chainedInput => input}
@@ -775,16 +781,13 @@ module Tunewich
 					}
 				},
 				'verbose' => {
-					'description' => 'Toggle Verbose mode.',
+					'description' => 'Set level of verbosity: -1 (silent) to 5 (extra debugging).',
 					'action' => Proc.new { |input|
 						inputParts = input.match(/^([^\/]*)(.*)$/)
 						if inputParts[1] && inputParts[1].length > 0
-							verbosity = inputParts[1].to_i
+							@allowedVerbosity = inputParts[1].to_i
 							input = inputParts[2]
-						else
-							verbosity = @allowedVerbosity > 0 ? 0 : 1
 						end
-						@allowedVerbosity = verbosity
 						whisper "verbosity set to #{@allowedVerbosity}", 1
 						{:chainedInput => input}
 					}
@@ -935,6 +938,7 @@ module Tunewich
 		def fadeVolume targetFadeVolume, duration, playerIndex
 			whisper "fadeVolume(targetFadeVolume:#{targetFadeVolume}, duration:#{duration}, playerIndex:#{playerIndex})", 4
 			volume = getCurrentMplayerVolume
+			@currentVolume = volume
 			whisper "got volume: #{volume}", 4
 			if targetFadeVolume == 'out'
 				whisper "fading out volume", 2
@@ -971,7 +975,8 @@ module Tunewich
 				end
 				stepFade = Proc.new { |stepIndex|
 					volumeStepStrategy.call(stepIndex)
-					printRepeat "fading: #{volume.round()} [#{stepIndex}]"
+					@currentVolume = volume
+					showPlaybackInfo true
 					putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "volume #{volume} 1\n"
 					sleep volumeFadeInterval
 				}
@@ -980,6 +985,7 @@ module Tunewich
 				else
 					(volumeFadeStepCount - 1).downto(1) { |stepIndex| stepFade.call stepIndex }
 				end
+				@currentVolume = targetFadeVolume
 				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "volume #{targetFadeVolume} 1\n"
 			else
 				whisper "fading to the same volume: doing nothing", 4
@@ -989,6 +995,7 @@ module Tunewich
 		def rampSpeed targetRampSpeed, duration, playerIndex
 			if targetRampSpeed
 				speed = getCurrentMplayerSpeed
+				@currentSpeed = speed
 				if targetRampSpeed == 'out'
 					targetRampSpeed = 0
 					@speedBeforeRampingOut = speed
@@ -1005,10 +1012,12 @@ module Tunewich
 				whisper "about to ramp speed by #{speedStep} every #{speedRampInterval} seconds", 4
 				for stepIndex in 1..speedRampStepCount
 					speed += speedStep
-					printRepeat "ramping: #{(speed * 10.0).round.to_f / 10.0}"
+					@currentSpeed = speed
+					showPlaybackInfo true
 					putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "speed_set #{speed}\n"
 					sleep speedRampInterval
 				end
+				@currentSpeed = targetRampSpeed
 				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "speed_set #{targetRampSpeed}\n"
 				return true
 			else
@@ -1029,7 +1038,7 @@ module Tunewich
 				@library['tags'].each { |name, t|
 					if t['aliases'] && t['aliases'].include?(query)
 						whisper "found tag '#{name}' by alias '#{query}'", 1
-						tag = t 
+						tag = t
 					end
 				}
 			end
@@ -1109,7 +1118,8 @@ module Tunewich
 				putInTempFile playerInputStreamName, "#{command}\n"
 				if /^vol/.match command
 					whisper "playerAction: found a volume command", 4
-					@volume = getCurrentMplayerVolume
+					@currentVolume = getCurrentMplayerVolume
+					@volume = @currentVolume
 					puts "volume: #{@volume}"
 				end
 				whisper "playerAction: done", 4
@@ -1233,16 +1243,17 @@ module Tunewich
 			@playerApplicationThreads[@currentPlayerIndex] = Thread.new {
 				playerCommand = "#{Player::PLAYER_APPLICATION} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '} > #{playerStdoutFile}"
 				whisper playerCommand, 4
-				playerStatus = `#{playerCommand}`
+				playerStatus = `#{playerCommand} 2> /dev/null`
 				whisper "#{Player::PLAYER_APPLICATION} is finished. killing user input thread", 4
 				@inputThread.kill if @inputThread
 			}
-			# # TODO: show chapters changing
-			# while @playerApplicationThreads[@currentPlayerIndex].alive?
-			# 	sleep 0.1
-			# 	if track['chapers']
-			# end
-			@playerApplicationThreads[@currentPlayerIndex].join
+
+			# TODO: show chapters changing
+			while @playerApplicationThreads[@currentPlayerIndex].alive?
+				sleep 0.1
+				showPlaybackInfo
+			end
+			# @playerApplicationThreads[@currentPlayerIndex].join
 			whisper "killing user input thread (again)", 4
 			@inputThread.kill if @inputThread # FIXME: overkill?
 
@@ -1264,6 +1275,29 @@ module Tunewich
 			response
 		end
 
+		def showPlaybackInfo force = false
+			if force || @allowedVerbosity > -1
+				playbackInfo = []
+				playbackInfo << "🔈 #{(@currentVolume * 10).round / 10.0}/100" # unicode "speaker" character
+
+				currentPlayerTimePosition = getCurrentMplayerTimePosition
+				timeMessage = "⏲  #{getDurationStringFromSeconds currentPlayerTimePosition}" # unicode "timer" character
+				timeMessage += "/#{@currentTrack['duration']}" if @currentTrack.has_key?('duration')
+				timeMessage += "(#{(@currentSpeed * 10).round / 10.0}x)" if @currentSpeed != 1
+				playbackInfo << timeMessage
+
+				if @currentTrack.has_key?('chapters')
+					chapterIndex = getChapterIndexAtTime @currentTrack, currentPlayerTimePosition
+					if chapterIndex
+						playbackInfo << "📖  #{@currentTrack['chapters'][chapterIndex]['name']}" # unicode "open book" character
+					end
+				end
+				if force || @allowedVerbosity > -1 # could it be set by another thread in the interval since the last check?
+					printRepeat playbackInfo.join(' ')
+				end
+			end
+		end
+
 		def getMplayerProperty property, pattern = nil
 			pattern ||= /^()(.*)$/
 			command = "#{property}\n"
@@ -1281,7 +1315,12 @@ module Tunewich
 		end
 
 		def getCurrentMplayerTimePosition
-			getMplayerProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(.*?)(\?)?$/).to_f
+			now = Time.now.to_f
+			if !@lastPlayerTimeGetTime || now - @lastPlayerTimeGetTime > 0.5
+				@playerCurrentTime = getMplayerProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(.*?)(\?)?$/).to_f
+				@lastPlayerTimeGetTime = Time.now.to_f # set current time after get, since it takes a significant fraction of a second
+			end
+			@playerCurrentTime
 		end
 
 		def getCurrentMplayerVolume
@@ -2409,7 +2448,8 @@ module Tunewich
 				if trackQuery.to_i != 0
 					@trackIndex = trackQuery.to_i - 1
 				else
-					@trackIndex = trackQuery
+					@trackIndex = findTrackIndex(trackQuery) || nil
+					puts "@trackIndex: #{@trackIndex}" # XXX
 				end
 			end
 
@@ -2447,7 +2487,16 @@ module Tunewich
 			end
 
 			parser.on("--player-opts OPTIONS", "Set player options. Set interactively with the /player command.", " ") do |options|
-				@playerOverrideCommands << options
+				# TODO: ruby probably has an easier way of getting an element index in an Array#map block
+				isFirstElement = true
+				@playerOverrideCommands += options.split(' -').map { |option|
+					if isFirstElement
+						isFirstElement = false
+					else
+						option = "-#{option}"
+					end
+					option
+				}
 			end
 
 			parser.on("--radio", "TODO: stream to a network radio service", " ") do
@@ -2597,9 +2646,13 @@ module Tunewich
 		end
 
 		def printRepeat message
-			print "  #{" " * @printRepeatMessage.length}\r" if @printRepeatMessage
 			message = message.to_s if message.respond_to? 'to_s'
-			print "  #{message}\r"
+      outputMessage = "  #{message}"
+      shellColumnWidth = (`tput cols` || 80).to_i
+      if outputMessage.length > shellColumnWidth
+        outputMessage = "#{outputMessage[0,shellColumnWidth - 3]}..."
+      end
+			print "#{outputMessage}#{$clearLineCharacter}\r"
 			@printRepeatMessage = message.match(/\n/) ? nil : message
 		end
 
@@ -2676,67 +2729,105 @@ module Tunewich
 			}
 
 			whisper "waiting for user input on STDIN", 4
-			while input = STDIN.gets.chomp
-				whisper "received STDIN: #{input}", 4
-				while commands && !input.empty? && input[0] == '/'
-					whisper "inside command while loop", 4
-					commandParts = input.match(/^\/([^\s]+)\s*(.*)/)
-					if commandParts
-						commandName = commandParts[1]
-						commandArgs = commandParts[2]
-						whisper "commandParts: #{commandParts}", 4
+			input = nil
+			previouslyAllowedVerbosity = @allowedVerbosity if !previouslyAllowedVerbosity # might have been interrupted earlier
+			while inputCharacter = STDIN.getch
+				# TODO: refactor toggling `@allowedVerbosity = -1` (i.e. silencing realtime output while typing)
+				if inputCharacter == "" # control-c character
+					@allowedVerbosity = previouslyAllowedVerbosity if previouslyAllowedVerbosity
+					previouslyAllowedVerbosity = nil
+					whisper "interrupt character, is that you?", 4
+					break
+				elsif inputCharacter == "" # backspace
+					if input
+						input = input[0,input.length - 1]
+						printRepeat input
+					end
+				elsif inputCharacter == "" # clear line
+					if input
+						input = ''
+						printRepeat input
+					end
+				elsif /[\n\r]/.match inputCharacter
+					whisper "received STDIN: #{input}", 4
+					while commands && input && !input.empty? && input[0] == '/'
+						whisper "inside command while loop", 4
+						commandParts = input.match(/^\/([^\s]+)\s*(.*)/)
+						if commandParts
+							commandName = commandParts[1]
+							commandArgs = commandParts[2]
+							whisper "commandParts: #{commandParts}", 4
 
-						if not commands[commandName]
-							possibleCommands = []
-							commands.each { |name, command|
-								if name.start_with? commandName
-									possibleCommands << name
+							if not commands[commandName]
+								possibleCommands = []
+								commands.each { |name, command|
+									if name.start_with? commandName
+										possibleCommands << name
+									end
+								}
+								if possibleCommands.length == 1
+									commandName = possibleCommands[0]
+								elsif possibleCommands.length > 1
+									puts "Did you mean #{possibleCommands.join ", or "}?"
 								end
+							end
+						else
+							commandName = ''
+						end
+
+						if commands[commandName]
+							commandInfo = {
+								:name => commandName,
+								:args => commandArgs,
+								:output => commands[commandName]['action'].call(commandArgs)
 							}
-							if possibleCommands.length == 1
-								commandName = possibleCommands[0]
-							elsif possibleCommands.length > 1
-								puts "Did you mean #{possibleCommands.join ", or "}?"
+							response[:commands] << commandInfo
+							whisper "command info: #{commandInfo}", 4
+							if commandInfo[:output] && commandInfo[:output][:chainedInput] && commandInfo[:output][:chainedInput].length > 0
+								whisper "chained input: #{commandInfo[:output][:chainedInput]}", 4
+								input = commandInfo[:output][:chainedInput]
+							else
+								whisper "no chained input", 4
+								break
+							end
+						end
+					end
+					input = nil
+					@allowedVerbosity = previouslyAllowedVerbosity if previouslyAllowedVerbosity
+					previouslyAllowedVerbosity = nil
+					whisper "end command while loop", 4
+
+					if action
+						if input && input.length > 0
+							actionResult = action.call input
+							if not actionResult
+								whisper "command returned false; interrupting input loop", 4
+								@allowedVerbosity = previouslyAllowedVerbosity if previouslyAllowedVerbosity
+								previouslyAllowedVerbosity = nil
+								break
 							end
 						end
 					else
-						commandName = ''
+						whisper "command done, no action to take, breaking command loop", 4
+						@allowedVerbosity = previouslyAllowedVerbosity if previouslyAllowedVerbosity
+						previouslyAllowedVerbosity = nil
+						break
 					end
 
-					if commands[commandName]
-						commandInfo = {
-							:name => commandName,
-							:args => commandArgs,
-							:output => commands[commandName]['action'].call(commandArgs)
-						}
-						response[:commands] << commandInfo
-						whisper "command info: #{commandInfo}", 4
-						if commandInfo[:output] && commandInfo[:output][:chainedInput] && commandInfo[:output][:chainedInput].length > 0
-							whisper "chained input: #{commandInfo[:output][:chainedInput]}", 4
-							input = commandInfo[:output][:chainedInput]
-						else
-							whisper "no chained input", 4
-							input = nil
-							break
-						end
-					end
-				end
-				whisper "end command while loop", 4
-
-				if action
-					if input && input.length > 0
-						actionResult = action.call input
-						if not actionResult
-							whisper "command returned false; interrupting input loop", 4
-							break
-						end
-					end
+					# done executing commands after input was entered: resume realtime output at configured verbosity
+					@allowedVerbosity = previouslyAllowedVerbosity if previouslyAllowedVerbosity
+					previouslyAllowedVerbosity = nil
+					prompt.call
 				else
-					whisper "command done, no action to take, breaking command loop", 4
-					break
+					if not input
+						# first character being typed: silence realtime output
+						input = ''
+						previouslyAllowedVerbosity = @allowedVerbosity if !previouslyAllowedVerbosity # might have been interrupted earlier
+						@allowedVerbosity = -1
+					end
+					input += inputCharacter
+					printRepeat input
 				end
-
-				prompt.call
 			end
 
 			response[:input] = input
