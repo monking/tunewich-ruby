@@ -456,7 +456,7 @@ module Tunewich
 					# 		end
 					# 	end
 					# end
-					break if output.match(/#{track['src']}|100\.0%/)
+					break if output.match(/#{track['src']}|100(\.0)?%/)
 					printRepeat "(#{cliRotate}) #{output}"
 					sleep 0.1
 				end
@@ -728,16 +728,16 @@ module Tunewich
 		end
 
 		def printRepeat message
-			print " " * @printRepeatMessage.length + "\r" if @printRepeatMessage
+			print " #{" " * @printRepeatMessage.length}\r" if @printRepeatMessage
 			message = message.to_s if message.respond_to? 'to_s'
-			print message + "\r"
+			print " #{message}\r"
 			@printRepeatMessage = message.match(/\n/) ? nil : message
 		end
 
 		def cliRotate
 			if not @cliRotateIndex
 				@cliRotateIndex = 0
-				@cliRotateCharacters = '-\|/'
+				@cliRotateCharacters = ['==', '\\\\', '||', '//']
 			else
 				@cliRotateIndex = (@cliRotateIndex + 1) % @cliRotateCharacters.length
 			end
