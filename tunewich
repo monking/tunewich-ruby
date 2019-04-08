@@ -2870,7 +2870,7 @@ module Tunewich
 
 			if filters.has_key? 'rating'
 				if filters['rating'] && filters['rating'].length > 0
-					whisper("filtering tracks with rating in range #{filtlers['rating']}", 3)
+					whisper("filtering tracks with rating in range #{filters['rating']}", 3)
 					tracks.send(action) { |t|
 						matchPropertyWithRangeString filters['rating'], t, 'rating'
 					}
