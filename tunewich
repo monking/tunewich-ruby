@@ -113,6 +113,13 @@ module Tunewich
 			parser.on("-q", "--query QUERY", "Search YouTube for a video.") do |query|
 				@tracks = searchYouTube query
 			end
+			parser.on("-Q", "--save-query QUERY", "Same as -q, but also create a playlist taking the query as a name. Use with -w to save to this playlist.") do |query|
+				createPlaylist query
+				usePlaylist query
+				@youtubeSearchPage = 1
+				@youtubeSearchQuery = query
+				@tracks = searchYouTube @youtubeSearchQuery
+			end
 			parser.on("-w", "--write-after TIME", "Save tracks to the playlist (from -p or -P) when played for the given number of seconds. Use with -q.") do |time|
 				@playthroughThreshold = time.to_f
 			end
@@ -220,7 +227,14 @@ module Tunewich
 				shuffleIndex()
 			else
 				@trackIndex += 1
-				@trackIndex %= @tracks.length
+				if @trackIndex > @tracks.length - 1
+					if @youtubeSearchPage
+						@youtubeSearchPage += 1
+						@tracks += searchYouTube(@youtubeSearchQuery, (@youtubeSearchPage - 1) * 20)
+					else
+						@trackIndex %= @tracks.length
+					end
+				end
 			end
 		end
 
