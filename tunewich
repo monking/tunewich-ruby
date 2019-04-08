@@ -267,11 +267,12 @@ module Tunewich
 							elsif targetFadeVolume.match /x$/
 								multiplier = targetFadeVolume.to_f
 								targetFadeVolume = volume * multiplier
+								@volume = targetFadeVolume
 								whisper "fading volume #{multiplier}x (to #{targetFadeVolume})"
 							else
+								targetFadeVolume = targetFadeVolume.to_f
 								@volume = targetFadeVolume
 								whisper "fading to volume #{targetFadeVolume}"
-								targetFadeVolume = targetFadeVolume.to_f
 							end
 							volumeFadeInterval = 0.02
 							volumeFadeStepCount = (duration / volumeFadeInterval).to_i
