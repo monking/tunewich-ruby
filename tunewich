@@ -65,6 +65,8 @@ module Tunewich
 			@playlistName = nil
 			@volume = 25
 			@currentVolume = 25
+			@bpmGlideDuration = 0
+			@bpmGlideDelay = 0
 			@enableDownload = false
 			@preferredFileFormat = 'bestaudio'
 			@playerTemporaryInteractiveCommands = []
@@ -175,7 +177,10 @@ module Tunewich
 
 			while not playerOutput or playerOutput[:exit] do
 				if @trackIndex && @tracks[@trackIndex]
+					previousTrack = @currentTrack
 					@currentTrack = matchExistingLibraryTrack @tracks[@trackIndex]
+
+					handleTrackChangeDuringPlayback previousTrack, @currentTrack if previousTrack
 
 					titleBlock "[#{@trackIndex + 1}] - #{@currentTrack['title']}"
 
@@ -227,6 +232,20 @@ module Tunewich
 			end
 
 			unbindGroup bindingGroupName
+		end
+
+		def handleTrackChangeDuringPlayback trackA, trackB
+			if (@bpmGlideDelay > 0 || @bpmGlideDuration > 0) && trackA.has_key?('bpm') && trackB.has_key?('bpm')
+				whisper("gliding bpm for #{@bpmGlideDuration} seconds (after #{@bpmGlideDelay} seconds) seconds between #{trackA['bpm']} and #{trackB['bpm']} (adjust for current speed #{@speed}).", 2)
+				initialSpeed = @speed
+				@speed = @speed * trackA['bpm'] / trackB['bpm']
+				bindOnce 'time_update', Proc.new {
+					Thread.new {
+						sleep @bpmGlideDelay if @bpmGlideDelay > 0
+						rampSpeed initialSpeed, @bpmGlideDuration, @currentPlayerIndex
+					}
+				}
+			end
 		end
 
 		def	interactiveEdit
@@ -359,7 +378,7 @@ module Tunewich
 			end
 			if $logFilePath && (!@logVerbosity || @logVerbosity >= effectiveVerbosity)
 				open($logFilePath, 'a') { |f|
-					f.puts formattedMessage
+					f.puts "#{Time.now.to_f} #{formattedMessage}"
 				}
 			end
 		end
@@ -1406,11 +1425,11 @@ module Tunewich
 						}
 					},
 					'ramp' => {
-						'description' => 'Ramp speed (/ramp SPEED [DURATION])',
+						'description' => '/ramp SPEED [DURATION] - Ramp speed',
 						'action' => Proc.new { |input|
 							output = nil
 							rampCommandMatch = /^(out|in|[0-9.]*(bpm)?)( [0-9.]+)?[^\/]*(.*)$/.match input
-							#										1							2			3					4
+							#                    1              2      3                4
 							if rampCommandMatch
 								output = {:chainedInput => rampCommandMatch[4]}
 								duration = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].to_f : 0.3
@@ -1438,6 +1457,20 @@ module Tunewich
 										}
 									end
 								end
+							end
+							output
+						}
+					},
+					'glide' => {
+						'description' => '/glide DURATION [DELAY] - Set BPM "glide" period. Default 0 (i.e. off). If changing between two tracks with tempo information, the second track will begin playing to match the tempo of the first, and then "glide" for DURATION (after DELAY) back to the configured global speed.',
+						'action' => Proc.new { |input|
+							output = nil
+							glideCommandMatch = /^([0-9.]+)( [0-9.]+)?[^\/]*(.*)$/.match input
+							#                     1        2                3
+							if glideCommandMatch
+								output = {:chainedInput => glideCommandMatch[3]}
+								@bpmGlideDuration = glideCommandMatch[1].to_f
+								@bpmGlideDelay = glideCommandMatch[2] && glideCommandMatch[2].length > 0 ? glideCommandMatch[2].to_f : 0.0
 							end
 							output
 						}
@@ -1830,7 +1863,7 @@ module Tunewich
 
 		def rampSpeed targetRampSpeed, duration, playerIndex
 			isValidInput = false
-			whisper("targetRampSpeed: #{targetRampSpeed}", 3)
+			whisper("ramp speed to #{targetRampSpeed} over #{duration} seconds", 2)
 			if targetRampSpeed
 				transitionSpeed = @currentSpeed
 				if targetRampSpeed == 'out'
@@ -1848,7 +1881,7 @@ module Tunewich
 				speedStep = (targetRampSpeed - transitionSpeed) / duration * speedRampInterval
 				whisper("about to ramp speed by #{speedStep} every #{speedRampInterval} seconds", 3)
 				for stepIndex in 1..speedRampStepCount
-					whisper("rampSpeed: step #{stepIndex} of #{speedRampStepCount}")
+					whisper("rampSpeed: step #{stepIndex} of #{speedRampStepCount}", 4)
 					transitionSpeed += speedStep
 					sendPlayerCommand "speed_set #{transitionSpeed}", playerIndex
 					@currentSpeed = transitionSpeed
@@ -1983,7 +2016,7 @@ module Tunewich
 				chapter = chapters[nextChapterIndex]
 				seekSeconds = getSecondsFromDurationString chapter['time']
 				whisper("Skipping chapter #{fromIndex + 1}, to #{nextChapterIndex + 1} (#{chapter['time']}, #{seekSeconds}).", 0)
-				seek seekSeconds, 0.5, 0.25
+				seek seekSeconds, 0, 0
 			else
 				whisper("Skipping chapter #{fromIndex + 1}; no more playable chapters; skipping track.", 0)
 				fadeVolume 'out', 0.25, @currentPlayerIndex
@@ -4147,6 +4180,7 @@ module Tunewich
 				false # stop propagation of event
 			}, nil, true);
 			externalCommandHandlerId = bind('external_command', Proc.new { |extInput|
+				whisper("external_command: #{extInput}", 3)
 				handleInputLine(extInput, commands, action)
 				false # stop propagation of event
 			}, nil, true);
