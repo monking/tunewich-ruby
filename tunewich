@@ -187,11 +187,14 @@ module Tunewich
 
 					if new_rating && new_rating.length > 0
 						track['rating'] = new_rating.to_i
+						@tracks[@trackIndex] = track # FIXME: set up @tracks to reference @library
 						changesToWrite = true
 					end
 				end
 
 				writeLibraryToFile if changesToWrite
+
+				filterTracksOnDeck
 
 				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
 			end
@@ -308,8 +311,6 @@ module Tunewich
 		end
 
 		def nextTrack
-			filterTracksOnDeck
-
 			if @shuffle
 				shuffleIndex()
 			else
@@ -319,7 +320,7 @@ module Tunewich
 
 					if @youtubeSearchPage && !@noNetwork
 						@youtubeSearchPage += 1
-						addTracks searchYouTube(@youtubeSearch, (@youtubeSearchPage - 1) * 20)
+						useTracks searchYouTube(@youtubeSearch, (@youtubeSearchPage - 1) * 20)
 					else
 						@trackIndex %= @tracks.length
 					end
@@ -333,7 +334,7 @@ module Tunewich
 			@tracks = []
 		end
 
-		def addTracks tracks
+		def useTracks tracks
 			@tracks += tracks
 			filterTracksOnDeck
 		end
@@ -579,7 +580,7 @@ module Tunewich
 				tracks << @library['library'][trackReference]
 			end
 
-			addTracks tracks
+			useTracks tracks
 		end
 
 		def useEntireLibrary
@@ -590,7 +591,7 @@ module Tunewich
 				tracks << @library['library'][trackKey]
 			end
 
-			addTracks tracks
+			useTracks tracks
 		end
 
 		def processLibraryJSON(json)
@@ -771,7 +772,9 @@ module Tunewich
 			end
 
 			if filters['min-rating']
-				tracks.send(action) { |track| track['rating'] && track['rating'] >= filters['min-rating'].to_i }
+				tracks.send(action) { |track|
+					track['rating'] && track['rating'] >= filters['min-rating'].to_i
+				}
 			end
 
 			if filters['max-rating']
@@ -1062,7 +1065,7 @@ module Tunewich
 
 			if @youtubeSearch && !@noNetwork
 				@youtubeSearchPage = 1
-				addTracks searchYouTube @youtubeSearch
+				useTracks searchYouTube @youtubeSearch
 			end
 
 			if options.has_key? :interactiveCleanup
