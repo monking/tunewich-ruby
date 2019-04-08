@@ -1236,7 +1236,7 @@ module Tunewich
 		end
 
 		def getTrackInfo id
-			rawInfo = `youtube-dl --get-title --get-description --get-duration -- #{id}`
+			rawInfo = `youtube-dl --get-title --get-description --get-duration -- #{id} 2>/dev/null` # suppress errors
 			return false if !rawInfo || rawInfo.length == 0
 
 			lines = rawInfo.chomp.lines
