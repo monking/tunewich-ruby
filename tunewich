@@ -493,22 +493,34 @@ module Tunewich
 		def getInteractiveCommands modes = [], bindingGroupName
 
 			trackTabComplete = Proc.new { |input|
-				inputParts = input.match(/^([^\/]*)(.*)$/)
+				begin
+					inputParts = input.match(/^([^\/]*)(.*)$/)
 
-				if inputParts[1] && inputParts[1].length > 0
-					begin
-						trackTitlesAndIds = []
-						@tracks.each { |t|
-							trackTitlesAndIds << t['title'] if t.has_key?('title')
-							trackTitlesAndIds << t['id']
-						}
-						guessTrackTitle = firstFuzzyMatchValue(inputParts[1], trackTitlesAndIds) if inputParts[1].length > 0
-						if guessTrackTitle && guessTrackTitle.length > 0
-							input = input.sub!(inputParts[1], guessTrackTitle)
-						end
-					rescue Exception => e
-						whisper(e.message, 2) # XXX
+					trackTitlesAndIds = []
+					@tracks.each { |t|
+						trackTitlesAndIds << "#{t.has_key?('title') ? t['title'] : "<untitled>"} [#{t['id']}]"
+					}
+					matchingTitlesAndIds = [].concat(trackTitlesAndIds) # clone titles only for visual feedback to user
+					shouldShowTracks = true
+
+					if inputParts[1] && inputParts[1].length > 0
+							titleAndIdMatches = fuzzyStringSearchInList(inputParts[1], trackTitlesAndIds)
+							if titleAndIdMatches.length > 0
+								matchingTitlesAndIds = titleAndIdMatches.map { |m| m[:value] }
+								if matchingTitlesAndIds.length == 1
+									matchingTitle = matchingTitlesAndIds[0].sub(/ \[[^\]]+\]$/, '')
+									input = input.sub!(inputParts[1], matchingTitle)
+									shouldShowTracks = false if titleAndIdMatches.length == 1
+								end
+							end
 					end
+
+					if shouldShowTracks
+						heading = "#{[matchingTitlesAndIds.length, 10].min}/#{matchingTitlesAndIds.length} tracks"
+						putsRealtime "\n#{heading}\n================\n#{matchingTitlesAndIds.slice(0, 10).join("\n")}"
+					end
+				rescue Exception => e
+					whisper(e.message, 2) # XXX
 				end
 
 				input
@@ -942,14 +954,20 @@ module Tunewich
 							{:chainedInput => inputParts[2]}
 						}
 					},
-					'network' => {
+					'net' => {
 						'description' => 'Toggle network enabled.',
 						'args' => ['on', 'off'],
+						'showStatus' => Proc.new {
+							putsRealtime "network: #{@networkEnabled ? 'on' : 'off'}"
+						},
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
+
 							@networkEnabled = getToggledValueByInput.call(@networkEnabled, inputParts[1])
-							putsRealtime "network: #{@networkEnabled ? 'on' : 'off'}"
-							{:chainedInput => input}
+
+							command['showStatus'].call
+
+							{:chainedInput => inputParts[2]}
 						}
 					},
 					'download' => {
@@ -1721,26 +1739,41 @@ module Tunewich
 						}
 					},
 					'breakloop' => {
-						'description' => 'Play the current track to the end, and on to the next, while keeping looping enabled.',
-						'action' => Proc.new { |input|
-							@breakLoop = true
-							{:chainedInput => input}
+						'description' => 'Play the current track to the end, and on to the next, while keeping looping enabled. Run the command again to undo it.',
+						'showStatus' => Proc.new {
+							putsRealtime @breakLoop ? "Will break out of next loop." : "Looping normally (#{@loop ? 'on' : 'off'})"
+						},
+						'action' => Proc.new { |input, command|
+							inputParts = input.match(/^([^\/]*)(.*)$/)
+							@breakLoop = getToggledValueByInput.call(@breakLoop, inputParts[1])
+
+							command['showStatus'].call
+							{:chainedInput => inputParts[2]}
 						}
 					},
 					'loop' => {
 						'description' => '/loop [COUNT]: Set the loop limit, or toggle looping off/on.',
-						'args' => ['off', 'on', 'status'],
-						'action' => Proc.new { |input|
+						'args' => ['off', 'on'],
+						'showStatus' => Proc.new {
+							statusMessage = "Looping: #{@loop ? 'on' : 'off'}"
+							if @breakLoop
+								statusMessage += " (breaking current loop)"
+							end
+							statusMessage += " (#{@lastLoop[1]}/#{@loopLimit == 0 ? "indefinite" : "#{@loopLimit} times"})"
+
+							putsRealtime statusMessage
+						},
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1].match(/^[0-9]+$/)
 								loopLimit = inputParts[1].to_i
 								@loop = true
 								@loopLimit = loopLimit
-							elsif inputParts[1] != 'status' # if status, fall though
+							else
 								@loop = getToggledValueByInput.call(@loop, inputParts[1])
 							end
 
-							putsRealtime "loop: #{@loop ? 'on' : 'off'} (#{@lastLoop[1]}/#{@loopLimit == 0 ? "indefinite" : "#{@loopLimit} times"})"
+							command['showStatus'].call
 
 							{:chainedInput => inputParts[2]}
 						}
@@ -1807,15 +1840,17 @@ module Tunewich
 							samplePlayerCommands = [];
 							samplePlayerCommands << 'Some sample options:';
 							samplePlayerCommands << 'small video window in the corner: -geometry 100%:100% -xy 150';
-							samplePlayerCommands << 'mix stereo to mono: -af pan=1:0.5:0.5';
+							samplePlayerCommands << 'mix stereo to mono (same as /mono command): -af pan=1:0.5:0.5';
 							@playerOverrideCommands = editListInVim(@playerOverrideCommands, samplePlayerCommands.join("\n"))
 							{:chainedInput => input}
 						}
 					},
 					'mono' => {
 						'description' => 'Toggle downmixing to mono.',
-						'args' => ['status'],
-						'action' => Proc.new { |input|
+						'showStatus' => Proc.new {
+							putsRealtime "downmix to mono: #{@downmixMono ? 'on' : 'off'}"
+						},
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1] != 'status' # if status, fall though
 								@downmixMono = getToggledValueByInput.call(@downmixMono, inputParts[1])
@@ -1823,7 +1858,7 @@ module Tunewich
 								sendPlayerCommand 'af_add pan=1:0.5:0.5' if @downmixMono # assuming stereo source
 							end
 
-							putsRealtime "downmix to mono: #{@downmixMono ? 'on' : 'off'}"
+							command['showStatus'].call
 
 							{:chainedInput => inputParts[2]}
 						}
@@ -4488,21 +4523,27 @@ module Tunewich
 
 								if commands.has_key?(commandName)
 									if commandInput.length == 0
-										printRepeat "#{commandName}: #{commands[commandName]['description']}\n"
+										putsRealtime "\n#{commandName}: #{commands[commandName]['description']}"
+										if commands[commandName].has_key?('showStatus')
+											modifiedCommandInput = commands[commandName]['showStatus'].call(commands[commandName])
+										end
 										if commands[commandName].has_key?('args')
-											printRepeat commands[commandName]['args'].join("\n") + "\n"
+											putsRealtime "options: #{commands[commandName]['args'].join(", ")}"
 										end
 									end
 
 									if commands[commandName].has_key?('tabComplete')
 										modifiedCommandInput = commands[commandName]['tabComplete'].call(commandInput, commands[commandName])
 										commandInput = modifiedCommandInput if modifiedCommandInput
-									elsif commands[commandName].has_key?('args')
-										inputParts = commandInput.match(/^([^\/]*)(.*)$/)
-										if inputParts[1] && inputParts[1].length > 0
-											guessArg = firstFuzzyMatchValue(inputParts[1], commands[commandName]['args'])
-											if guessArg && guessArg.length > 0
-												commandInput = commandInput.sub!(inputParts[1], guessArg)
+									else
+
+										if commands[commandName].has_key?('args')
+											inputParts = commandInput.match(/^([^\/]*)(.*)$/)
+											if inputParts[1] && inputParts[1].length > 0
+												guessArg = firstFuzzyMatchValue(inputParts[1], commands[commandName]['args'])
+												if guessArg && guessArg.length > 0
+													commandInput = commandInput.sub!(inputParts[1], guessArg)
+												end
 											end
 										end
 									end
@@ -4512,7 +4553,7 @@ module Tunewich
 							end
 							@commandUserInput = "/" + inputCommands.join(' /')
 						else
-							printRepeat "Availble commands: #{commands.keys.join(", ")}\n"
+							putsRealtime "Availble commands: #{commands.keys.join(", ")}\n"
 						end
 					end
 				else
