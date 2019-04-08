@@ -25,7 +25,9 @@ module Tunewich
 
 	class Player
 
-		HELP_FILTER = "Filter by rules, in the format 'title=Some Title,tag=fun,chapters'. Available rules are: [min-,max-]rating=[0-5],title=[query],tag=[tag],chapters."
+		PROMPT_TIMEOUT_RESPONSE = 'prompt_timeout_response'
+		CHAPTER_SELECT_TIMEOUT = 15
+		HELP_FILTER = "Filter by rules, in the format 'title=Some Title,tag=fun,chapters'. Available rules are: [min-,max-]rating=<#0-5>,title=<query>,tag=<tag>,chapters,last=<[HH:][MM:]SS>."
 
 		def initialize
 			@library = nil
@@ -59,21 +61,21 @@ module Tunewich
 				exit
 			end
 
-			if @tracks
-				titleBlock "Playing #{@tracks.length} tracks", '#'
-			else
-				if selectedListName = promptForPlaylist
-					usePlaylist selectedListName
-					titleBlock "Playlist: #{@playlistName} (#{@tracks.length})", '#'
-				end
+			if @trackExcludeFilters
+				@tracks = filterTracks @tracks, @trackExcludeFilters, true
 			end
 
 			if @trackFilters
 				@tracks = filterTracks @tracks, @trackFilters
 			end
 
-			if @trackExcludeFilters
-				@tracks = filterTracks @tracks, @trackExcludeFilters, true
+			if @tracks && @tracks.length > 0
+				titleBlock "Playing #{@tracks.length} tracks", '#'
+			else
+				if selectedListName = promptForPlaylist
+					usePlaylist selectedListName
+					titleBlock "Playlist: #{@playlistName} (#{@tracks.length})", '#'
+				end
 			end
 
 			if @trackIndex == nil
@@ -89,7 +91,7 @@ module Tunewich
 			end
 
 			# TODO: catch SIGINT (ctrl+c) & prompt for playlist again
-			playbackSuccessful = true
+			playerOutput = nil
 			commandRequiresBreak = false
 			commandRequiresNext = false
 
@@ -121,30 +123,36 @@ module Tunewich
 				}
 			}
 
-			while playbackSuccessful do
+			track = nil
+
+			while not playerOutput or playerOutput[:exit] do
 				break if !@trackIndex || !@tracks[@trackIndex]
 
-				titleBlock "[#{@trackIndex + 1}] - #{@tracks[@trackIndex]['title']}"
+				track = @tracks[@trackIndex]
 
-				if @updateAllPlayedTrackInfo || !@tracks[@trackIndex].has_key?('duration') # TODO: remove the 'duration' check: it's here just until the library is more up-to-date
+				titleBlock "[#{@trackIndex + 1}] - #{track['title']}"
+
+				changesToWrite = false
+
+				if @updateAllPlayedTrackInfo || !track.has_key?('duration') # TODO: remove the 'duration' check: it's here just until the library is more up-to-date
 					printRepeat "Getting latest track information..."
-					updateTrackInfo @tracks[@trackIndex]
-					writeLibraryToFile
+					updateTrackInfo track
+					changesToWrite = true
 				end
 
 				chapterIndex = nil
 
-				if @tracks[@trackIndex]['chapters']
+				if track['chapters']
 					commandRequiresBreak = false
 					commandRequiresNext = false
 
 					chapterPromptMessage = nil
 
-					if !fileExistsFromId?(@tracks[@trackIndex]['src']) && !@enableDownload # TODO: checking fileExists, and checking again inside self.play
+					if !fileExistsFromId?(track['src']) && !@enableDownload # TODO: checking fileExists, and checking again inside self.play
 						chapterPromptMessage = "NOTE: Choosing a chapter will cause the file to download fully before playing."
 					end
 
-					chapterResponse = promptForChapterIndex @tracks[@trackIndex]['chapters'], interactiveCommands, chapterPromptMessage
+					chapterResponse = promptForChapterIndex track['chapters'], interactiveCommands, chapterPromptMessage
 					chapterIndex = chapterResponse[:index]
 
 					next if commandRequiresNext
@@ -158,17 +166,29 @@ module Tunewich
 				#  t: prompt for tag
 				#  x: remove from library
 				#  d: download
-				playbackSuccessful = play @tracks[@trackIndex], chapterIndex
+				playerOutput = play track, chapterIndex
 
-				if @ratingsPromptDuration
+				if (@playthroughThreshold && playerOutput[:playtime] > @playthroughThreshold)
+					puts "Played more than #{@playthroughThreshold}s, saving to library"
+					loadLibrary
+					track = matchExistingLibraryTrack track
+					track['played'] = Time.now.to_i
+					trackReference = addTrackToLibrary track if track['unattached']
+					addTrackReferenceToPlaylist trackReference, @playlistName if @playlistName
+					changesToWrite = true
+				end
 
-					new_rating = timedCommandPrompt @ratingsPromptDuration, "rating (#{@tracks[@trackIndex]['rating']}): "
+				if !track['unattached'] && @ratingsPromptDuration
+
+					new_rating = timedTextPrompt @ratingsPromptDuration, "rating (#{track['rating']}): "
 
 					if new_rating && new_rating.length > 0
-						@tracks[@trackIndex]['rating'] = new_rating.to_i
-						writeLibraryToFile
+						track['rating'] = new_rating.to_i
+						changesToWrite = true
 					end
 				end
+
+				writeLibraryToFile if changesToWrite
 
 				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
 
@@ -255,13 +275,6 @@ module Tunewich
 			mplayerEndTime = Time.now.to_f
 
 			mplayerPlayTime = mplayerEndTime - mplayerStartTime
-			if (@playthroughThreshold && mplayerPlayTime > @playthroughThreshold)
-				puts "Played more than #{@playthroughThreshold}s, adding to #{@playlistName ? "playlist '#{@playlistName}'" : 'library'}."
-				loadLibrary
-				trackReference = addTrackToLibrary track
-				addTrackReferenceToPlaylist trackReference, @playlistName if @playlistName
-				writeLibraryToFile
-			end
 
 			if streaming
 				deleteStream streamName
@@ -272,7 +285,10 @@ module Tunewich
 
 			deleteTempFile 'mplayer-input' if mplayerInputFile
 
-			mplayerStatus
+			{
+				:exit => mplayerStatus,
+				:playtime => mplayerPlayTime
+			}
 		end
 
 		def nextTrack
@@ -315,6 +331,16 @@ module Tunewich
 			end
 
 			loadLibrary
+		end
+
+		def matchExistingLibraryTrack track
+			@library['library'].each { |id, t|
+				if t['src'] === track['src']
+					track = t
+					break
+				end
+			}
+			track
 		end
 
 		def getTrackTitles tracks
@@ -734,6 +760,16 @@ module Tunewich
 				tracks.send(action) { |t| matchedIds.index t['id'] }
 			end
 
+			if filters['last']
+				now = Time.now.to_i
+				watershed = now - getSecondsFromDurationString(filters['last'])
+				puts "matching things played since: #{watershed}" # XXX
+				puts "#{Time.now}, #{Time.now - 86400}"
+				tracks.send(action) { |t|
+					t['played'] ? Time.now.to_i - t['played'] < watershed.to_i : false
+				}
+			end
+
 			if filters.has_key? 'chapters'
 				tracks.send(action) { |track|
 					if track
@@ -857,7 +893,7 @@ module Tunewich
 			printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
 
 			queryResultIds.each_with_index do |id, index|
-				track = createTrack id
+				track = matchExistingLibraryTrack createTrack id
 				resultTracks << track
 				threads << Thread.new {
 					if not updateTrackInfo track
@@ -1095,7 +1131,7 @@ module Tunewich
 			commandPrompt(confirmMessage, commands)[:input].match(/^[Yy]/)
 		end
 
-		def timedCommandPrompt timeout, message = nil, commands = nil
+		def timedTextPrompt timeout, message = nil, commands = nil
 			input = nil
 
 			thr = Thread.new {
@@ -1108,7 +1144,10 @@ module Tunewich
 				printRepeat "(#{timeout - timer}) #{message}"
 				sleep 1
 				timer += 1
-				Thread.kill thr if timer >= timeout
+				if timer >= timeout
+					input = nil
+					Thread.kill thr
+				end
 			end
 
 			input
@@ -1140,12 +1179,13 @@ module Tunewich
 			selectedChapterIndex = nil
 
 			chapterList = chapters.map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
-			promptMessage = "  #{chapterList.join "\n  "}\nPlease choose a chapter (leave blank to play first):"
-			promptMessage += "\n#{message}" if message
+			prePromptMessage = "  #{chapterList.join "\n  "}"
+			prePromptMessage += "\n#{message}" if message
+			promptMessage = "Please choose a chapter (leave blank to play first):"
 
 			while not selectedChapterIndex do
-				chapterResponse = commandPrompt promptMessage, commands
-				chapterQuery = chapterResponse[:input]
+				puts prePromptMessage
+				chapterQuery = timedTextPrompt Player::CHAPTER_SELECT_TIMEOUT, promptMessage, commands
 				break if not chapterQuery or chapterQuery.length === 0
 
 				selectedChapter = firstFuzzyMatch chapterQuery, chapterList
@@ -1160,8 +1200,7 @@ module Tunewich
 			end
 
 			{
-				:index => selectedChapterIndex,
-				:commands => chapterResponse[:commands]
+				:index => selectedChapterIndex
 			}
 		end
 
