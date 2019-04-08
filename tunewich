@@ -2856,8 +2856,8 @@ module Tunewich
 
 			# TODO 1gparD: output youtube-dl error messages to user
 			if @youtubeDLTrackTypes.include? track['type']
-				youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} -q"
-				# youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} --no-part --no-cache-dir --no-continue"
+				youtubeDlCommandBegin = "youtube-dl -f \"#{@preferredFileFormat}\" -q"
+				# youtubeDlCommandBegin = "youtube-dl -f \"#{@preferredFileFormat}\" --no-part --no-cache-dir --no-continue"
 				youtubeDlCommandEnd = "-- #{track['src']}"
 				if options['streamPath']
 					downloadCommand = "rm -f -- --Frag*; #{youtubeDlCommandBegin} -o - #{youtubeDlCommandEnd} > \"#{options['streamPath']}\" 2> \"#{options['feedbackPath']}\""
