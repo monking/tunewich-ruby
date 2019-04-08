@@ -68,7 +68,7 @@ module Tunewich
 			@volumeMultipliers = {}
 			@bpmGlideDuration = 0
 			@bpmGlideDelay = 0
-			@enableDownload = false
+			@autoDownload = false
 			@preferredFileFormat = 'bestaudio'
 			@playerTemporaryInteractiveCommands = []
 			@playerOverrideCommands = []
@@ -504,15 +504,15 @@ module Tunewich
 					shouldShowTracks = true
 
 					if inputParts[1] && inputParts[1].length > 0
-							titleAndIdMatches = fuzzyStringSearchInList(inputParts[1], trackTitlesAndIds)
-							if titleAndIdMatches.length > 0
-								matchingTitlesAndIds = titleAndIdMatches.map { |m| m[:value] }
-								if matchingTitlesAndIds.length == 1
-									matchingTitle = matchingTitlesAndIds[0].sub(/ \[[^\]]+\]$/, '')
-									input = input.sub!(inputParts[1], matchingTitle)
-									shouldShowTracks = false if titleAndIdMatches.length == 1
-								end
+						matchingTitlesAndIds = fuzzyStringSearchInList(inputParts[1], trackTitlesAndIds)
+						if matchingTitlesAndIds.length > 0
+							matchingTitlesAndIds = matchingTitlesAndIds.map { |m| m[:value] }
+							if matchingTitlesAndIds.length == 1
+								matchingTitle = matchingTitlesAndIds[0].sub(/ \[[^\]]+\]$/, '')
+								input = input.sub!(inputParts[1], matchingTitle)
+								shouldShowTracks = false if matchingTitlesAndIds.length == 1
 							end
+						end
 					end
 
 					if shouldShowTracks
@@ -987,6 +987,7 @@ module Tunewich
 
 							track = @currentTrack
 							shouldEchoCommand = false
+							downloadOptions = {}
 							options.each { |option|
 								case option
 								when 'get'
@@ -998,17 +999,18 @@ module Tunewich
 							}
 
 							if shouldEchoCommand
-								if trackFileExists? track
-									whisper(findTrackFiles(track)[0], 0)
+								trackFiles = findTrackFiles(track)
+								if trackFiles.length > 0
+									whisper(trackFiles.join("\n"), 0)
 								else
-									putsRealtime getDownloadCommand track
+									putsRealtime getDownloadCommand(track, downloadOptions)
 								end
 							else
 								if trackFileExists? track
 									putsRealtime "This file is already downloaded."
 								else
 									disablePlaybackInfo
-									downloadTrack track
+									downloadTrack track, downloadOptions
 									enablePlaybackInfo
 								end
 							end
@@ -1215,10 +1217,15 @@ module Tunewich
 								putsRealtime "No filters"
 							end
 						},
+						'args' => ['clear'],
 						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1] && inputParts[1].length > 0
-								filters = parseOptionParameters inputParts[1]
+								if inputParts[1] == 'clear'
+									filters = []
+								else
+									filters = parseOptionParameters inputParts[1]
+								end
 							else
 								filtersList = command['listFilters'].call()
 								filterInstructions = []
@@ -2313,11 +2320,15 @@ module Tunewich
 		def play(track, interactiveCommands)
 			fileAlreadyExists = !@forceStreaming && trackFileExists?(track) # TODO: 1gG4j4: I shouldn't need to check twice
 			liveStreaming = doesTrackHaveTag(track, 'live-radio') # TODO: 1gSke5
-			streaming = @forceStreaming || (!fileAlreadyExists && !@enableDownload)
+			streaming = @forceStreaming || (!fileAlreadyExists && !@autoDownload)
 
-			if !@networkEnabled && !fileAlreadyExists
-				whisper("No local file to play: #{track['title']}", 0)
-				return response
+			if !fileAlreadyExists
+				if @networkEnabled
+
+				else
+					whisper("No local file to play, and network is disabled", 0)
+					return response
+				end
 			end
 
 			trigger 'play_start'
@@ -2407,6 +2418,13 @@ module Tunewich
 						else
 							mediaFilePath = track['src']
 						end
+					end
+				elsif @autoDownload
+					if downloadTrack(track, downloadOptions)
+						mediaFilePath = firstTrackFile track
+					else
+						whisper("could not download/stream track", 1)
+						mediaFilePath = nil
 					end
 				end
 			end
@@ -2955,7 +2973,10 @@ module Tunewich
 				else
 					youtubeDlOptions = ''
 					if options
-						youtubeDlOptions += " --audio-format #{options['audioFormat']} " if options.has_key? "audioFormat"
+						if !options.has_key?("audioFormat") && @preferredFileFormat == 'bestaudio'
+							options['audioFormat'] = 'vorbis'
+						end
+						youtubeDlOptions += " --extract-audio --audio-format #{options['audioFormat']} " if options.has_key? "audioFormat"
 					end
 					youtubeDlOptions += " -o \"#{getTrackFilePrefix track}.%(title)s.%(ext)s\""
 					downloadCommand = "#{youtubeDlCommandBegin}#{youtubeDlOptions} #{youtubeDlCommandEnd}"
@@ -3831,7 +3852,7 @@ module Tunewich
 			end
 
 			parser.on("-d", "--download", "Enable downloading files when encountering a file that is not already download.", " ") do |keep|
-				@enableDownload = true
+				@autoDownload = true
 			end
 
 			parser.on("-D DIR", "--input-dir DIR", "Directory from which to read the playlist and files.\nNOTE: when used, this must be the first option. Recommended to define TUNEWICH_DIR instead.", " ") do |inputDir|
@@ -4480,7 +4501,7 @@ module Tunewich
 							enablePlaybackInfo;
 						end
 					end
-				elsif inputCharacter == "" # stop job
+				elsif inputCharacter == "" # control-z: stop job
 					shouldTogglePause = @isPlayerPlaying
 					whisper("before STOP+toggle, shouldTogglePause: #{shouldTogglePause}", 0)
 					togglePlay if shouldTogglePause
@@ -4490,13 +4511,10 @@ module Tunewich
 					# TODO: 1gG4ko: the player usually doesn't unpause :/
 					whisper("after STOP, shouldTogglePause: #{shouldTogglePause}, @isPlayerPlaying: #{@isPlayerPlaying}", 0)
 					togglePlay if shouldTogglePause
-				elsif inputCharacter == "" # clear line
-					if @commandUserInput
-						@commandInputTyped = nil
-						@commandUserInput = ''
-						printRepeat @commandUserInput
-					end
+				elsif inputCharacter == "" # control-u: clear line
+					@commandUserInput = nil
 					@commandInputTyped = nil
+					enablePlaybackInfo
 				else
 					if not @commandUserInput
 						@commandUserInput = ''
