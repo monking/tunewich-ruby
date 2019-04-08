@@ -56,7 +56,7 @@ module Tunewich
         'chapters' => nil,
         'notes' => nil
       }
-      @currentlySkipping = nil
+      @currentlySeeking = false
       @trackIndex = nil
       @trackQuery = nil
       @tracks = []
@@ -1823,7 +1823,7 @@ module Tunewich
             'description' => '/loop [COUNT]: Set the loop limit, or toggle looping off/on, or toggle only inner loops, or \'reset\' the loop counters.',
             'args' => ['off', 'on', 'inner', 'break', 'reset'],
             'showStatus' => Proc.new {
-              statusMessage = "Looping: #{@loop ? 'on' : 'off'} #{getLoopLimitStatusMessage}"
+              statusMessage = "Looping: #{@loop ? 'on' : 'off'}"
               statusExtras = []
               if @breakLoop
                 statusExtras << "breaking current loop"
@@ -1833,6 +1833,8 @@ module Tunewich
               end
 
               statusMessage += " (#{statusExtras.join('; ')})" if statusExtras.length > 0
+
+              statusMessage += "\n#{getLoopLimitStatusMessage}"
 
               putsRealtime statusMessage
             },
@@ -2136,7 +2138,7 @@ module Tunewich
       }
 
       if modes.empty?
-        modes = MODES.keys 
+        modes = MODES.keys
       else
         modes << 'base'
         modes.uniq!
@@ -2248,23 +2250,20 @@ module Tunewich
     def seek seekTimeInSeconds, fadeOutPeriod = 0.0, fadeInPeriod = 0.0
       isAbleToSeek = trackFileExists?(@currentTrack) || @currentTrack['type'] == 'audio/mpeg' || seekTimeInSeconds > @currentPlayerTime
       if isAbleToSeek
+        @currentlySeeking = true
         fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
 
         sendPlayerCommand "seek #{seekTimeInSeconds} 2"
 
         fadeVolume 'in', fadeInPeriod, @currentPlayerIndex if fadeInPeriod > 0
+
+        Thread.new {
+          sleep 1
+          @currentlySeeking = false
+        }
       else
         putsRealtime "Download the file to be able to seek backwards."
       end
-    end
-
-    def seekToChapter chapterIndex, fadeOutPeriod = 1.0, fadeInPeriod = 0.1
-      whisper("seeking to chapter #{chapterIndex} (fade #{fadeOutPeriod}/#{fadeInPeriod}", 3)
-      seekTime = @currentTrack['chapters'][chapterIndex]['time']
-      seekSeconds = getSecondsFromDurationString seekTime
-      whisper("seeking to chapter at #{seekSeconds} seconds", 3)
-
-      seek seekSeconds, fadeOutPeriod, fadeInPeriod
     end
 
     def getUserInputBPM
@@ -2702,7 +2701,7 @@ module Tunewich
       # elsif @volumeMultipliers.has_key? 'track_loudness'
       #   @volumeMultipliers.delete 'track_loudness'
       # end
-      # 
+      #
       # newVolume = getMultipliedVolume @volume
       # if @currentVolume != newVolume
       # 	@currentVolume = newVolume # they may differ, but at this point, only @volume matters
@@ -2772,7 +2771,7 @@ module Tunewich
         if (
             @loop  &&
             !@breakLoop  &&
-            !@currentlySkipping &&
+            !@currentlySeeking &&
             @currentTrack[noteType][currentIndex] &&
             loopTarget &&
             (
@@ -2781,7 +2780,6 @@ module Tunewich
             )
         )
           whisper("looping to target '#{@currentTrack[noteType][currentIndex]['loop_target']}'", 2)
-          @currentlySkipping = "#{noteType}:#{currentIndex}"
 
           isLooping = false
           loopTargetSeconds = getSecondsFromDurationString loopTarget
@@ -2806,23 +2804,13 @@ module Tunewich
               @loopHistory[loopTarget] = 1;
             end
           end
-
-          bindOnce(['note_change', 'chapter_change'], Proc.new {
-            @currentlySkipping = nil
-          }, bindingGroupName)
         elsif (
-          !@currentlySkipping &&
+          !@currentlySeeking &&
           @currentTrack[noteType][currentIndex] &&
           @currentTrack[noteType][currentIndex].has_key?('skip') &&
           @currentTrack[noteType][currentIndex]['skip'] == true
         )
-          @currentlySkipping = currentIndex
-
-          seekToNextPlayableNoteOrSkip @currentTrack[noteType], @currentlySkipping
-
-          bindOnce(['note_change', 'chapter_change'], Proc.new {
-            @currentlySkipping = nil
-          }, bindingGroupName)
+          seekToNextPlayableNoteOrSkip @currentTrack[noteType], currentIndex
         else
           whisper("#{noteType}: #{@currentTrack[noteType][currentIndex]['text']}", 1)
         end
@@ -3111,7 +3099,7 @@ module Tunewich
       if notesAndChapters.length > 0
         notesAndChapters.each { |note|
           if note && note['loop_target']
-            hasInternalLoops = true 
+            hasInternalLoops = true
             break
           end
         }
@@ -4918,7 +4906,7 @@ module Tunewich
                   )
                     newCommandName = firstFuzzyMatchValue commandName, commandKeys
                     if newCommandName
-                      commandName = newCommandName 
+                      commandName = newCommandName
                     end
                   end
 
