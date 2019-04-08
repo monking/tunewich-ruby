@@ -123,7 +123,7 @@ module Tunewich
 					}
 				},
 				'bpm' => {
-					'info' => "Interactively set the beats-per-minute of the track.",
+					'info' => "Interactively set the beats-per-minute of the track. Do '/bpm 0' to remove",
 					'action' => Proc.new { |newBPM|
 						commitBPM = false
 
@@ -134,7 +134,8 @@ module Tunewich
 							firstTimeInSeconds = nil
 							lastTimeInSeconds = nil
 							iterations = 0;
-							bpm = 0;
+							bpm = @tracks[@trackIndex]['bpm'];
+							puts "Current BPM is #{bpm}." if bpm
 							puts "Hit enter on the beat. Type \"k\" to accept, or anything else to cancel setting the BPM."
 							while true
 								input = STDIN.gets.chomp
@@ -156,8 +157,13 @@ module Tunewich
 						end
 
 						if commitBPM
-							puts "Setting track BPM to #{bpm}."
-							@tracks[@trackIndex]['bpm'] = bpm
+							if bpm == 0
+								puts "Removing BPM from track."
+								@tracks[@trackIndex].delete 'bpm' if @tracks[@trackIndex].has_key? 'bpm'
+							else
+								puts "Setting track BPM to #{bpm}."
+								@tracks[@trackIndex]['bpm'] = bpm
+							end
 							writeLibraryToFile true
 						else
 							puts "Canceling: leaving track BPM alone."
