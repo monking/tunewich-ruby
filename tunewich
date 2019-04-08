@@ -811,6 +811,13 @@ module Tunewich
 				}
 			end
 
+			if filters['min-duration']
+				minDuration = getSecondsFromDurationString filters['min-duration']
+				tracks.send(action) { |t|
+					t['duration'] ? getSecondsFromDurationString(t['duration']) > minDuration : false
+				}
+			end
+
 			if filters.has_key? 'chapters'
 				tracks.send(action) { |track|
 					if track
