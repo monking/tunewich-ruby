@@ -245,6 +245,7 @@ module Tunewich
 				else
 					whisper("Empty tracklist", 3)
 					emptyAction = Proc.new { |input| false } # break command loop after any non-command input
+					whisper("empty (index '#{@trackIndex}' not found among #{@tracks.length} tracks.", 0)
 					commandPrompt "empty", interactiveCommands, emptyAction
 				end
 
@@ -2702,18 +2703,21 @@ module Tunewich
 			tracks.map{|t| t['title']}
 		end
 
-		def findTrackIndex(query, referenceTrackIndex = nil)
+		def findTrackIndex(query, tracks = nil, referenceTrackIndex = nil)
 			referenceTrackIndex ||= @trackIndex
+			tracks ||= @tracks
+			whisper("findTrackIndex() searching for '#{query}' among #{tracks.length} tracks", 3)
 			newTrackIndex = referenceTrackIndex
 
 			trackIndexOffset = getOffsetFromInputString query
 
 			if trackIndexOffset
 				newTrackIndex += trackIndexOffset
+				whisper("findTrackIndex() trackIndexOffset: #{trackIndexOffset}", 3)
 			elsif query.match(/^[0-9]/)
-				newTrackIndex = @tracks.index(query) || firstFuzzyMatchIndex(query, getTrackTitles(@tracks))
+				newTrackIndex = tracks.index(query) || firstFuzzyMatchIndex(query, getTrackTitles(tracks))
 			else
-				newTrackIndex = (query.to_i - 1) % @tracks.length
+				newTrackIndex = (query.to_i - 1) % tracks.length
 			end
 
 			newTrackIndex
