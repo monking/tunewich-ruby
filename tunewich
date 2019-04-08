@@ -1616,15 +1616,15 @@ module Tunewich
 							if fadeCommandMatch
 								output = {:chainedInput => fadeCommandMatch[3]}
 								whisper("fade command", 4)
-								duration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 2.0
+								fadeDuration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 2.0
 								targetFadeVolume = fadeCommandMatch[1]
 								if output[:chainedInput] && output[:chainedInput].length > 0
 									whisper("fade in main thread", 4)
-									fadeVolume targetFadeVolume, duration, @currentPlayerIndex
+									fadeVolume targetFadeVolume, fadeDuration, @currentPlayerIndex
 								else
 									whisper("fade in separate thread", 4)
 									Thread.new {
-										fadeVolume targetFadeVolume, duration, @currentPlayerIndex
+										fadeVolume targetFadeVolume, fadeDuration, @currentPlayerIndex
 									}
 								end
 							end
@@ -1639,7 +1639,7 @@ module Tunewich
 							#                    1              2      3                4
 							if rampCommandMatch
 								output = {:chainedInput => rampCommandMatch[4]}
-								duration = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].to_f : 0.3
+								rampDuration = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].to_f : 0.3
 								whisper('without -af scaletempo[=speed=tempo], min and max limited by the system (~1/8 and ~4.5 on my Mac Mini)', 1)
 								targetRampSpeed = rampCommandMatch[1]
 								if rampCommandMatch[1] == 'bpm'
@@ -1654,13 +1654,13 @@ module Tunewich
 									targetRampSpeed = determineRelativeSpeed targetRampSpeed, @currentTrack, true
 									if rampCommandMatch[4] && rampCommandMatch[4].length > 0
 										whisper("ramping speed in the main thread", 4)
-										rampSpeed targetRampSpeed, duration, @currentPlayerIndex
+										rampSpeed targetRampSpeed, rampDuration, @currentPlayerIndex
 										whisper("Waiting 1 second for buffered sound to play", 2)
 										sleep 1.0
 									else
 										whisper("ramping speed in a separate thread", 4)
 										Thread.new {
-											rampSpeed targetRampSpeed, duration, @currentPlayerIndex
+											rampSpeed targetRampSpeed, rampDuration, @currentPlayerIndex
 										}
 									end
 								end
@@ -3455,7 +3455,7 @@ module Tunewich
 
 			trackInfo = JSON.parse(json)
 			track['title'] = trackInfo['fulltitle']
-			track['duration'] = getDurationStringFromSeconds(trackInfo['duration']), 0
+			track['duration'] = getDurationStringFromSeconds(trackInfo['duration'], 0)
 			track['description'] = trackInfo['description']
 			track['link'] = trackInfo['webpage_url'] || "https://youtu.be/#{youtubeVideoID}"
 			track['type'] = trackInfo['extractor']
@@ -3480,7 +3480,7 @@ module Tunewich
 
 			trackInfo = JSON.parse(json)
 			track['title'] = trackInfo['fulltitle']
-			track['duration'] = getDurationStringFromSeconds(trackInfo['duration'])
+			track['duration'] = getDurationStringFromSeconds(trackInfo['duration'], 0)
 			track['description'] = trackInfo['description']
 			track['link'] = trackInfo['webpage_url'] || soundcloudURL
 			track['type'] = trackInfo['extractor']
