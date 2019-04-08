@@ -824,6 +824,8 @@ module Tunewich
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
 							newRating = inputParts[:query] if (inputParts[:query].length > 0) && (inputParts[:query].match(/^[+-]?[0-9]*/))
+							loadLibrary
+							@currentTrack = matchExistingLibraryTrack @currentTrack
 							oldRating = @currentTrack['rating']
 							if newRating.length < 1
 								putsRealtime "current rating: #{@currentTrack['rating']}"
@@ -839,7 +841,6 @@ module Tunewich
 								@currentTrack['rating'] = newRating.to_i
 							end
 							if oldRating != @currentTrack['rating'] && !@currentTrack['unattached']
-								loadLibrary
 								addTrackToLibrary @currentTrack if @currentTrack['unattached']
 								writeLibraryToFile
 							end
