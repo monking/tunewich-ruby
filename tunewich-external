@@ -1,10 +1,5 @@
 #!/bin/bash
 
-[[ -z "$@" ]] && {
-	echo "No command given. Run 'tunewich --help' to see the list of interactive commands."
-	exit 1
-}
-
 queueFile="$(ls -t ~/.tunewich/tmp/*-tunewich-command-queue | head -1)"
 
 [[ -z "$queueFile" ]] && {
@@ -12,6 +7,18 @@ queueFile="$(ls -t ~/.tunewich/tmp/*-tunewich-command-queue | head -1)"
 	exit 2
 }
 
-echo -n "queueFile: $queueFile"
+if [[ -n "$@" ]]; then
+	echo "$@" > "$queueFile"
+else
+	echo "Beginning interactive input"
+	echo "Run 'tunewich --help' to see the list of interactive commands."
+	echo "Note that most interactive commands won't work, like /eq, /bpm."
+	echo
+	echo "Ctrl+C to exit."
+	echo
 
-echo "$@" > "$queueFile"
+	while true; do
+		read -p "tunewich\$ "
+		echo "$REPLY" > "$queueFile"
+	done
+fi

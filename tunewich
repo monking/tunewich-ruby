@@ -137,7 +137,7 @@ module Tunewich
 			@currentSpeed = @speed
 			trigger 'speed_change'
 
-			# listenForExternalCommands # 1gOsMN this thread is blocking, for some reason
+			listenForExternalCommands
 
 			if @userMode == Player::MODES['playing']
 				interactivePlayback
@@ -3858,7 +3858,7 @@ module Tunewich
 
 			processCommandsWithInput = Proc.new { |commandLoopInput|
 				while commandLoopInput && !commandLoopInput.empty? && commandLoopInput[0] == '/'
-					whisper("parsing commands", 3)
+					whisper("parsing commands, input: #{commandLoopInput}", 3)
 					commandParts = commandLoopInput.match(/^\/([^\s]*)\s*(.*)/)
 					if commandParts
 						commandName = commandParts[1]
@@ -3931,7 +3931,22 @@ module Tunewich
 				commandLoopInput
 			}
 
-			externalCommandHandlerId = bind('external_command', processCommandsWithInput);
+			handleInputLine = Proc.new { |inputLine|
+				whisper("received input: #{inputLine}", 3)
+				if commands
+					inputLine = processCommandsWithInput.call inputLine
+				end
+
+				handledActionResponse = nil
+				if action && inputLine && inputLine.length > 0
+					whisper("input left over after commands: passing to action (#{inputLine})", 3)
+					handledActionResponse = action.call inputLine
+				end
+
+				handledActionResponse
+			}
+
+			externalCommandHandlerId = bind('external_command', handleInputLine);
 
 			while inputCharacter = readCharacter
 				if inputCharacter == "" # control-c character
@@ -3962,19 +3977,13 @@ module Tunewich
 					@commandHistory.unshift input
 					@shouldShowPlaybackInfo = true
 					response[:input] = input
-					whisper("received input: #{input}", 3)
-					if commands
-						input = processCommandsWithInput.call input
-					end
 
-					if action && input && input.length > 0
-						whisper("input left over after commands: passing to action (#{input})", 3)
-						actionResponse = action.call input
-					end
+					actionResponse = handleInputLine.call input
 
 					input = nil
 
 					if actionResponse == false
+						# 2019-02-01T13:58:56-0800 I don't remember what this is about
 						whisper("action returned false: breaking command loop", 3)
 						break
 					end
@@ -4164,24 +4173,29 @@ module Tunewich
 		def listenForExternalCommands # 1gOsMN
 			externalCommandStream = makeStream 'tunewich-command-queue'
 			whisper("external command stream: #{externalCommandStream}", 2)
-			externalCommandStreamHandle = File.open(externalCommandStream, 'r');
+			externalCommandStreamHandle = nil
 			externalCommandThread = Thread.new {
+				externalCommandStreamHandle = File.open(externalCommandStream, 'r');
 				externalCommand = ""
-				while ($_ = externalCommandStreamHandle.read(1)) do
-					if $_ != "\n"
-						externalCommand << $_
-					else
-						if externalCommand && externalCommand.length > 0
-							whisper("external command: '#{externalCommand}'")
-							trigger 'external_command', externalCommand
-							externalCommand = ""
+				while true do
+					whisper("starting new loop to read #{externalCommandStream}", 2)
+					while ($_ = externalCommandStreamHandle.read(1)) do
+						if $_ != "\n"
+							externalCommand << $_
+						else
+							if externalCommand && externalCommand.length > 0
+								trigger 'external_command', externalCommand
+								externalCommand = ""
+							end
 						end
 					end
 				end
 			}
 			bindOnce 'request_exit', Proc.new{
-				externalCommandStreamHandle.close
-				externalCommandThread.kill if externalCommandThread.alive?
+				if externalCommandThread.alive?
+					externalCommandStreamHandle.close
+					externalCommandThread.kill
+				end
 			}
 		end
 

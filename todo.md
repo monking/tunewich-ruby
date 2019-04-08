@@ -43,7 +43,8 @@
 	}
 	```
 - [ ] 1gG4ko: also stop mplayer
-- [ ] 1gOsMN: run commands from FIFO queue as if they had been typed interactively (this would allow the tent "away" function to fade out before killing, e.g.)
+- [x] 1gOsMN: run commands from FIFO queue as if they had been typed interactively (this would allow the tent "away" function to fade out before killing, e.g.)
+	- this works for the most part, but I'm only getting text, not key codes, so arrow keys and such won't work
 - [ ] 1gSke5: Determine whether a URL is serving a live stream based on some data returned by the source URL
 - [ ] 1gSlF1: Do this only if the list being edited is not already the canonical library track list, in which case we cannot determine if there was a change
 - [ ] load media in the same player using 'loadfile <file|url> <append>' (http://www.mplayerhq.hu/DOCS/tech/slave.txt) and '-fixed-vo', so that if watching videos, one player can be used continuously, and the video doesn't take user focus when changing.
