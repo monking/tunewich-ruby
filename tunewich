@@ -59,6 +59,7 @@ module Tunewich
 			@libraryHash = nil
 			@eventBindings = {}
 			@eventBindingsIndex = []
+			@eventBindingGroups = {}
 			@sessionID = Random.rand(1024)
 			@currentTrack = nil
 			@currentChapterIndex = nil
@@ -77,7 +78,7 @@ module Tunewich
 			@preferredFileFormat = 'bestaudio'
 			@playerTemporaryInteractiveCommands = []
 			@playerOverrideCommands = []
-			@playerCurrentTime = nil
+			@currentPlayerTime = nil
 			@currentPlayerIndex = 0
 			@speedBeforeRampingOut = 1
 			@playerThreads = [] # Not currently used. For instances of the player class.
@@ -98,6 +99,15 @@ module Tunewich
 				useTracks(getTracksFromTitleList(trackTitleListFromLastSession.strip.lines))
 			end
 
+			bindOnce 'request_exit', Proc.new {
+				if @services && @services.length > 0
+					whisper "Exiting: killing #{@services.length} services", 1
+					@services.each { |thread| thread.kill if thread.alive? }
+				else
+					whisper "Exiting: no services running", 1
+				end
+			}
+
 			@volume = getMplayerConfigNumericProperty('volume')
 			whisper "@volume: #{@volume}", 3
 			@currentVolume = @volume
@@ -109,43 +119,65 @@ module Tunewich
 
 			interactivePlayback
 
-			whisper "Exiting player", 1
-			if @services && @services.length > 0
-				@services.each { |thread| thread.kill if thread.alive? }
-			end
+			trigger 'request_exit'
 		end
 
 		private
 
-		def bind eventName, handlerProc
+		def bind eventName, handlerProc, handlerGroup = nil
 			@eventBindings[eventName] ||= []
+
+			handlerIndexOnEvent = @eventBindings[eventName].length
 			@eventBindings[eventName] << handlerProc
+
+			handlerID = @eventBindingsIndex.length
 			@eventBindingsIndex << {
 				:name => eventName,
-				:index => @eventBindings[eventName].length - 1
+				:index => handlerIndexOnEvent
 			}
-			@eventBindingsIndex.length - 1
+
+			if handlerGroup
+				@eventBindingGroups[handlerGroup] ||= []
+				@eventBindingGroups[handlerGroup] << handlerID
+			end
+
+			whisper "bind, #{eventName}, #{handlerGroup}, #{handlerID}", 5
+
+			handlerID
 		end
 
-		def bindOnce eventName, handlerProc
+		def bindOnce eventName, handlerProc, handlerGroup = nil
 			bindingID = nil
 			selfRemovingHandlerProc = Proc.new { |data|
 				unbind bindingID
 				handlerProc.call data
 			}
-			bindingID = bind eventName, selfRemovingHandlerProc
+			bindingID = bind eventName, selfRemovingHandlerProc, handlerGroup
 			bindingID
 		end
 		
 		def unbind bindingID
-			@eventBindings[@eventBindingsIndex[bindingID][:name]][@eventBindingsIndex[bindingID][:index]] = nil
-			@eventBindingsIndex[bindingID] = nil # if lots of bindings are set, will all these nils bloat memory?
+			if @eventBindingsIndex[bindingID]
+				@eventBindings[@eventBindingsIndex[bindingID][:name]][@eventBindingsIndex[bindingID][:index]] = nil
+				@eventBindingsIndex[bindingID] = nil # if lots of bindings are set, will all these nils bloat memory?
+			end
+		end
+
+		def unbindGroup groupName
+			if @eventBindingGroups.has_key? groupName
+				whisper "Unbinding: #{@eventBindingGroups[groupName].length} handlers in binding group '#{groupName}'", 3
+				@eventBindingGroups[groupName].each { |bindingID| unbind bindingID }
+			else
+				whisper "Unbinding: No bindings assigned to group '#{groupName}'", 3
+			end
 		end
 
 		def trigger eventName, data = nil
-			whisper "trigger #{eventName}", 4
 			if @eventBindings.has_key? eventName
+				whisper "trigger #{eventName}, #{@eventBindings[eventName].length} handlers bound", 5
 				@eventBindings[eventName].each { |handlerProc| handlerProc.call(data) if handlerProc }
+			else
+				whisper "trigger #{eventName} (no handlers bound)", 5
 			end
 		end
 
@@ -238,6 +270,14 @@ module Tunewich
 		end
 
 		def interactivePlayback
+			bindingGroupName = 'interactivePlayback'
+
+			shouldExitPlayerLoop = false
+			bindOnce 'request_exit', Proc.new {
+				shouldExitPlayerLoop = true
+				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "q\n"
+			}, bindingGroupName
+
 			if @tracks && @tracks.length > 0
 				titleBlock "Playing #{@tracks.length} tracks", '#'
 			else
@@ -246,10 +286,7 @@ module Tunewich
 
 			# TODO: catch SIGINT (ctrl+c) & prompt for playlist again
 			playerOutput = nil
-			commandRequiresBreak = false
-			commandRequiresNext = false
 			commandCustomPlayerConfig = ''
-			commandRequiresExit = false
 
 			interactiveCommands = {
 				'' => {
@@ -385,7 +422,7 @@ module Tunewich
 							@currentTrack['notes'] ||= []
 							note = {
 								'text' => inputParts[1],
-								'time' => getDurationStringFromSeconds(@playerCurrentTime)
+								'time' => getDurationStringFromSeconds(@currentPlayerTime)
 							}
 							if note['text'].length < 1
 								note['text'] = editListInVim([], 'Write your note').join "\n"
@@ -409,7 +446,6 @@ module Tunewich
 							else
 								@trackIndex = trackIndex.to_i - 1 % @tracks.length
 							end
-							commandRequiresNext = true
 						end
 						{:chainedInput => inputParts[2]}
 					}
@@ -428,25 +464,65 @@ module Tunewich
 						{:chainedInput => input}
 					}
 				},
+				'eq' => {
+					'description' => 'Fade volume (/fade VOLUME [DURATION])',
+					'action' => Proc.new { |input|
+						inputParts = input.match(/^([^\/]*)(.*)$/)
+						userEQDefinition = inputParts[1]
+						if userEQDefinition && userEQDefinition.length > 0
+              eqPresets = {
+                'bass' => '4:5:3:2:0:0:0:0:0:0',
+                'earplugs' => '2:6:1:0:0:1:2:4:6:3'
+              }
+              if userEQDefinition == 'help'
+                putsRealtime eqPresets.keys.join ", "
+              else
+                chosenEQPreset = firstFuzzyMatchValue userEQDefinition, eqPresets.keys
+                if chosenEQPreset
+                  eqSetting = eqPresets[chosenEQPreset]
+                else
+                  eqSetting = userEQDefinition
+                end
+                # FIXME: can I target `af_clr` at _just_ `equalizer`? I don't want to also remove scaletempo, for instance
+                putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "af_clr\nf_add equalizer=#{eqSetting}\n"
+              end
+            else
+              putsRealtime "TODO: show the current EQ setting"
+						end
+						{:chainedInput => inputParts[2]}
+					}
+				},
 				'fade' => {
 					'description' => 'Fade volume (/fade VOLUME [DURATION])',
 					'action' => Proc.new { |input|
+						output = nil
 						fadeCommandMatch = /^(out|in|[0-9.]+x?)( [0-9.]+)?[^\/]*(.*)$/.match input
 						if fadeCommandMatch
+							output = {:chainedInput => fadeCommandMatch[3]}
 							whisper "fade command", 4
 							duration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 2.0
 							targetFadeVolume = fadeCommandMatch[1]
-							fadeVolume targetFadeVolume, duration, @currentPlayerIndex
+							if output[:chainedInput] && output[:chainedInput].length > 0
+								whisper "fade in main thread", 4
+								fadeVolume targetFadeVolume, duration, @currentPlayerIndex
+							else
+								whisper "fade in separate thread", 4
+								Thread.new {
+									fadeVolume targetFadeVolume, duration, @currentPlayerIndex
+								}
+							end
 						end
-						{:chainedInput => fadeCommandMatch[3]}
+						output
 					}
 				},
 				'ramp' => {
 					'description' => 'Ramp speed (/ramp SPEED [DURATION])',
 					'action' => Proc.new { |input|
+						output = nil
 						rampCommandMatch = /^(out|in|[0-9.]*(bpm)?)( [0-9.]+)?[^\/]*(.*)$/.match input
 						#                    1              2      3          4
 						if rampCommandMatch
+							output = {:chainedInput => rampCommandMatch[4]}
 							duration = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].to_f : 0.3
 							whisper 'without -af scaletempo[=speed=tempo], min and max limited by the system (~1/8 and ~4.5 on my Mac Mini)', 1
 							targetRampSpeed = rampCommandMatch[1]
@@ -460,21 +536,27 @@ module Tunewich
 							end
 							if targetRampSpeed
 								targetRampSpeed = determineRelativeSpeed targetRampSpeed, @currentTrack, true
-								rampSuccess = rampSpeed targetRampSpeed, duration, @currentPlayerIndex
-								if rampSuccess && rampCommandMatch[4] && rampCommandMatch[4].length > 0
+								if rampCommandMatch[4] && rampCommandMatch[4].length > 0
+									whisper "ramping speed in the main thread", 4
+									rampSpeed targetRampSpeed, duration, @currentPlayerIndex
 									whisper "Waiting 1 second for buffered sound to play", 2
 									sleep 1.0
+								else
+									whisper "ramping speed in a separate thread", 4
+									Thread.new {
+										rampSpeed targetRampSpeed, duration, @currentPlayerIndex
+									}
 								end
 							end
 						end
-						{:chainedInput => rampCommandMatch[4]}
+						output
 					}
 				},
 				'mark' => {
 					'description' => 'Mark the point at which to play this track next time.',
 					'action' => Proc.new { |input|
 						loadLibrary
-						@currentTrack['mark'] = getDurationStringFromSeconds @playerCurrentTime
+						@currentTrack['mark'] = getDurationStringFromSeconds @currentPlayerTime
 						writeLibraryToFile
 						{:chainedInput => input}
 					}
@@ -483,20 +565,50 @@ module Tunewich
 					'description' => 'Wait some number of seconds to execute following chained commands',
 					'action' => Proc.new { |input|
 						inputParts = input.match(/^([^\/]*)(.*)$/)
-						output = {
-							:chainedInput => inputParts[2]
-						}
-						if inputParts[1].length > 0
+
+						if inputParts[2] && inputParts[2].length > 0
+							output = {
+								:chainedInput => inputParts[2]
+							}
+
+							waitEvent = nil
+							inputParts[1].chomp!
 							inputParts[1].strip!
-							if inputParts[1].match(/^[0-9.]+$/)
-								whisper "sleeping for #{inputParts[1].to_f} seconds", 3
-								sleep inputParts[1].to_f
-							elsif 'chapter'.start_with? inputParts[1].strip.downcase
-								output[:bindChain] = 'chapter_change'
+							if inputParts[1].length > 0
+								if inputParts[1].match(/^[0-9.]+\s*$/) # FIXME: chomp! and strip! aren't working, shouldn't have to account for whitespace here
+									waitTime = inputParts[1].to_f
+									whisper "sleeping for #{waitTime} seconds", 3
+									waitEvent = "timed_wait_in_player_#{@currentPlayerIndex}"
+									Thread.new {
+										sleep waitTime
+										whisper "triggering #{waitEvent}", 3
+										trigger waitEvent
+									}
+								else
+									availableWaitEvents = [
+										'chapter_change',
+										'play_end',
+										'fade_end',
+										'speed_ramp_end',
+										'download_end'
+									]
+									waitEvent = firstFuzzyMatchValue inputParts[1].strip.downcase, availableWaitEvents
+									if !waitEvent
+										putsRealtime "Unknown event '#{inputParts[1]}'. Not waiting. Available events: #{availableWaitEvents.join ', '}"
+									end
+								end
 							else
-								putsRealtime "Can't wait for unknown event '#{inputParts[1]}'"
+								putsRealtime "The /wait command expects either a number of seconds, or an event name"
 							end
+							if waitEvent
+								output[:bindChainToEvent] = waitEvent
+								output[:bindingGroupName] = bindingGroupName
+							end
+						else
+							putsRealtime "Put another command after /wait"
+							output = nil
 						end
+
 						output
 					}
 				},
@@ -519,7 +631,6 @@ module Tunewich
 						else
 							putsRealtime playlistNames.join "\n"
 						end
-						commandRequiresNext = true
 						nil
 					}
 				},
@@ -546,7 +657,6 @@ module Tunewich
 								@shuffle = false
 								putsRealtime "shuffle: off"
 							end
-							commandRequiresNext = true
 						else
 							putsRealtime "Add some tags to this track to find similar tracks."
 						end
@@ -556,7 +666,6 @@ module Tunewich
 				'more' => {
 					'description' => "Play all tracks on this video's page.",
 					'action' => Proc.new { |input|
-						# FIXME: diagnose: I updated youtube-dl, and I still get errors all the time, and it'll quit afterward (2016 Feb 29 Mon 11:37:51)
 						if @currentTrack['type'] == 'youtube'
 							@shouldShowPlaybackInfo = false
 							tracks = getYouTubeTracksFromPage(@currentTrack['link'] || @currentTrack['src'])
@@ -566,7 +675,6 @@ module Tunewich
 								@trackIndex = @tracks.length
 								@trackFilters = nil
 								useTracks tracks, true # and set track index to the first
-								commandRequiresNext = true
 							end
 						else
 							putsRealtime "The /more currently only supports YouTube tracks."
@@ -611,14 +719,14 @@ module Tunewich
 							outputMessageLines << "------------------------------"
 							outputMessageLines << "     title : #{track['title']}" if alreadyHas[:title]
 							if track == @currentTrack
-								timeMessage = "      time : #{getDurationStringFromSeconds @playerCurrentTime}"
+								timeMessage = "      time : #{getDurationStringFromSeconds @currentPlayerTime}"
 								if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
 									track['duration'] = getDurationStringFromSeconds getMplayerProperty('get_time_length', /^(ANS_LENGTH=)(.*?)(\?)?$/).to_f
 								end
 								timeMessage += " / #{track['duration']}"
 								timeMessage += " (#{@speed}x)" if @speed != 1
 								if @currentTrack.has_key? 'chapters'
-									chapterIndex = getChapterIndexAtTime @currentTrack, @playerCurrentTime
+									chapterIndex = getChapterIndexAtTime @currentTrack, @currentPlayerTime
 									timeMessage += "\n   chapter : #{@currentTrack['chapters'][chapterIndex]['name']}"
 								end
 								outputMessageLines << "#{timeMessage}"
@@ -683,7 +791,6 @@ module Tunewich
 								@trackIndex = @tracks.length
 								@trackFilters = nil
 								useTracks searchedTracks
-								commandRequiresNext = true
 							end
 						else
 							putsRealtime "Enter a search term of at least 2 characters."
@@ -701,12 +808,24 @@ module Tunewich
 					}
 				},
 				'seek' => {
-					'description' => 'Seek to a time code.',
+					'description' => 'Seek to a time code. Prefix with "+" or "-" to seek relative to current play position."',
 					'action' => Proc.new { |input|
 						inputParts = input.match(/^([^\/]*)(.*)$/)
-						whisper "about to get seconds from '#{inputParts[1]}'", 3
+						relativeDirection = nil
+						relativeDirectionMatch = inputParts[1].match /^[+-]/
+						if relativeDirectionMatch
+							whisper inputParts[1] # XXX
+							inputParts[1].sub! /^[+-]/, ''
+							whisper inputParts[1] # XXX
+							relativeDirection = relativeDirectionMatch[0] == '-' ? -1 : 1
+						end
+
+						whisper "inputParts[1]: #{inputParts[1]}" # XXX
+						whisper "relativeDirection: #{relativeDirection}" # XXX
 						seekTimeInSeconds = getSecondsFromDurationString inputParts[1]
-						whisper "got #{seekTimeInSeconds} seconds from '#{inputParts[1]}'", 3
+						if relativeDirection
+							seekTimeInSeconds = @currentPlayerTime + relativeDirection * seekTimeInSeconds
+						end
 						putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "seek #{seekTimeInSeconds} 2\n"
 						{:chainedInput => inputParts[2]}
 					}
@@ -776,7 +895,6 @@ module Tunewich
 							if testing
 								@loop = true
 								@playerTemporaryInteractiveCommands << "seek #{track['loop'][1] - 3.0} 2"
-								commandRequiresNext = true
 							end
 						else
 							putsRealtime "Download the track before adding an A/B loop."
@@ -874,7 +992,6 @@ module Tunewich
 							useTracks tracks
 
 							@trackIndex = @tracks.length - tracks.length
-							commandRequiresNext = true
 						end
 						{:chainedInput => inputParts[3]}
 					}
@@ -926,7 +1043,6 @@ module Tunewich
 							@trackIndex = @tracks.length - 1
 							# TODO: add @currentTrack to queue
 						end
-						commandRequiresNext = true
 						{:chainedInput => input}
 					}
 				},
@@ -950,8 +1066,6 @@ module Tunewich
 						else
 							if @currentTrack['chapters']
 								whisper "Prompting to select a chapter from the list...", 2
-								commandRequiresBreak = false
-								commandRequiresNext = false
 
 								chapterPromptMessage = nil
 
@@ -959,9 +1073,6 @@ module Tunewich
 								chapterResponse = promptForChapterIndex @currentTrack['chapters'], interactiveCommands, chapterPromptMessage
 								@shouldShowPlaybackInfo = true
 								chapterIndex = chapterResponse[:index]
-
-								next if commandRequiresNext
-								break if commandRequiresBreak
 							else
 								putsRealtime "No chapters on the current track."
 							end
@@ -986,7 +1097,7 @@ module Tunewich
 							'name' => inputParts[1]
 						}
 						if @currentTrack['chapters'] && @currentTrack['chapters'].length > 0
-							currentPlayerTime = @playerCurrentTime
+							currentPlayerTime = @currentPlayerTime
 							newChapter['time'] = getDurationStringFromSeconds(currentPlayerTime)
 						else
 							whisper "Adding the first chapter", 2
@@ -1007,7 +1118,7 @@ module Tunewich
 					'description' => "Remove the current chapter.",
 					'action' => Proc.new { |input|
 						inputParts = input.match(/^([^\/]*)(.*)$/)
-						chapterIndex = getChapterIndexAtTime @currentTrack, @playerCurrentTime
+						chapterIndex = getChapterIndexAtTime @currentTrack, @currentPlayerTime
 						if chapterIndex
 							@currentTrack['chapters'].delete_at chapterIndex
 							writeLibraryToFile
@@ -1024,7 +1135,7 @@ module Tunewich
 							if inputParts[1].length > 0
 								chapterIndex = getChapterIndexByQuery inputParts[1]
 							else
-								chapterIndex = getChapterIndexAtTime @currentTrack, @playerCurrentTime
+								chapterIndex = getChapterIndexAtTime @currentTrack, @currentPlayerTime
 								whisper "Current chapter is at index #{chapterIndex}", 3
 							end
 							if chapterIndex
@@ -1051,7 +1162,6 @@ module Tunewich
 					'action' => Proc.new { |input|
 						samplePlayerCommands = [];
 						samplePlayerCommands << 'Some sample options:';
-						samplePlayerCommands << 'EQ for earplugs: -af equalizer=2:6:1:0:0:1:2:4:6:3';
 						samplePlayerCommands << 'small video window in the corner: -geometry 100%:100% -xy 150';
 						samplePlayerCommands << 'mix stereo to mono: -af pan=1:0.5:0.5';
 						@playerOverrideCommands = editListInVim(@playerOverrideCommands, samplePlayerCommands.join("\n"))
@@ -1096,7 +1206,7 @@ module Tunewich
 				'exit' => {
 					'description' => 'Exit tunewich when the current track finishes or is quit.',
 					'action' => Proc.new { |input|
-						commandRequiresExit = true
+						trigger 'request_exit'
 						{:chainedInput => input}
 					}
 				},
@@ -1137,12 +1247,7 @@ module Tunewich
 
 			while not playerOutput or playerOutput[:exit] do
 				if @trackIndex && @tracks[@trackIndex]
-					commandRequiresBreak = false
-					commandRequiresNext = false
-
 					@currentTrack = matchExistingLibraryTrack @tracks[@trackIndex]
-
-					trigger 'play_track'
 
 					titleBlock "[#{@trackIndex + 1}] - #{@currentTrack['title']}"
 
@@ -1178,29 +1283,29 @@ module Tunewich
 						end
 						writeLibraryToFile
 					end
-
-					whisper "I've been asked to exit", 3 if commandRequiresExit
-					return if commandRequiresExit
-					whisper "I've been asked to break", 3 if commandRequiresBreak
-					break if commandRequiresBreak
-					whisper "I've been asked to skip to next", 3 if commandRequiresNext
-					next if commandRequiresNext
 				else
 					whisper "Empty tracklist", 3
 					emptyAction = Proc.new { |input| false } # break command loop after any non-command input
 					commandPrompt "empty", interactiveCommands, emptyAction
 				end
+
+				if shouldExitPlayerLoop
+					whisper "Exiting player loop", 3
+					break
+				end
 			end
+
+			unbindGroup bindingGroupName
 		end
 
 		def getChapterIndexAtTime track, seconds
 			chapterIndex = nil
-			whisper "Finding chapter at #{seconds} seconds on track: #{track['title']}", 4
+			whisper "Finding chapter at #{seconds} seconds on track: #{track['title']}", 5
 			if track.has_key? 'chapters'
-				whisper "Looping through chapters.", 4
+				whisper "Looping through chapters.", 5
 				track['chapters'].each_with_index { |chapter, index|
 					chapterSeconds = getSecondsFromDurationString chapter['time']
-					whisper "chapterSeconds: #{chapterSeconds}", 4
+					whisper "chapterSeconds: #{chapterSeconds}", 5
 					if chapterSeconds <= seconds
 						chapterIndex = index
 					else
@@ -1223,7 +1328,7 @@ module Tunewich
 					if referenceChapterIndex
 						chapterIndex = referenceChapterIndex
 					else
-						chapterIndex = getChapterIndexAtTime track, @playerCurrentTime
+						chapterIndex = getChapterIndexAtTime track, @currentPlayerTime
 					end
 					input.strip!
 					if input.match /^>+$/
@@ -1232,8 +1337,7 @@ module Tunewich
 						chapterIndex -= input.length - 1
 					else
 						chapterList = track['chapters'].map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
-						selectedChapter = firstFuzzyMatch input, chapterList
-						chapterIndex = selectedChapter[:index] if selectedChapter
+						chapterIndex = firstFuzzyMatchIndex input, chapterList
 					end
 				end
 				whisper "Choosing chapter #{chapterIndex}", 2
@@ -1245,7 +1349,7 @@ module Tunewich
 		end
 		
 		def seekToChapter chapterIndex, fadeOutPeriod = 1.0, fadeInPeriod = 0.25
-			currentPlaybackSeconds = @playerCurrentTime
+			currentPlaybackSeconds = @currentPlayerTime
 			whisper "currentPlaybackSeconds: #{currentPlaybackSeconds}", 3
 			chapterTime = @currentTrack['chapters'][chapterIndex]['time']
 			chapterSeconds = getSecondsFromDurationString chapterTime
@@ -1356,9 +1460,12 @@ module Tunewich
 			else
 				whisper "fading to the same volume: doing nothing", 4
 			end
+
+			trigger 'fade_end'
 		end
 
 		def rampSpeed targetRampSpeed, duration, playerIndex
+			isValidInput = false
 			whisper "targetRampSpeed: #{targetRampSpeed}", 3
 			@shouldShowPlaybackInfo = false
 			if targetRampSpeed
@@ -1388,11 +1495,14 @@ module Tunewich
 				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "speed_set #{targetRampSpeed}\n"
 				@currentSpeed = targetRampSpeed
 				trigger 'speed_change'
-				return true
+				isValidInput = true
 			else
 				putsRealtime "Bad speed format, or track has no bpm set."
 			end
-			return false
+
+			trigger 'speed_ramp_end'
+
+			isValidInput
 		end
 
 		def findTag(query)
@@ -1473,6 +1583,8 @@ module Tunewich
 		end
 
 		def play(track, interactiveCommands)
+			trigger 'play_start'
+
 			playerBindings = []
 			whisper "playing track: #{track}", 3
 			@currentPlayerIndex = 1 - @currentPlayerIndex
@@ -1631,7 +1743,7 @@ module Tunewich
 			})
 			while @playerApplicationThreads[@currentPlayerIndex].alive?
 				sleep 0.1
-				@playerCurrentTime = getMplayerProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(.*?)(\?)?$/).to_f
+				@currentPlayerTime = getMplayerProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(.*?)(\?)?$/).to_f
 				trigger 'time_update'
 			end
 			# @playerApplicationThreads[@currentPlayerIndex].join
@@ -1648,13 +1760,15 @@ module Tunewich
 			playerBindings.map { |bindingID| unbind bindingID }
 
 			deleteStream streamName if streamName
+			 
+			trigger 'play_end'
 
 			response[:exit] = playerStatus
 			response
 		end
 
 		def showPlaybackInfo
-			if @shouldShowPlaybackInfo && @configuredVerbosity > -1 && @configuredVerbosity < 4
+			if @shouldShowPlaybackInfo && @configuredVerbosity > -1 && @configuredVerbosity < 5
 				playbackInfo = []
 				unicodeChars = {
 					:speaker => "🔈",
@@ -1677,7 +1791,7 @@ module Tunewich
 				playbackInfo << "#{unicodeChars[:speaker]} #{volumeIndication}"
 
 				# show playback position
-				currentPlayerTimePosition = @playerCurrentTime
+				currentPlayerTimePosition = @currentPlayerTime
 				timeMessage = "#{unicodeChars[:timer]}  #{getDurationStringFromSeconds currentPlayerTimePosition}"
 				timeMessage += "/#{@currentTrack['duration']}" if @currentTrack.has_key?('duration')
 				timeMessage += "(#{(@currentSpeed * 10).round / 10.0}x)" if @currentSpeed != 1
@@ -1695,7 +1809,7 @@ module Tunewich
 				if @currentTrack.has_key?('chapters')
 					newChapterIndex = getChapterIndexAtTime @currentTrack, currentPlayerTimePosition
 					if newChapterIndex
-						if @currentChapterIndex != newChapterIndex # TODO: @playerCurrentTime fix will prevent this from happening erroneously
+						if @currentChapterIndex != newChapterIndex # TODO: @currentPlayerTime fix will prevent this from happening erroneously
 							@currentChapterIndex = newChapterIndex
 							trigger 'chapter_change'
 						end
@@ -1710,7 +1824,7 @@ module Tunewich
 				end
 
 				# check again if realtime output has been disabled while were doing all this stuff
-				if @shouldShowPlaybackInfo && @configuredVerbosity > -1 && @configuredVerbosity < 4
+				if @shouldShowPlaybackInfo && @configuredVerbosity > -1 && @configuredVerbosity < 5
 					printRepeat(playbackInfo.join(' '), true)
 				end
 			end
@@ -1728,12 +1842,16 @@ module Tunewich
 			pattern ||= /^()(.*)$/
 			command = "#{property}\n"
 			command = "get_property #{command}" if not property.match(/^get_/)
+			# FIXME: this wait causes close-packed requests to get the wrong value as response
+			# side effects:
+			# - when fading volume or ramping (repeated commands), chapter may be reported as 0
+			#		- if first chapter is skipped, this will cause the player to skip several chapters, whichever chapter you're really on
 			responseWait = 0.1
 			putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", command
 			sleep responseWait
 			lastPlayerOutput = tailTempFile "#{Player::MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
 			if lastPlayerOutput
-				whisper "read #{property} from player, output: #{lastPlayerOutput}", 4
+				whisper "read #{property} from player, output: #{lastPlayerOutput}", 5
 				matches = lastPlayerOutput.match pattern
 				return matches[2] if matches
 			end
@@ -1857,13 +1975,11 @@ module Tunewich
 		end
 
 		def findTrackIndex(query)
-			match = firstFuzzyMatch query, getTrackTitles(@tracks)
-			match ? match[:index] : false
+			firstFuzzyMatchIndex query, getTrackTitles(@tracks)
 		end
 
 		def findPlaylistName(query)
-			match = firstFuzzyMatch query, @library['playlists'].keys
-			match ? match[:value] : false
+			firstFuzzyMatchValue query, @library['playlists'].keys
 		end
 
 		def fuzzyStringSearchInList(query, list)
@@ -1897,6 +2013,16 @@ module Tunewich
 		def firstFuzzyMatch(query, list)
 			matches = fuzzyStringSearchInList query, list
 			matches.length ? matches[0] : false
+		end
+
+		def firstFuzzyMatchValue(query, list)
+			match = firstFuzzyMatch query, list
+			match ? match[:value] : false
+		end
+
+		def firstFuzzyMatchIndex(query, list)
+			match = firstFuzzyMatch query, list
+			match ? match[:index] : false
 		end
 
 		def deleteTrackFile(track)
@@ -2050,28 +2176,28 @@ module Tunewich
 			Thread.new {
 				# FIXME: trying to put it in a new thread...maybe won't fix the problem, but it will unblock the main thread.
 				writeResult = File.write(path, value)
-				whisper "#{name} << '#{value.chomp}' (#{writeResult})", 4
+				whisper "#{name} << '#{value.chomp}' (#{writeResult})", 5
 			}
 			path
 		end
 
 		def readTempFile(name, shouldIncludeSessionID = true)
-			whisper "read tmp #{name}", 4
+			whisper "read tmp #{name}", 5
 			path = getTempFilePath(name, shouldIncludeSessionID)
 
 			if File.exist? path
-				whisper "read tmp #{name}: exists", 4
+				whisper "read tmp #{name}: exists", 5
 				contents = File.read path
-				whisper "read tmp #{name}, contents: #{contents}", 4
+				whisper "read tmp #{name}, contents: #{contents}", 5
 				return contents
 			else
-				whisper "read tmp #{name}: missing", 4
+				whisper "read tmp #{name}: missing", 5
 				return ''
 			end
 		end
 
 		def tailTempFile(name, shouldIncludeSessionID = true)
-			whisper "tail tmp #{name}", 4
+			whisper "tail tmp #{name}", 5
 			content = readTempFile(name, shouldIncludeSessionID)
 			lastLine = ''
 			if content && content.length > 0
@@ -2942,8 +3068,6 @@ module Tunewich
         end
 				@streamingServerType = streamingServerType
         whisper "streamingServerType: #{streamingServerType}", 2
-				# FIXME: getting properties out of mplayer don't work when targeting "Soundflower (2ch)" (e.g. current time or volume)
-				# FIXME: I think fading worked when using Nicecast
 				serviceConfigDir = "#{$tunewichWorkingDirectory}/config"
 				isRadioConfigured = true
         whisper "Preparing to start radio (#{streamingServerType}).", 0
@@ -2967,7 +3091,7 @@ module Tunewich
 				end
 
         if isRadioConfigured
-					bind 'play_track', Proc.new {
+					bind 'play_start', Proc.new {
 						updateRadioMetadata @currentTrack['title']
 					}
 					bind 'chapter_change', Proc.new {
@@ -3099,6 +3223,17 @@ module Tunewich
 		def getTracksFromURLs(urls)
 			tracks = []
 
+			def getHTTPHeaderByPattern(head, pattern)
+				value = nil
+				if head
+					matchingLines = head.lines.keep_if { |line| line.match(pattern) }
+					if matchingLines && matchingLines.length > 0
+						value = matchingLines.last.chomp.sub pattern, '\1'
+					end
+				end
+				value
+			end
+
 			urls.each { |url|
 				urlCanBeScraped = true # assuming this for now
 				if url.match(/ocremix\.org\/remix/)
@@ -3115,28 +3250,28 @@ module Tunewich
 					puts "This URL contains a YouTube ID. Adding."
 				else
           urlHTTPHead = `curl -sL --head "#{url}"`
-					urlContentType = urlHTTPHead.lines.keep_if { |line| line.match(/^Content-Type:/i) }.last.chomp.sub /^Content-Type: ([^;]*).*/i, '\1'
-					cookieDomain = urlHTTPHead.lines.keep_if { |line| line.match(/^Set-Cookie:.*domain=/i) }.last.chomp.sub /^Set-Cookie:.*domain=([^;]*).*/i, '\1'
+					urlContentType = getHTTPHeaderByPattern urlHTTPHead, /^Content-Type: ([^;]*).*/i
+					cookieDomain = getHTTPHeaderByPattern urlHTTPHead, /^Set-Cookie:.*domain=([^;]*).*/i
 					whisper "urlContentType: #{urlContentType}", 3
-					if urlContentType.match /^audio\//
+					if 'text/html' == urlContentType && (cookieDomain == '.bandcamp.com' || url.match(/(https?:\/\/)([^\.]+)\.bandcamp\.com.*/))
+            whisper "WIP: scraping bandcamp page"
 						urlCanBeScraped = false
-						whisper "URL is an audio file. Adding as a track", 3
+						bandcampTracks = loadBandcamp url
+						tracks += bandcampTracks if bandcampTracks
+					elsif urlContentType && ['text/xml', 'application/rss+xml'].include?(urlContentType) # TODO: application/rss+xml, application/rdf+xml;q=0.8, application/atom+xml;q=0.6, application/xml;q=0.4, text/xml;q=0.4
+            whisper "WIP: try to load podcast feed"
+						urlCanBeScraped = false
+						podcastTracks = loadPodcast url
+						tracks += podcastTracks if podcastTracks
+					else
+						urlCanBeScraped = false
+						whisper "assuming that URL is an audio file. Adding as a track", 3
 						track = createTrack(url, urlContentType)
 						whisper "track: #{track}", 3
 						track = matchExistingLibraryTrack(track)
 						whisper "track (after matching existing): #{track}", 3
 						tracks << track
 						whisper "added: #{tracks.last}", 3
-					elsif 'text/html' == urlContentType && (cookieDomain == '.bandcamp.com' || url.match(/(https?:\/\/)([^\.]+)\.bandcamp\.com.*/))
-            whisper "WIP: scraping bandcamp page"
-						urlCanBeScraped = false
-						bandcampTracks = loadBandcamp url
-						tracks += bandcampTracks if bandcampTracks
-					elsif ['text/xml', 'application/rss+xml'].include? urlContentType # TODO: application/rss+xml, application/rdf+xml;q=0.8, application/atom+xml;q=0.6, application/xml;q=0.4, text/xml;q=0.4
-            whisper "WIP: try to load podcast feed"
-						urlCanBeScraped = false
-						podcastTracks = loadPodcast url
-						tracks += podcastTracks if podcastTracks
 					end
 				end
 
@@ -3441,11 +3576,14 @@ module Tunewich
 									end
 									if commandInfo[:output] && commandInfo[:output][:chainedInput] && commandInfo[:output][:chainedInput].length > 0
 										whisper "chained commandLoopInput: #{commandInfo[:output][:chainedInput]}", 3
-										if commandInfo[:output][:bindChain]
+										if commandInfo[:output][:bindChainToEvent]
 											commandLoopInput = nil
-											bindOnce commandInfo[:output][:bindChain], Proc.new {
-												processCommandsWithInput.call commandInfo[:output][:chainedInput]
-											}
+											whisper "binding deferred chained commands to event '#{commandInfo[:output][:bindChainToEvent]}'", 3
+											bindOnce commandInfo[:output][:bindChainToEvent], Proc.new {
+												whisper "running deferred chained commands", 3
+												commandLoopInput = processCommandsWithInput.call commandInfo[:output][:chainedInput]
+											}, commandInfo[:output][:bindingGroupName]
+											break
 										else
 											commandLoopInput = commandInfo[:output][:chainedInput]
 										end
@@ -3456,9 +3594,12 @@ module Tunewich
 									end
 								end
 							end
+
 							whisper "no more commands to execute (for now)", 3
+
+							commandLoopInput
 						}
-						processCommandsWithInput.call input
+						input = processCommandsWithInput.call input
 					end
 
 					if action && input && input.length > 0
@@ -3577,10 +3718,9 @@ module Tunewich
 				chapterQuery = commandPrompt(promptMessage, commands, emptyAction)[:input]
 				break if not chapterQuery or chapterQuery.length === 0
 
-				selectedChapter = firstFuzzyMatch chapterQuery, chapterList
+				selectedChapterIndex = firstFuzzyMatchIndex chapterQuery, chapterList
 
-				if selectedChapter
-					selectedChapterIndex = selectedChapter[:index]
+				if selectedChapterIndex
 					break
 				else
 					puts "No matches. Try again."
