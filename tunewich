@@ -129,7 +129,16 @@ module Tunewich
 						if !tags || tags.length < 1
 							puts "current tags: #{getTrackTags track}"
 						else
-							addTrackToTags track, tags.split(/[, ]+/)
+							tagsToAdd = tags.split(/[, ]+/)
+							tagsToRemove = []
+							tagsToAdd.each { |tagName|
+								if /^-/.match tagName
+									tagsToRemove << tagName.sub(/^-/, '')
+									tagsToAdd.delete tagName
+								end
+							}
+							addTrackToTags track, tagsToAdd
+							removeTagsFromTrack track, tagsToRemove
 							addTrackToLibrary @tracks[@trackIndex] if @tracks[@trackIndex]['unattached']
 							writeLibraryToFile true
 						end
@@ -186,7 +195,6 @@ module Tunewich
 							end
 							putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{targetFadeVolume} 1\n"
 							if followingCommand
-								whisper "mplayerAction: second command > input"
 								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
 							end
 						end
@@ -197,7 +205,6 @@ module Tunewich
 					'action' => Proc.new { |properties|
 						rampCommandMatch = /^(out|in|[0-9.]+)( [0-9.]+)?( .+)?$/.match properties
 						if rampCommandMatch
-							whisper "ramp command"
 							duration = rampCommandMatch[2] && rampCommandMatch[2].length > 0 ? rampCommandMatch[2].to_f : 0.3
 							followingCommand = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].strip : nil
 							speed = getCurrentMplayerSpeed
@@ -227,7 +234,6 @@ module Tunewich
 							if followingCommand
 								whisper "Waiting 1 second for buffered sound to play"
 								sleep 1.0
-								whisper "mplayerAction: second command > input"
 								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
 							end
 						end
@@ -403,7 +409,6 @@ module Tunewich
 					updateTrackInfo track
 				end
 
-				whisper "checking if file exists"
 				fileExists = trackFileExists? track
 
 				if !fileExists && @noNetwork
@@ -438,7 +443,6 @@ module Tunewich
 				#  l: copy a link to share the source
 				#  x: remove from library
 				#  d: download
-				whisper "about to play track"
 				playerOutput = play track, chapterIndex, interactiveCommands
 
 				whisper "I've been asked to exit" if commandRequiresExit
@@ -472,6 +476,15 @@ module Tunewich
 				matchingTag ||= createTag tagName
 				matchingTag['tracks'] << track['id']
 				matchingTag['tracks'].uniq!
+			}
+		end
+
+		def removeTagsFromTrack(track, tagNames)
+			tagNames.each { |tagName|
+				matchingTag = findTag tagName
+				if matchingTag
+					matchingTag['tracks'].delete track['id'] if matchingTag['tracks'].include? track['id']
+				end
 			}
 		end
 
@@ -532,7 +545,7 @@ module Tunewich
 
 				true
 			}
-			whisper "checking again if file exist :["
+			# TODO: I shouldn't need to check twice
 			fileAlreadyExists = trackFileExists? track
 			streaming = !fileAlreadyExists && !@enableDownload && !chapterIndex
 
@@ -542,7 +555,6 @@ module Tunewich
 			end
 
 			if track['chapters']
-				whisper "ooh, this track has chapters"
 
 				if chapterIndex
 
@@ -603,8 +615,6 @@ module Tunewich
 				return false
 			end
 
-			whisper "Alright, file path is set to play from #{mediaFilePath}"
-
 			if !streamName
 				mplayerStartupOptions << "-loop 0" if track['loop'] or @loop
 			end
@@ -659,9 +669,12 @@ module Tunewich
 			pattern ||= /^(.*)$/
 			command = "#{property}\n"
 			command = "get_property #{command}" if not property.match(/^get_/)
+			responseWait = 0.1
 			putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, command
-			sleep 0.1
-			output = readTempFile(Player::MPLAYER_STDOUT_BUFFER_NAME).lines.pop.chomp
+			whisper "wait #{responseWait} for property response"
+			sleep responseWait
+			output = readTempFile(Player::MPLAYER_STDOUT_BUFFER_NAME).lines.pop.chomp.strip.gsub(/\r/, '')
+			whisper "read #{property} from player, output: #{output}"
 			matches = output.match pattern
 			matches[2] || nil
 		end
@@ -845,7 +858,7 @@ module Tunewich
 		end
 
 		def downloadTrack(track, streamPath = nil)
-      youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} --no-part"
+			youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} --no-part"
 			youtubeDlCommandEnd = "-- #{track['src']}"
 
 			downloadPid = nil
@@ -929,19 +942,20 @@ module Tunewich
 		end
 
 		def createTempFile(name)
+			whisper "make tmp #{name}"
 			putInTempFile name, ''
 		end
 
 		def putInTempFile(name, value)
 			path = getTempFilePath name
-			whisper "#{path} << '#{value.chomp}'"
 			# FIXME: why does this stall when writing to a FIFO before something is reading from it?
 			writeResult = File.write(path, value)
-			whisper "#{path} [written: #{writeResult}]"
+			whisper "#{name} << '#{value.chomp}' (#{writeResult})"
 			writeResult && path
 		end
 
 		def readTempFile(name)
+			whisper "read tmp #{name}"
 			path = getTempFilePath name
 
 			if File.exist? path
@@ -950,12 +964,14 @@ module Tunewich
 		end
 
 		def tailTempFile(name)
+			whisper "tail tmp #{name}"
 			content = readTempFile name
 			lastLine = content.gsub("\r","\n").lines.pop
 			lastLine.strip.chomp
 		end
 
 		def deleteTempFile(name)
+			whisper "delete tmp #{name}"
 			path = getTempFilePath name
 
 			if File.exist? path
@@ -964,6 +980,7 @@ module Tunewich
 		end
 
 		def makeStream(name)
+			whisper "mkfifo #{name}"
 			path = getTempFilePath name
 
 			if File.exist? path
@@ -1540,7 +1557,7 @@ module Tunewich
 				urls.split(',').each { |url|
 					if url.match(/ocremix\.org\/remix/)
 						output[:newTracks] << createTrack(url, 'ocremix')
-            puts "This URL contains an OC Remix ID. Adding."
+						puts "This URL contains an OC Remix ID. Adding."
 					elsif looksLikeAYouTubeID? url
 						youtubeId = url
 					else
@@ -1626,7 +1643,7 @@ module Tunewich
 				@noNetwork = true
 			end
 
-      parser.on("--format FORMAT", "Set the file format to request for streaming or downloading.", " ") do |format|
+			parser.on("--format FORMAT", "Set the file format to request for streaming or downloading.", " ") do |format|
 				@preferredFileFormat = format
 			end
 
@@ -1755,6 +1772,7 @@ module Tunewich
 		end
 
 		def commandPrompt message = nil, commands = nil, action = nil
+			whisper "opening command prompt"
 			if commands
 				commands['?'] = {
 					'info' => 'show this info',
@@ -1788,7 +1806,7 @@ module Tunewich
 
 			whisper "waiting for user input on STDIN"
 			while input = STDIN.gets.chomp
-				whisper "received input <#{input}> on STDIN"
+				whisper "received STDIN: #{input}"
 				# TODO: allow comma-separated commands (e.g. "x,fq 1" to prepare to exit, then fade this track out in 1 secone)
 				if commands && !input.empty? && input[0] == '/'
 					commandParts = input.match(/^\/([^\s]+)\s*(.*)/)
@@ -1820,6 +1838,8 @@ module Tunewich
 			end
 
 			response[:input] = input
+
+			whisper "closing command prompt"
 
 			response
 		end
