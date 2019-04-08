@@ -3335,11 +3335,11 @@ module Tunewich
 				setLibraryPath inputDir
 			end
 
-			parser.on("-f", "--filter RULES", Player::FILTER_HELP_1, Player::FILTER_HELP_2, Player::FILTER_HELP_3, " ") do |rules|
+			parser.on("-f RULES", "--filter RULES", Player::FILTER_HELP_1, Player::FILTER_HELP_2, Player::FILTER_HELP_3, " ") do |rules|
 				@trackFilters = parseOptionParameters rules
 			end
 
-			parser.on("-f FORMAT", "--format FORMAT", "Set the file format to request for streaming or downloading.", " ") do |format|
+			parser.on("-F FORMAT", "--format FORMAT", "Set the file format to request for streaming or downloading.", " ") do |format|
 				@preferredFileFormat = format
 			end
 
