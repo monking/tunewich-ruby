@@ -137,6 +137,12 @@ module Tunewich
 						commandRequiresNext = true
 					}
 				},
+				'all' => {
+					'info' => "Load entire library.",
+					'action' => Proc.new {
+						useEntireLibrary
+					}
+				},
 				'list' => {
 					'info' => "Load a playlist.",
 					'action' => Proc.new { |playlistQuery|
