@@ -454,7 +454,30 @@ module Tunewich
 		end
 
 		def getInteractiveCommands modes = [], bindingGroupName
-			# TODO: 1gG4fU
+
+			tagTabAction = Proc.new { |input|
+				inputParts = input.match(/^([^\/]*)(.*)$/)
+				if inputParts[1] && inputParts[1].length > 0
+					lastInputToken = inputParts[1].sub(/^.* /, '')
+					if lastInputToken[0] == '-'
+						lastInputToken = lastInputToken[1,lastInputToken.length - 1]
+					end
+					tagNames = @library['tags'].keys
+					@library['tags'].each { |tagName, tag|
+						if tag.has_key? 'aliases'
+							whisper("adding aliases for #{tagName} (#{tag['aliases'].length})")
+							tagNames = tagNames + tag['aliases']
+						end
+					}
+					guessTagName = firstFuzzyMatchValue(lastInputToken, tagNames) if lastInputToken.length > 0
+					if guessTagName && guessTagName.length > 0
+						input = input.sub!(lastInputToken, guessTagName)
+					end
+				end
+				input
+			}
+
+			# TODO: 1gG4fU @refactor
 			interactiveCommands = {
 				'base' => {
 					'wait' => {
@@ -608,20 +631,7 @@ module Tunewich
 							end
 							{:chainedInput => inputParts[2]}
 						},
-						'tabAction' => Proc.new { |input|
-							inputParts = input.match(/^([^\/]*)(.*)$/)
-							if inputParts[1] && inputParts[1].length > 0
-								lastInputToken = inputParts[1].sub(/^.* /, '')
-								if lastInputToken[0] == '-'
-									lastInputToken = lastInputToken[1,lastInputToken.length - 1]
-								end
-								guessTagName = firstFuzzyMatchValue(lastInputToken, @library['tags'].keys) if lastInputToken.length > 0
-								if guessTagName && guessTagName.length > 0
-									input = input.sub!(lastInputToken, guessTagName)
-								end
-							end
-							input
-						}
+						'tabAction' => tagTabAction
 					},
 					'tagall' => {
 						'description' => "Tag all tracks in the current tracklist.",
@@ -645,7 +655,8 @@ module Tunewich
 								writeLibraryToFile
 							end
 							{:chainedInput => inputParts[2]}
-						}
+						},
+						'tabAction' => tagTabAction
 					},
 					'list' => {
 						'description' => "Load a playlist. (not chainable)",

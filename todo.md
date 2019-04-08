@@ -7,7 +7,7 @@
 - [ ] 1gor9z: when typing `/note` and there are no existing notes, begin creating a note
 - [ ] 1gG4VT: fix /edit swapping first and last tracks
 - [ ] 1gG4Ve: optionally use common factors or time signatures to find other good ratios
-- [ ] 1gG4fU: change any scoped variables referenced to trigger events with data, if needed, and move this into a static object on Player, or several (base, playing, editing)
+- [ ] 1gG4fU @refactor: change any scoped variables referenced to trigger events with data, if needed, and move this into a static object on Player, or several (base, playing, editing)
 	- [x] bindingGroupName
 - [ ] 1gG4gW: generalized function to list playlists, their track count, and the average rating among rated tracks
 - [ ] 1gG4h6: getDownloadCommand, bind `download_complete`, etc.
