@@ -13,6 +13,7 @@ $disableWrapCharacter = "\033[?7l"
 $enableWrapCharacter = "\033[?7h"
 $tunewichWorkingDirectory = "#{ENV['HOME']}/.tunewich"
 $tunewichTmpDirectory = "#{$tunewichWorkingDirectory}/tmp"
+$serviceConfigDir = "#{$tunewichWorkingDirectory}/config"
 
 # Go to .tunewich directory so that any temp files are stored there.
 Dir.mkdir $tunewichWorkingDirectory if not Dir.exist? $tunewichWorkingDirectory
@@ -91,6 +92,8 @@ module Tunewich
 			@streamingServerType = nil
 			@youtubeDLTrackTypes = ['youtube', 'soundcloud']
 			@isPlayerPlaying = false
+
+			getConfigFiles
 
 			getEnvironmentConfig
 
@@ -224,6 +227,14 @@ module Tunewich
 			# 4: debug
 			if @configuredVerbosity >= verbosity
 				STDERR.puts "  #{"-" * verbosity} #{message}"
+			end
+		end
+
+		def getConfigFiles
+			mplayerConfigFile = "#{$serviceConfigDir}/mplayer.options"
+
+			if File.exist?(mplayerConfigFile)
+				@playerOverrideCommands << File.read(mplayerConfigFile).chomp.strip
 			end
 		end
 
@@ -1932,7 +1943,6 @@ module Tunewich
 				:exit => true,
 				:playTime => 0
 			}
-			playerStartupOptions = []
 
 			playerInputStreamName = "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
 			deleteStream playerInputStreamName
@@ -1941,7 +1951,7 @@ module Tunewich
 			playerStdoutName = "#{Player::MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
 			playerStdoutFile = getTempFilePath playerStdoutName
 
-			playerStartupOptions << "-slave -quiet -input file=#{playerInputFile}"
+			playerStartupOptions = ["-slave -quiet -input file=#{playerInputFile}"]
 			playerStatus = nil
 			playerAction = Proc.new { |command|
 				if /play/.match command
@@ -2030,11 +2040,11 @@ module Tunewich
 				trigger 'volume_change'
 			end
 			playerStartupOptions += @playerOverrideCommands
-			playerStartupOptions += ["-volume #{@volume}"]
-			playerStartupOptions += ["-speed #{speed}"]
+			playerStartupOptions << "-volume #{@volume}"
+			playerStartupOptions << "-speed #{speed}"
 
 			if track['loudness']
-				playerStartupOptions += ["-volume #{(getMplayerConfigNumericProperty('volume') / track['loudness']).round}"]
+				playerStartupOptions << "-volume #{(getMplayerConfigNumericProperty('volume') / track['loudness']).round}"
 			end
 
 			response[:startTime] = Time.now.to_f
@@ -2474,19 +2484,19 @@ module Tunewich
 			downloadFeedbackFile = createTempFile downloadFeedbackFileName
 			downloadCommand = getDownloadCommand track, downloadFeedbackFile, streamPath
 
-      whisper(downloadCommand, 3)
+			whisper(downloadCommand, 3)
 			if streamPath
 				downloadPid = spawn(downloadCommand) # spawn: non-blocking
 			else
 				trigger 'download_begin', track
 				Thread.new {
 					downloadPid = system(downloadCommand) # system: blocking
-          if trackFileExists? track
-            trigger 'download_success', track
-          else
-            trigger 'download_fail', track
-          end
-          trigger 'download_end', track
+					if trackFileExists? track
+						trigger 'download_success', track
+					else
+						trigger 'download_fail', track
+					end
+					trigger 'download_end', track
 				}
 			end
 
@@ -3341,7 +3351,7 @@ module Tunewich
 				@trackFilters['local'] = ''
 			end
 
-			parser.on("-o OPTIONS", "--player-opts OPTIONS", "Set player options. Set interactively with the /player command.", " ") do |options|
+			parser.on("-o OPTIONS", "--player-opts OPTIONS", "Set player options. Set interactively with the /player command. You can also add mplayer options in #{$serviceConfigDir}/mplayer.options (You can find a starting copy in the 'config' directory that came with tunewich). --player-opts will override those options.", " ") do |options|
 				# TODO: 1pnpNcT25tY
 				isFirstElement = true
 				@playerOverrideCommands += options.split(' -').map { |option|
@@ -3372,7 +3382,6 @@ module Tunewich
 				end
 				@streamingServerType = streamingServerType
 				whisper("streamingServerType: #{streamingServerType}", 2)
-				serviceConfigDir = "#{$tunewichWorkingDirectory}/config"
 				isRadioConfigured = true
 				whisper("Preparing to start radio (#{streamingServerType}).", 0)
 				if streamingServerType == 'homebrew'
@@ -3402,8 +3411,8 @@ module Tunewich
 						updateRadioMetadata "#{@currentTrack['title']} (#{@currentTrack['chapters'][@currentChapterIndex]['name']})"
 					}
 					if streamingServerType == 'homebrew'
-						icecastConfigFile = "#{serviceConfigDir}/icecast.xml"
-						darkiceConfigFile = "#{serviceConfigDir}/darkice.cfg"
+						icecastConfigFile = "#{$serviceConfigDir}/icecast.xml"
+						darkiceConfigFile = "#{$serviceConfigDir}/darkice.cfg"
 
 						if not File.exist? icecastConfigFile
 							puts "Please create the icecast config file at #{icecastConfigFile}."
