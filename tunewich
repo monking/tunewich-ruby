@@ -79,9 +79,9 @@ module Tunewich
 
 			getConfigFiles
 
-			getEnvironmentConfig
+			getEnvironmentConfig # library is loaded in here
 
-			doOptionSecondaryActions parseOptions
+			doOptionSecondaryActions parseOptions # library may be loaded again from a different place here
 
 			trackTitleListFromLastSession = readTempFile('tracks', false)
 			if trackTitleListFromLastSession && trackTitleListFromLastSession.length > 0
@@ -100,6 +100,8 @@ module Tunewich
 						whisper("A track was marked, but is not in the current queue. It will remain marked until it is played again.", 0)
 					end
 				end
+			elsif @shuffle && @trackIndex == 0 # sorry if set the index to 0 via the -t/--track option
+				shuffleIndex()
 			end
 
 			bindOnce 'before_exit', Proc.new {
