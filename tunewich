@@ -584,83 +584,55 @@ module Tunewich
 			track = nil
 
 			while not playerOutput or playerOutput[:exit] do
-				break if !@trackIndex || !@tracks[@trackIndex]
-
-				commandRequiresBreak = false
-				commandRequiresNext = false
-
-				track = @tracks[@trackIndex]
-
-				titleBlock "[#{@trackIndex + 1}] - #{track['title']} (#{track['duration']})"
-
-				if @updateAllPlayedTrackInfo && !@noNetwork
-					printRepeat "Getting latest track information..."
-					updateTrackInfo track
-				end
-
-				fileExists = trackFileExists? track
-
-				if !fileExists && @noNetwork
-					nextTrack
-					next
-				end
-
-				chapterIndex = nil
-
-				if track['chapters']
+				if @trackIndex && @tracks[@trackIndex]
 					commandRequiresBreak = false
 					commandRequiresNext = false
 
-					chapterPromptMessage = nil
+					track = @tracks[@trackIndex]
 
-					if !fileExists && !@enableDownload # TODO: checking fileExists, and checking again inside self.play
-						chapterPromptMessage = "NOTE: Choosing a chapter will cause the file to download fully before playing."
+					titleBlock "[#{@trackIndex + 1}] - #{track['title']} (#{track['duration']})"
+
+					if @updateAllPlayedTrackInfo && !@noNetwork
+						printRepeat "Getting latest track information..."
+						updateTrackInfo track
 					end
 
-					chapterResponse = promptForChapterIndex track['chapters'], interactiveCommands, chapterPromptMessage
-					chapterIndex = chapterResponse[:index]
+					fileExists = trackFileExists? track
 
-					next if commandRequiresNext
-					break if commandRequiresBreak
-				end
+					if !fileExists && @noNetwork
+						nextTrack
+						next
+					end
 
-				# TODO: catch C-t, or something like it, to pass commands to the script during playback
-				#  -: rating down
-				#  =/+: rating up
-				#  1-5: explicit rating
-				#  t: prompt for tag
-				#  l: copy a link to share the source
-				#  x: remove from library
-				#  d: download
-				playerOutput = play track, chapterIndex, interactiveCommands
+					chapterIndex = nil
 
-				track['playTime'] ||= 0
-				track['playTime'] += playerOutput[:playTime].to_i
-				minimumPlayTime = [30, getSecondsFromDurationString(track['duration']) -10].min
-				if playerOutput[:playTime] >= minimumPlayTime
-					track['lastPlayed'] = playerOutput[:endTime].to_i
-					track['playCount'] ||= 0
-					track['playCount'] += 1
-				else
-					track['skipCount'] ||= 0
-					track['skipCount'] += 1
-				end
-				writeLibraryToFile true
+					if track['chapters']
+						commandRequiresBreak = false
+						commandRequiresNext = false
 
-				track['playTime'] ||= 0
-				track['playTime'] += playerOutput[:playTime].to_i
-				minimumPlayTime = [30, getSecondsFromDurationString(track['duration']) -10].min
-				if playerOutput[:playTime] >= minimumPlayTime
-					track['lastPlayed'] = playerOutput[:endTime].to_i
-					track['playCount'] ||= 0
-					track['playCount'] += 1
-				else
-					track['skipCount'] ||= 0
-					track['skipCount'] += 1
-				end
-				writeLibraryToFile true
+						chapterPromptMessage = nil
 
-				if !track['unattached']
+						if !fileExists && !@enableDownload # TODO: checking fileExists, and checking again inside self.play
+							chapterPromptMessage = "NOTE: Choosing a chapter will cause the file to download fully before playing."
+						end
+
+						chapterResponse = promptForChapterIndex track['chapters'], interactiveCommands, chapterPromptMessage
+						chapterIndex = chapterResponse[:index]
+
+						next if commandRequiresNext
+						break if commandRequiresBreak
+					end
+
+					# TODO: catch C-t, or something like it, to pass commands to the script during playback
+					#  -: rating down
+					#  =/+: rating up
+					#  1-5: explicit rating
+					#  t: prompt for tag
+					#  l: copy a link to share the source
+					#  x: remove from library
+					#  d: download
+					playerOutput = play track, chapterIndex, interactiveCommands
+
 					track['playTime'] ||= 0
 					track['playTime'] += playerOutput[:playTime].to_i
 					minimumPlayTime = [30, getSecondsFromDurationString(track['duration']) -10].min
@@ -673,16 +645,46 @@ module Tunewich
 						track['skipCount'] += 1
 					end
 					writeLibraryToFile true
+
+					track['playTime'] ||= 0
+					track['playTime'] += playerOutput[:playTime].to_i
+					minimumPlayTime = [30, getSecondsFromDurationString(track['duration']) -10].min
+					if playerOutput[:playTime] >= minimumPlayTime
+						track['lastPlayed'] = playerOutput[:endTime].to_i
+						track['playCount'] ||= 0
+						track['playCount'] += 1
+					else
+						track['skipCount'] ||= 0
+						track['skipCount'] += 1
+					end
+					writeLibraryToFile true
+
+					if !track['unattached']
+						track['playTime'] ||= 0
+						track['playTime'] += playerOutput[:playTime].to_i
+						minimumPlayTime = [30, getSecondsFromDurationString(track['duration']) -10].min
+						if playerOutput[:playTime] >= minimumPlayTime
+							track['lastPlayed'] = playerOutput[:endTime].to_i
+							track['playCount'] ||= 0
+							track['playCount'] += 1
+						else
+							track['skipCount'] ||= 0
+							track['skipCount'] += 1
+						end
+						writeLibraryToFile true
+					end
+
+					whisper "I've been asked to exit" if commandRequiresExit
+					exit if commandRequiresExit
+					whisper "I've been asked to break" if commandRequiresBreak
+					break if commandRequiresBreak
+					whisper "I've been asked to skip to next" if commandRequiresNext
+					next if commandRequiresNext
+
+					nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
+				else
+					commandPrompt "empty", interactiveCommands
 				end
-
-				whisper "I've been asked to exit" if commandRequiresExit
-				exit if commandRequiresExit
-				whisper "I've been asked to break" if commandRequiresBreak
-				break if commandRequiresBreak
-				whisper "I've been asked to skip to next" if commandRequiresNext
-				next if commandRequiresNext
-
-				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
 			end
 		end
 
@@ -2147,12 +2149,17 @@ module Tunewich
 				end
 				whisper "end command while loop" # XXX
 
-				if action && input && input.length > 0
-					actionResult = action.call input
-					if not actionResult
-						whisper "command returned false; interrupting input loop"
-						break
+				if action
+					if input && input.length > 0
+						actionResult = action.call input
+						if not actionResult
+							whisper "command returned false; interrupting input loop"
+							break
+						end
 					end
+				else
+					whisper "command done, no action to take, breaking command loop"
+					break
 				end
 
 				prompt.call
