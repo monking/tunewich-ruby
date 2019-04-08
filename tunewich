@@ -522,11 +522,7 @@ module Tunewich
 		end
 
 		def editNotes notes, emphasizeNoteIndex = nil
-			formattedNotes = getFormattedNoteList notes
-			if emphasizeNoteIndex
-				emphasisLine = "# ^ current"
-				formattedNotes.insert(emphasizeNoteIndex + 1, emphasisLine)
-			end
+			formattedNotes = getFormattedNoteList notes, emphasizeNoteIndex, "# ^ current"
 			editedFormattedNotes = editListInVim formattedNotes
 			editedNotes = editedFormattedNotes.map { |l|
 				bits = l.match(/^\s*(skip)?\s*([0-9.:]+)\s+(.*?)( \(loop to "(.*)"\))?$/)
@@ -680,7 +676,7 @@ module Tunewich
 						if inputParts[:query] && inputParts[:query].length > 0
 							noteIndex = getNoteIndexByQuery inputParts[:query], @currentTrack[noteType]
 						else
-							putsRealtime getFormattedNoteList(@currentTrack[noteType]).join("\n")
+							putsRealtime getFormattedNoteList(@currentTrack[noteType], @currentNoteIndex[noteType], "# ^ current").join("\n")
 						end
 					else
 						putsRealtime "No #{noteType} on the current track."
@@ -719,7 +715,7 @@ module Tunewich
 						end
 					else
 						# TODO 1gzoGh: it'd be nice to put in a space if inputParts[:offset] is given
-						putsRealtime getFormattedNoteList(@currentTrack[noteType]).join("\n")
+						putsRealtime getFormattedNoteList(@currentTrack[noteType], @currentNoteIndex[noteType], "# ^ current").join("\n")
 					end
 				else
 					putsRealtime "No #{noteType} on the current track."
@@ -5044,8 +5040,8 @@ module Tunewich
 			selectedListName
 		end
 
-		def getFormattedNoteList notes
-			notes.map { |c|
+		def getFormattedNoteList notes, emphasizeNoteIndex = nil, emphasisLine = "# ^"
+			formattedNotes = notes.map { |c|
 				output = "#{" " * ([16-c['time'].length, 0].max)}#{c['time']} #{c['text']}"
 
 				if c.has_key?('skip')
@@ -5058,38 +5054,12 @@ module Tunewich
 
 				output
 			}
-		end
 
-		def promptForChapterIndex chapters, commands = nil, message = nil
-			whisper("prompting for chapter selection", 3)
-			selectedChapterIndex = nil
-
-			chapterList = getFormattedNoteList chapters
-			prePromptMessage = "	#{chapterList.join "\n	"}"
-			prePromptMessage += "\n#{message}" if message
-			promptMessage = "Please choose a chapter (leave blank to play first):"
-
-			while not selectedChapterIndex do
-				puts prePromptMessage
-				emptyAction = Proc.new { |input| false }
-				chapterQuery = commandPrompt(promptMessage, commands, emptyAction)[:input]
-				break if not chapterQuery or chapterQuery.length === 0
-
-				selectedChapterIndex = firstFuzzyMatchIndex chapterQuery, chapterList
-
-				if selectedChapterIndex
-					break
-				else
-					whisper("No matches. Try again.", 0)
-				end
-
+			if emphasizeNoteIndex
+				formattedNotes.insert(emphasizeNoteIndex + 1, emphasisLine)
 			end
 
-			whisper("Selected chapter #{selectedChapterIndex}", 4)
-
-			{
-				:index => selectedChapterIndex
-			}
+			formattedNotes
 		end
 
 		def listTrackTitles(tracks)
