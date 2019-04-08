@@ -43,6 +43,8 @@
 #   }
 # - [ ] also stop mplayer #1pnpP3BJJnE
 # - [ ] run commands from FIFO queue as if they had been typed interactively (this would allow the tent "away" function to fade out before killing, e.g.) #1pxQxMENEem
+# - [+] note the time when a command is begun to be typed (i.e. "/" is pressed). Use this time when recording a note #1pxisWCFria
+#		- [ ] test
 
 require "io/console" # STDIN.getch
 require "open-uri" # URI
@@ -1112,7 +1114,7 @@ module Tunewich
 						}
 					},
 					'note' => {
-						'description' => "Make a note on this track, with a timestamp.",
+						'description' => "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing).",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							notesChanged = false;
@@ -1145,7 +1147,7 @@ module Tunewich
 								@currentTrack['notes'] ||= []
 								note = {
 									'text' => inputParts[1],
-									'time' => getDurationStringFromSeconds(@currentPlayerTime)
+									'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime) # TODO: 1pxisWCFria
 								}
 								if note['text'].length < 1
 									note['text'] = editListInVim([], 'Write your note').join "\n"
@@ -3945,9 +3947,12 @@ module Tunewich
 
 					prompt.call
 				else
-					if not input
+					if not input || input.length == 0
 						input = ''
 						@shouldShowPlaybackInfo = false
+						if inputCharacter == '/'
+							@commandinputStartPlayerTime = @currentPlayerTime
+						end
 					end
 
 					if inputCharacter == "\e[A" # up arrow
