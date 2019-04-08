@@ -43,7 +43,7 @@ module Tunewich
 			end
 
 			if @trackFilters
-				filterTracks! @tracks, @trackFilters
+				@tracks = filterTracks @tracks, @trackFilters
 			end
 
 			if @trackIndex == nil
@@ -578,7 +578,7 @@ module Tunewich
 			url.sub(/^.*v=/, '')
 		end
 
-		def filterTracks! tracks, filters
+		def filterTracks tracks, filters
 
 			if filters['rating']
 				tracks.keep_if { |track| track['rating'] && track['rating'] == filters['rating'].to_i }
@@ -769,32 +769,32 @@ module Tunewich
 					puts "All tracks selected (#{libraryCleanupSegment.length})"
 				},
 				'add' => Proc.new { |playlistQuery|
-					if !playlistQuery || playlistQuery.length == 0
-						puts "Please specify a playlist name (new or existing).\n#{@library['playlists'].map { |p| p['title'] } .join "\n"}"
-						break
-					end
+					if playlistQuery && playlistQuery.length > 0
+						playlistName = findPlaylistName playlistQuery
 
-					playlistName = findPlaylistName playlistQuery
+						if playlistName
+							libraryCleanupSegment.keys.each { |id| addTrackReferenceToPlaylist id, playlistName }
+						elsif confirm "No existing playlist matching '#{playlistQuery}'. Create one?"
+							createPlaylist playlistName, libraryCleanupSegment.keys
+						else
+							playlistName = nil
+						end
 
-					if playlistName
-						libraryCleanupSegment.keys.each { |id| addTrackReferenceToPlaylist id, playlistName }
-					elsif confirm "No existing playlist matching '#{playlistQuery}'. Create one?"
-						createPlaylist playlistName, libraryCleanupSegment.keys
+						if playlistName
+							libraryCleanupSegment = {}
+							puts "Added #{libraryCleanupSegment.length} tracks to playlist '#{playlistName}'"
+						else
+							puts "No change"
+						end
 					else
-						playlistName = nil
+						puts "#{@library['playlists'].map { |name, p| name } .join "\n"}\n\nPlease specify a playlist name (new or existing)."
 					end
 
-					if playlistName
-						libraryCleanupSegment = {}
-						puts "Added #{libraryCleanupSegment.length} tracks to playlist '#{playlistName}'"
-					else
-						puts "No change"
-					end
 				},
 				'filter' => Proc.new { |filterString|
 					libraryCleanupSegment = cloneLibrary @library['library'] if libraryCleanupSegment.length == 0
 					# FIXME: lots of back and forth from arrays to hashes here. Want to pick one?
-					libraryCleanupSegment = cloneTracksToLibrary filterTracks! cloneLibraryToTracks(libraryCleanupSegment), parseOptionParameters(filterString)
+					libraryCleanupSegment = cloneTracksToLibrary filterTracks cloneLibraryToTracks(libraryCleanupSegment), parseOptionParameters(filterString)
 					puts "#{libraryCleanupSegment.length} tracks selected"
 				},
 				'edit' => Proc.new {
@@ -904,7 +904,6 @@ module Tunewich
 					commandParts = input.match(/^\/([^\s]+)\s*(.*)/)
 					commandName = commandParts[1]
 					commandArgs = commandParts[2]
-					puts "commandArgs: #{commandArgs}" # XXX
 
 					if commands[commandName]
 						response[:commands] << ({
