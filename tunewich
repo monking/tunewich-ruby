@@ -46,6 +46,7 @@ module Tunewich
 			@trackExcludeFilters = nil
 			@noNetwork = false
 			@playlistName = nil
+			@volume = 25
 			@enableDownload = false
 			@keepUnattachedDownload = false
 
@@ -65,6 +66,7 @@ module Tunewich
 		def getEnvironmentConfig
 			if ENV.key? 'TUNEWICH_PLAYER_OPTS'
 				@mplayerDefaultOptions = ENV['TUNEWICH_PLAYER_OPTS']
+				@volume = getMplayerConfigVolume
 			else
 				puts "You can add `export TUNEWICH_PLAYER_OPTS=\"<player options>\"` to your ~/.profile or similar file. Default player is #{Player::PLAYER_APPLICATION}."
 			end
@@ -100,6 +102,8 @@ module Tunewich
 			commandRequiresBreak = false
 			commandRequiresNext = false
 			commandRequiresExit = false
+			volumeBeforeFadingOut = 10 # FIXME: better initial default
+			speedBeforeRampingOut = 1
 
 			interactiveCommands = {
 				'rate' => {
@@ -149,7 +153,7 @@ module Tunewich
 				'fade' => {
 					'info' => 'Fade volume (/fade VOLUME [DURATION] [NEXT ACTION])',
 					'action' => Proc.new { |properties|
-						fadeCommandMatch = /^(out|in|\d+)( \d+)?( .+)?$/.match properties
+						fadeCommandMatch = /^(out|in|[0-9.]+)( [0-9.]+)?( .+)?$/.match properties
 						if fadeCommandMatch
 							whisper "fade command"
 							duration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 2.0
@@ -157,22 +161,28 @@ module Tunewich
 							volume = getCurrentMplayerVolume
 							targetFadeVolume = fadeCommandMatch[1]
 							if targetFadeVolume == 'out'
+								whisper "fading out volume"
 								targetFadeVolume = 0
 								volumeBeforeFadingOut = volume
 							elsif targetFadeVolume == 'in'
 								targetFadeVolume = volumeBeforeFadingOut
+								whisper "fading in volume (to #{targetFadeVolume})"
 							else
+								@volume = targetFadeVolume
+								whisper "fading to volume #{targetFadeVolume}"
 								targetFadeVolume = targetFadeVolume.to_f
 							end
-							volumeFadeInterval = 0.1
+							volumeFadeInterval = 0.02
+							volumeFadeStepCount = duration / volumeFadeInterval
 							volumeStep = (targetFadeVolume - volume) / duration * volumeFadeInterval
 							whisper "about to fade volume"
-							while (volume - targetFadeVolume).abs > 0.1
+							for stepIndex in 1..volumeFadeStepCount
 								volume += volumeStep
 								printRepeat "fading: #{volume.round()}"
 								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{volume} 1\n"
 								sleep volumeFadeInterval
 							end
+							putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{targetFadeVolume} 1\n"
 							if followingCommand
 								whisper "mplayerAction: second command > input"
 								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
@@ -183,13 +193,14 @@ module Tunewich
 				'ramp' => {
 					'info' => 'Ramp speed (/ramp SPEED [DURATION] [NEXT ACTION])',
 					'action' => Proc.new { |properties|
-						rampCommandMatch = /^(out|in|[0-9.]+)( \d+)?( .+)?$/.match properties
+						rampCommandMatch = /^(out|in|[0-9.]+)( [0-9.]+)?( .+)?$/.match properties
 						if rampCommandMatch
 							whisper "ramp command"
-							duration = rampCommandMatch[2] && rampCommandMatch[2].length > 0 ? rampCommandMatch[2].to_f : 2.0
+							duration = rampCommandMatch[2] && rampCommandMatch[2].length > 0 ? rampCommandMatch[2].to_f : 0.3
 							followingCommand = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].strip : nil
 							speed = getCurrentMplayerSpeed
-							targetRampSpeed = rampCommandMatch[1]
+							# mplayer limits to 0.125 and 4 anyway, so make it explicit to use correct timing
+							targetRampSpeed = [[rampCommandMatch[1].to_f, 0.125].max, 4].min
 							if targetRampSpeed == 'out'
 								targetRampSpeed = 0
 								speedBeforeRampingOut = speed
@@ -198,10 +209,11 @@ module Tunewich
 							else
 								targetRampSpeed = targetRampSpeed.to_f
 							end
-							speedRampInterval = 0.1
+							speedRampInterval = 0.02
+							speedRampStepCount = duration / speedRampInterval
 							speedStep = (targetRampSpeed - speed) / duration * speedRampInterval
 							whisper "about to ramp speed by #{speedStep} every #{speedRampInterval} seconds"
-							while (speed - targetRampSpeed).abs > 0.1
+							for stepIndex in 1..speedRampStepCount
 								speed += speedStep
 								printRepeat "ramping: #{(speed * 10.0).round.to_f / 10.0}"
 								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "speed_set #{speed}\n"
@@ -209,6 +221,8 @@ module Tunewich
 							end
 							putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "speed_set #{targetRampSpeed}\n"
 							if followingCommand
+								whisper "Waiting 1 second for buffered sound to play"
+								sleep 1.0
 								whisper "mplayerAction: second command > input"
 								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
 							end
@@ -242,6 +256,7 @@ module Tunewich
 					'action' => Proc.new {
 						# FIXME: diagnose: I updated youtube-dl, and I still get errors all the time, and it'll quit afterward (2016 Feb 29 Mon 11:37:51)
 						tracks = getYouTubeTracksFromPage(@tracks[@trackIndex]['src'])
+						tracks.shift # remove the first track, which will be the main video on the page
 						tracks.unshift @tracks[@trackIndex]
 						useTracks tracks, false
 						@trackIndex = 1
@@ -289,9 +304,7 @@ module Tunewich
 					'info' => "TODO: save current volume relative to default in library.",
 					'action' => Proc.new { |new_rating|
 						track = @tracks[@trackIndex]
-						currentVolume = getCurrentMplayerVolume
-						configVolume = getMplayerConfigVolume
-						track['loudness'] = configVolume / currentVolume
+						track['loudness'] = getMplayerConfigVolume / getCurrentMplayerVolume
 						writeLibraryToFile true
 					}
 				},
@@ -493,14 +506,13 @@ module Tunewich
 			mplayerThread = nil
 			inputThread = nil
 			mplayerStatus = nil
-			volumeBeforeFadingOut = 10 # FIXME: better initial default
 			mplayerAction = Proc.new { |command|
 				whisper "mplayerAction: begin"
 				putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{command}\n"
 				if /^vol/.match command
 					whisper "mplayerAction: found a volume command"
-					volume = getCurrentMplayerVolume
-					puts "volume: #{volume}"
+					@volume = getCurrentMplayerVolume
+					puts "volume: #{@volume}"
 				end
 				whisper "mplayerAction: done"
 
@@ -585,6 +597,7 @@ module Tunewich
 
 			mplayerStartupOptions += [@mplayerDefaultOptions] if @mplayerDefaultOptions
 			mplayerStartupOptions += @mplayerOverrideCommands
+			mplayerStartupOptions += ["-volume #{@volume}"]
 
 			if track['loudness']
 				mplayerStartupOptions += ["-volume #{(getMplayerConfigVolume / track['loudness']).round}"]
@@ -595,14 +608,18 @@ module Tunewich
 			mplayerStdoutFile = getTempFilePath Player::MPLAYER_STDOUT_BUFFER_NAME
 
 			inputThread = Thread.new {
+				whisper "commandPrompt start (opening input thread)"
 				commandPrompt Player::PLAYER_APPLICATION, interactiveCommands, mplayerAction
+				whisper "commandPrompt end"
 			}
 			mplayerThread = Thread.new {
 				mplayerCommand = "#{Player::PLAYER_APPLICATION} \"#{mediaFilePath}\" #{mplayerStartupOptions.join ' '} &> #{mplayerStdoutFile}"
 				mplayerStatus = system mplayerCommand
+				whisper "mplayer is finished. killing user input thread"
 				inputThread.kill if inputThread
 			}
 			mplayerThread.join
+			whisper "killing user input thread (again)"
 			inputThread.kill if inputThread # FIXME: overkill?
 
 			mplayerEndTime = Time.now.to_f
@@ -645,7 +662,7 @@ module Tunewich
 
 		def getMplayerConfigVolume
 			mplayerCommands = []
-			mplayerCommands += @mplayerOverrideCommands
+			mplayerCommands += @mplayerOverrideCommands if @mplayerOverrideCommands
 			mplayerCommands += [@mplayerDefaultOptions] if @mplayerDefaultOptions
 			mplayerConfigVolume = 25.0 # factory default
 
@@ -1407,7 +1424,9 @@ module Tunewich
 		def getYouTubeTracksFromPage url
 			url = getValidYouTubeURI url
 			queryResultIds = []
+			whisper "reading URL #{url}"
 			open(url) do |handle|
+				whisper "received URL #{url}"
 				html = []
 				handle.each_line { |line| html << line }
 
@@ -1426,6 +1445,7 @@ module Tunewich
 			queryResultIds.each_with_index do |id, index|
 				track = matchExistingLibraryTrack createTrack id, 'youtube'
 				resultTracks << track
+				whisper "starting a new thread to get track info for #{track['id']}"
 				threads << Thread.new {
 					if not updateTrackInfo track
 						resultTracks.delete track
@@ -1435,6 +1455,7 @@ module Tunewich
 				}
 			end
 
+			whisper "joining 'update info' threads"
 			threads.each { |thr| thr.join }
 			print "\n"
 
@@ -1665,9 +1686,9 @@ module Tunewich
 		end
 
 		def printRepeat message
-			print " #{" " * @printRepeatMessage.length}\r" if @printRepeatMessage
+			print "  #{" " * @printRepeatMessage.length}\r" if @printRepeatMessage
 			message = message.to_s if message.respond_to? 'to_s'
-			print " #{message}\r"
+			print "  #{message}\r"
 			@printRepeatMessage = message.match(/\n/) ? nil : message
 		end
 
@@ -1734,7 +1755,9 @@ module Tunewich
 				:commands => []
 			}
 
+			whisper "waiting for user input on STDIN"
 			while input = STDIN.gets.chomp
+				whisper "received input <#{input}> on STDIN"
 				# TODO: allow comma-separated commands (e.g. "x,fq 1" to prepare to exit, then fade this track out in 1 secone)
 				if commands && !input.empty? && input[0] == '/'
 					commandParts = input.match(/^\/([^\s]+)\s*(.*)/)
@@ -1753,9 +1776,14 @@ module Tunewich
 
 					prompt.call
 				elsif action
-					break if not action.call input
+					actionResult = action.call input
+					if not actionResult
+						whisper "command returned false; interrupting input loop"
+						break
+					end
 					prompt.call
 				else
+					whisper "no command for tunewich or player; interrupting input loop (do I really want to do this?)"
 					break
 				end
 			end
