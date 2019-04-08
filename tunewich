@@ -748,7 +748,7 @@ module Tunewich
 									timeMessage += " (#{@speed}x)" if @speed != 1
 									if @currentTrack.has_key? 'chapters'
 										chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
-										if chapterIndex
+										if chapterIndex > -1
 											timeMessage += "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
 										end
 									end
@@ -987,7 +987,7 @@ module Tunewich
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
-							if chapterIndex
+							if chapterIndex > -1
 								@currentTrack['chapters'].delete_at chapterIndex
 								writeLibraryToFile
 							end
@@ -1000,7 +1000,7 @@ module Tunewich
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
-							if chapterIndex
+							if chapterIndex > -1
 								@currentTrack['chapters'][chapterIndex]['skip'] = true
 								writeLibraryToFile
 								seekToNextPlayableChapterOrSkip @currentTrack['chapters'], @currentChapterIndex
@@ -1635,7 +1635,7 @@ module Tunewich
 		end
 
 		def getChapterIndexAtTime chapters, seconds
-			chapterIndex = nil
+			chapterIndex = -1
 			chapters.each_with_index { |chapter, index|
 				chapterSeconds = getSecondsFromDurationString chapter['time']
 				if chapterSeconds <= seconds
@@ -2141,7 +2141,7 @@ module Tunewich
 			bind('time_update', Proc.new {
 				if @currentTrack.has_key?('chapters')
 					newChapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
-					if newChapterIndex
+					if newChapterIndex > -1
 						if @currentChapterIndex != newChapterIndex
 							@currentChapterIndex = newChapterIndex
 							trigger 'chapter_change'
@@ -2154,9 +2154,12 @@ module Tunewich
 			}, bindingGroupName)
 			bind('chapter_change', Proc.new {
 				# check if we need to skip this chapter
-				if !@currentlySkippingChapter &&
+				if (
+						!@currentlySkippingChapter &&
+						@currentTrack['chapters'][@currentChapterIndex] &&
 						@currentTrack['chapters'][@currentChapterIndex].has_key?('skip') &&
 						@currentTrack['chapters'][@currentChapterIndex]['skip'] == true
+				)
 					@currentlySkippingChapter = @currentChapterIndex
 
 					seekToNextPlayableChapterOrSkip @currentTrack['chapters'], @currentlySkippingChapter
