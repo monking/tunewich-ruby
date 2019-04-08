@@ -124,30 +124,37 @@ module Tunewich
 				},
 				'bpm' => {
 					'info' => "Interactively set the beats-per-minute of the track.",
-					'action' => Proc.new {
-						firstTimeInSeconds = nil
-						lastTimeInSeconds = nil
-						iterations = 0;
-						bpm = 0;
-						puts "Hit enter on the beat. Type \"k\" to accept, or anything else to cancel setting the BPM."
+					'action' => Proc.new { |newBPM|
 						commitBPM = false
-						while true
-							input = STDIN.gets.chomp
-							if input.length > 0
-								commitBPM = input == 'k'
-								break
-							end
 
-							iterations += 1
-							now = Time.now.to_f
-							firstTimeInSeconds ||= now
-							lastTimeInSeconds = now
-							if lastTimeInSeconds != firstTimeInSeconds
-								bpm = ((iterations - 1).to_f / (lastTimeInSeconds - firstTimeInSeconds) * 60.0).round(1);
-								printRepeat "BPM: #{bpm} "
+						if newBPM.length > 0
+							bpm = newBPM.to_f
+							commitBPM = true
+						else
+							firstTimeInSeconds = nil
+							lastTimeInSeconds = nil
+							iterations = 0;
+							bpm = 0;
+							puts "Hit enter on the beat. Type \"k\" to accept, or anything else to cancel setting the BPM."
+							while true
+								input = STDIN.gets.chomp
+								if input.length > 0
+									commitBPM = input == 'k'
+									break
+								end
+
+								iterations += 1
+								now = Time.now.to_f
+								firstTimeInSeconds ||= now
+								lastTimeInSeconds = now
+								if lastTimeInSeconds != firstTimeInSeconds
+									bpm = ((iterations - 1).to_f / (lastTimeInSeconds - firstTimeInSeconds) * 60.0).round(1);
+									printRepeat "BPM: #{bpm} "
+								end
 							end
+							print "\n"
 						end
-						print "\n"
+
 						if commitBPM
 							puts "Setting track BPM to #{bpm}."
 							@tracks[@trackIndex]['bpm'] = bpm
@@ -243,6 +250,8 @@ module Tunewich
 				'ramp' => {
 					'info' => 'Ramp speed (/ramp SPEED [DURATION] [NEXT ACTION])',
 					'action' => Proc.new { |properties|
+						# TODO: set a global value, like volume, and apply to each track.
+						# option to start each track at the same bpm if it's defined for that track
 						rampCommandMatch = /^(out|in|[0-9.]+(bpm)?)( [0-9.]+)?( .+)?$/.match properties
 						#                    1              2      3          4
 						if rampCommandMatch
