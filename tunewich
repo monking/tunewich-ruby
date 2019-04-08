@@ -1,7 +1,6 @@
 #!/usr/bin/env ruby
 
 # TODO: fix /edit swapping first and last tracks
-# TODO: fix inability to pause with @configuredVerbosity > -1
 
 require "io/console" # STDIN.getch
 require "open-uri" # URI
@@ -102,6 +101,16 @@ module Tunewich
 			if trackTitleListFromLastSession && trackTitleListFromLastSession.length > 0
 				whisper "Using tracks from last session.", 1
 				useTracks(getTracksFromTitleList(trackTitleListFromLastSession.strip.lines))
+				if @library["lastMarked"]
+					markedTrack = @library["tracks"][@library["lastMarked"]]
+					if markedTrack["mark"]
+						whisper "Returning to last marked track.", 1
+						@trackIndex = @tracks.index markedTrack
+						removeMarkFromTrack markedTrack
+					end
+					@library.delete "lastMarked"
+					writeLibraryToFile
+				end
 			end
 
 			bindOnce 'request_exit', Proc.new {
@@ -211,9 +220,9 @@ module Tunewich
 			# 2: very verbose user output
 			# 3: errors
 			# 4: debug
-      if @configuredVerbosity >= verbosity
-        STDERR.puts "  #{"-" * verbosity} #{message}"
-      end
+			if @configuredVerbosity >= verbosity
+				STDERR.puts "  #{"-" * verbosity} #{message}"
+			end
 		end
 
 		def getEnvironmentConfig
@@ -286,7 +295,7 @@ module Tunewich
 			interactiveCommands = {
 				'base' => {
 					'wait' => {
-						'description' => 'Wait some number of seconds to execute following chained commands',
+						'description' => 'Wait for an event, or some number of seconds, to execute following chained commands. Events: chapter_change, play_start, play_end, fade_start, fade_end, speed_ramp_start, speed_ramp_end, download_start, download_end. You may use fuzzy substrings of the event names, e.g. "ch" will match "chapter_change", and "ple" will match "play_end".',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
@@ -517,12 +526,12 @@ module Tunewich
 								putsRealtime "The /more currently only supports YouTube and Soundcloud tracks."
 							end
 
-              if tracks
-                tracks.shift # remove the first track, which will be the main video on the page
-                @trackIndex = @tracks.length
-                @trackFilters = nil
-                useTracks tracks, true # and set track index to the first
-              end
+							if tracks
+								tracks.shift # remove the first track, which will be the main video on the page
+								@trackIndex = @tracks.length
+								@trackFilters = nil
+								useTracks tracks, true # and set track index to the first
+							end
 							{:chainedInput => input}
 						}
 					},
@@ -1275,22 +1284,15 @@ module Tunewich
 					'mark' => {
 						'description' => 'Mark the point at which to play this track next time.',
 						'action' => Proc.new { |input|
-							loadLibrary
-							editingTrack = matchExistingLibraryTrack @currentTrack
-							editingTrack['mark'] = getDurationStringFromSeconds @currentPlayerTime
-							writeLibraryToFile
+							addMarkToTrack @currentTrack, @currentPlayerTime
 							{:chainedInput => input}
 						}
 					},
 					'unmark' => {
 						'description' => 'Remove a "mark" from a track.',
 						'action' => Proc.new { |input|
-							loadLibrary
-							editingTrack = matchExistingLibraryTrack @currentTrack
-							if editingTrack.has_key? 'mark'
-								editingTrack.delete 'mark'
-								writeLibraryToFile
-							end
+							removeMarkFromTrack @currentTrack
+							@currentTrack = matchExistingLibraryTrack @currentTrack
 							{:chainedInput => input}
 						}
 					},
@@ -1930,7 +1932,7 @@ module Tunewich
 				if not streaming
 					duration = track['loop'][1] - track['loop'][0]
 
-					playerAction.call "seek 0 1"
+					playerAction.call "seek 0 1" # seek offset[, absolute]
 
 					whisper "setting some player startup options", 4
 					# loop back from B to A
@@ -1946,7 +1948,7 @@ module Tunewich
 				mediaFilePath = firstTrackFile track
 			else
 				if streaming
-          if @youtubeDLTrackTypes.include? track['type']
+					if @youtubeDLTrackTypes.include? track['type']
 						whisper "streaming youtube track", 2
 						streamName = 'youtube-stream'
 						deleteStream streamName
@@ -2055,6 +2057,7 @@ module Tunewich
 			}, bindingGroupName)
 			while @playerApplicationThreads[@currentPlayerIndex].alive?
 				playerResponseDelay = 0.1
+				# TODO: get time position without unpausing
 				playerTimeResponse = getMplayerProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(.*?)(\?)?$/, playerResponseDelay)
 				if playerTimeResponse
 					@currentPlayerTime = playerTimeResponse.to_f
@@ -2154,6 +2157,7 @@ module Tunewich
 			pattern ||= /^()(.*)$/
 			command = "#{property}\n"
 			command = "get_property #{command}" if not property.match(/^get_/)
+			# TODO: maybe this needs pausing_keep (http://www.mplayerhq.hu/DOCS/tech/slave.txt). doesn't quite work in my testing
 			putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", command
 			sleep responseDelay if responseDelay
 			lastPlayerOutput = tailTempFile "#{Player::MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
@@ -2368,7 +2372,7 @@ module Tunewich
 		def getDownloadCommand(track, downloadFeedbackFile = '/dev/null', streamPath = nil)
 			downloadCommand = ''
 
-      if @youtubeDLTrackTypes.include? track['type']
+			if @youtubeDLTrackTypes.include? track['type']
 				youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} -q"
 				# youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} --no-part --no-cache-dir --no-continue"
 				youtubeDlCommandEnd = "-- #{track['src']}"
@@ -2405,19 +2409,19 @@ module Tunewich
 			if streamPath
 				downloadPid = spawn(downloadCommand)
 			else
-        trigger 'download_begin', track
-        downloadThread = Thread.new {
+				trigger 'download_begin', track
+				downloadThread = Thread.new {
 					fullDownloadShellCommand = "#{downloadCommand} 2> \"#{downloadFeedbackFile}\""
 					whisper fullDownloadShellCommand, 3
-          downloadPid = spawn(fullDownloadShellCommand)
+					downloadPid = spawn(fullDownloadShellCommand)
 
-          if trackFileExists? track
-            trigger 'download_complete', track
-          else
-            trigger 'download_fail', track
-          end
-          trigger 'download_end', track
-        }
+					if trackFileExists? track
+						trigger 'download_complete', track
+					else
+						trigger 'download_fail', track
+					end
+					trigger 'download_end', track
+				}
 			end
 
 			deleteTempFile downloadFeedbackFileName
@@ -2573,6 +2577,24 @@ module Tunewich
 				:hash => Digest::MD5.hexdigest(json),
 				:data => JSON.parse(json)
 			}
+		end
+
+		def addMarkToTrack track, time
+			loadLibrary
+			editingTrack = matchExistingLibraryTrack track
+			editingTrack['mark'] = getDurationStringFromSeconds time
+			@library["lastMarked"] = track["id"]
+			writeLibraryToFile
+		end
+
+		def removeMarkFromTrack track
+			# FIXME: this deletion _is_ saved, but for some reason, playing the track again immediately starts again from the mark.
+			loadLibrary
+			editingTrack = matchExistingLibraryTrack track
+			if editingTrack.has_key? 'mark'
+				editingTrack.delete 'mark'
+				writeLibraryToFile
+			end
 		end
 
 		def loadLibrary
@@ -2873,10 +2895,10 @@ module Tunewich
 		end
 
 		def createTrack url, type
-      newTrack = {
+			newTrack = {
 				'type' => type,
 				'unattached' => true
-      }
+			}
 
 			if type == 'youtube'
 				newTrack['src'] = looksLikeAYouTubeID?(url) ? url : getYoutubeIdFromUrl(url)
@@ -2889,7 +2911,7 @@ module Tunewich
 				newTrack['id'] = Digest::MD5.hexdigest(url).to_s
 			end
 
-      newTrack
+			newTrack
 		end
 
 		def getYouTubeTrackInfo youtubeVideoID
@@ -3083,13 +3105,13 @@ module Tunewich
 				handle.each_line { |line| html << line }
 
 				queryResultURLs = html.grep(/<h2.*itemprop="url"/).map! do |line|
-          line.sub!(/^.*<h2.*itemprop="url".*href="([^\"]+)".*\n/, 'https://soundcloud.com\1')
+					line.sub!(/^.*<h2.*itemprop="url".*href="([^\"]+)".*\n/, 'https://soundcloud.com\1')
 				end
 
 				queryResultURLs.uniq!
 			end
 
-      # FIXME: seems to be skipping the first recommended track
+			# FIXME: seems to be skipping the first recommended track
 
 			threads = []
 			resultTracks = []
@@ -3287,57 +3309,57 @@ module Tunewich
 			end
 
 			parser.on("--radio [SERVER_TYPE]", "TODO: stream to a network radio service (SERVER_TYPE: default 'homebrew' or 'Nicecast'", " ") do |streamingServerType = 'homebrew'|
-        if !streamingServerType || streamingServerType.length == 0
-          streamingServerType = 'homebrew'
-        end
+				if !streamingServerType || streamingServerType.length == 0
+					streamingServerType = 'homebrew'
+				end
 				@streamingServerType = streamingServerType
-        whisper "streamingServerType: #{streamingServerType}", 2
+				whisper "streamingServerType: #{streamingServerType}", 2
 				serviceConfigDir = "#{$tunewichWorkingDirectory}/config"
 				isRadioConfigured = true
-        whisper "Preparing to start radio (#{streamingServerType}).", 0
-        if streamingServerType == 'homebrew'
-          puts "About to prompt you for your password, so that the darkice server can be run as root."
-          `sudo ls &>/dev/null`
-        end
+				whisper "Preparing to start radio (#{streamingServerType}).", 0
+				if streamingServerType == 'homebrew'
+					puts "About to prompt you for your password, so that the darkice server can be run as root."
+					`sudo ls &>/dev/null`
+				end
 				if UNAME == "Darwin"
 					audioDeviceID = `say -a ? | grep 'Soundflower (2ch)'`.chomp.sub /^\s*(\d+).*/, '\1'
-          if audioDeviceID && audioDeviceID.length > 0
-            @playerOverrideCommands << "-ao coreaudio:device_id=#{audioDeviceID}"
-            jackAudioDeviceAndOptions = "coreaudio -d SoundflowerEngine:0"
-          else
-            puts "Please install Soundflower (https://github.com/mattingalls/Soundflower)"
-            isRadioConfigured = false
-          end
+					if audioDeviceID && audioDeviceID.length > 0
+						@playerOverrideCommands << "-ao coreaudio:device_id=#{audioDeviceID}"
+						jackAudioDeviceAndOptions = "coreaudio -d SoundflowerEngine:0"
+					else
+						puts "Please install Soundflower (https://github.com/mattingalls/Soundflower)"
+						isRadioConfigured = false
+					end
 				else
-          whisper "Playing to jack server", 2
+					whisper "Playing to jack server", 2
 					@playerOverrideCommands << "-ao alsa"
-          jackAudioDeviceAndOptions = "alsa"
+					jackAudioDeviceAndOptions = "alsa"
 				end
 
-        if isRadioConfigured
+				if isRadioConfigured
 					bind 'play_start', Proc.new {
 						updateRadioMetadata @currentTrack['title']
 					}
 					bind 'chapter_change', Proc.new {
 						updateRadioMetadata "#{@currentTrack['title']} (#{@currentTrack['chapters'][@currentChapterIndex]['name']})"
 					}
-          if streamingServerType == 'homebrew'
-            icecastConfigFile = "#{serviceConfigDir}/icecast.xml"
-            darkiceConfigFile = "#{serviceConfigDir}/darkice.cfg"
+					if streamingServerType == 'homebrew'
+						icecastConfigFile = "#{serviceConfigDir}/icecast.xml"
+						darkiceConfigFile = "#{serviceConfigDir}/darkice.cfg"
 
-            if not File.exist? icecastConfigFile
-              puts "Please create the icecast config file at #{icecastConfigFile}."
-              isRadioConfigured = false
-            elsif not File.exist? darkiceConfigFile
-              puts "Please create the darkice config file at #{darkiceConfigFile}."
-              isRadioConfigured = false
-            end
-          else
-            whisper "Radio is configured. Ready to play.", 2
-          end
-        else
-          whisper "Radio is NOT configured. Ready to play.", 2
-        end
+						if not File.exist? icecastConfigFile
+							puts "Please create the icecast config file at #{icecastConfigFile}."
+							isRadioConfigured = false
+						elsif not File.exist? darkiceConfigFile
+							puts "Please create the darkice config file at #{darkiceConfigFile}."
+							isRadioConfigured = false
+						end
+					else
+						whisper "Radio is configured. Ready to play.", 2
+					end
+				else
+					whisper "Radio is NOT configured. Ready to play.", 2
+				end
 
 				# Currently 2 methods of doing radio:
 				# Both have the same first step, using Soundflower.
@@ -3355,32 +3377,32 @@ module Tunewich
 				# http://dzello.com/blog/2012/11/21/live-stream-audio-from-osx-mountain-lion-with-icecast-and-darkice/
 
 				if isRadioConfigured
-          if UNAME == 'Darwin'
-            puts "#" * 40
-            puts "## Open Soundflowerbed and make sure that the volume is all the way up on Soundflower (2ch)."
-            puts "## If you mute your system audio, \"Soundflower (2ch)\" may also be muted, so take care not to do that. Open up Soundflowerbed \"Audio Setup\" and unmute \"Soundflower (2ch)\" if that happens."
-            puts "#" * 40
-          end
+					if UNAME == 'Darwin'
+						puts "#" * 40
+						puts "## Open Soundflowerbed and make sure that the volume is all the way up on Soundflower (2ch)."
+						puts "## If you mute your system audio, \"Soundflower (2ch)\" may also be muted, so take care not to do that. Open up Soundflowerbed \"Audio Setup\" and unmute \"Soundflower (2ch)\" if that happens."
+						puts "#" * 40
+					end
 					if streamingServerType == 'homebrew'
 						@services = []
 						whisper "starting jackd (to capture audio)", 2
 						@services << Thread.new { `sudo jackd -d #{jackAudioDeviceAndOptions}` }
 						whisper "starting icecast (to stream audio to listeners)", 2
-            if UNAME == 'Darwin'
-              @services << Thread.new { `icecast -c "#{icecastConfigFile}"` }
-            else
-              @services << Thread.new { `icecast2 -c "#{icecastConfigFile}"` }
-            end
+						if UNAME == 'Darwin'
+							@services << Thread.new { `icecast -c "#{icecastConfigFile}"` }
+						else
+							@services << Thread.new { `icecast2 -c "#{icecastConfigFile}"` }
+						end
 						darkiceStartDelay = 5.0
 						whisper "waiting #{darkiceStartDelay} seconds to start darkice", 2
 						sleep darkiceStartDelay
 						whisper "starting darkice (to encode and push audio to streaming server)", 2
 						@services << Thread.new { `sudo darkice -v 10 -c "#{darkiceConfigFile}"` }
-          else
-            whisper "continue to Nicecast server", 2
+					else
+						whisper "continue to Nicecast server", 2
 					end
-        else
-          puts "Unable to configure radio server."
+				else
+					puts "Unable to configure radio server."
 				end
 			end
 
@@ -3468,22 +3490,22 @@ module Tunewich
 					tracks << updateTrackInfo(matchExistingLibraryTrack(createTrack(youtubeId, 'youtube')))
 					puts "This URL contains a YouTube ID. Adding."
 				else
-          urlHTTPHead = `curl -sL --head "#{url}"`
+					urlHTTPHead = `curl -sL --head "#{url}"`
 					urlContentType = getHTTPHeaderByPattern urlHTTPHead, /^Content-Type: ([^;]*).*/i
 					cookieDomain = getHTTPHeaderByPattern urlHTTPHead, /^Set-Cookie:.*domain=([^;]*).*/i
 					whisper "urlContentType: #{urlContentType}, cookieDomain: #{cookieDomain}", 3
 					if 'text/html' == urlContentType && (cookieDomain == '.bandcamp.com' || url.match(/(https?:\/\/)([^\.]+)\.bandcamp\.com.*/))
-            whisper "WIP: scraping bandcamp page"
+						whisper "WIP: scraping bandcamp page"
 						urlCanBeScraped = false
 						bandcampTracks = loadBandcamp url
 						tracks += bandcampTracks if bandcampTracks
 					elsif 'text/html' == urlContentType && cookieDomain == '.soundcloud.com'
-            whisper "WIP: getting soundcloud track"
+						whisper "WIP: getting soundcloud track"
 						urlCanBeScraped = false
 						soundcloudTracks = loadSoundcloud url
 						tracks += soundcloudTracks if soundcloudTracks
 					elsif urlContentType && ['text/xml', 'application/rss+xml'].include?(urlContentType) # TODO: application/rss+xml, application/rdf+xml;q=0.8, application/atom+xml;q=0.6, application/xml;q=0.4, text/xml;q=0.4
-            whisper "WIP: try to load podcast feed"
+						whisper "WIP: try to load podcast feed"
 						urlCanBeScraped = false
 						podcastTracks = loadPodcast url
 						tracks += podcastTracks if podcastTracks
@@ -3594,7 +3616,7 @@ module Tunewich
 		def loadSoundcloud url
 			whisper "loadSoundcloud #{url}", 3
 			tracks = [createTrack(url, 'soundcloud')]
-      whisper "tracks: #{tracks}", 3 # XXX
+			whisper "tracks: #{tracks}", 3 # XXX
 			tracks
 		end
 
