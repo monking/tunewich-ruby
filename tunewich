@@ -2870,31 +2870,35 @@ module Tunewich
 			end
 
 			parser.on("--radio [SERVER_TYPE]", "TODO: stream to a network radio service (SERVER_TYPE: default 'homebrew' or 'Nicecast'", " ") do |streamingServerType = 'homebrew'|
+        if !streamingServerType || streamingServerType.length == 0
+          streamingServerType = 'homebrew'
+        end
+        whisper "streamingServerType: #{streamingServerType}", 2
 				# FIXME: getting properties out of mplayer don't work when targeting "Soundflower (2ch)" (e.g. current time or volume)
 				# FIXME: I think fading worked when using Nicecast
 				serviceConfigDir = "#{$tunewichWorkingDirectory}/config"
 				isRadioConfigured = true
+        whisper "Preparing to start radio (#{streamingServerType}).", 0
+        if streamingServerType == 'homebrew'
+          puts "About to prompt you for your password, so that the darkice server can be run as root."
+          `sudo ls &>/dev/null`
+        end
 				if UNAME == "Darwin"
-					whisper "Preparing to start radio (#{streamingServerType}).", 0
-					if streamingServerType == 'homebrew'
-						puts "About to prompt you for your password, so that the darkice server can be run as root."
-						`sudo ls &>/dev/null`
-					end
 					audioDeviceID = `say -a ? | grep 'Soundflower (2ch)'`.sub /^\s*(\d+).*/, '\1'
-          if !audioDeviceID || audioDeviceID.length == 0
+          if audioDeviceID && audioDeviceID.length > 0
+            @playerOverrideCommands << "-ao coreaudio:device_id=#{audioDeviceID}"
+            jackAudioDeviceAndOptions = "coreaudio -d SoundflowerEngine:0"
+          else
             puts "Please install Soundflower (https://github.com/mattingalls/Soundflower)"
             isRadioConfigured = false
           end
-					@playerOverrideCommands << "-ao coreaudio:device_id=#{audioDeviceID}"
-          jackAudioDeviceAndOptions = "coreaudio -d SoundflowerEngine:0"
 				else
-          audioDeviceID = 0
-					@playerOverrideCommands << "-ao jack"
-          jackAudioDeviceAndOptions = "jack -d SoundflowerEngine:0"
+          whisper "Playing to jack server", 2
+					@playerOverrideCommands << "-ao alsa"
+          jackAudioDeviceAndOptions = "alsa"
 				end
 
-        whisper "audioDeviceID: #{audioDeviceID}", 3
-        if audioDeviceID && audioDeviceID.length > 0
+        if isRadioConfigured
           if streamingServerType == 'homebrew'
             icecastConfigFile = "#{serviceConfigDir}/icecast.xml"
             darkiceConfigFile = "#{serviceConfigDir}/darkice.cfg"
@@ -2906,7 +2910,11 @@ module Tunewich
               puts "Please create the darkice config file at #{darkiceConfigFile}."
               isRadioConfigured = false
             end
+          else
+            whisper "Radio is configured. Ready to play.", 2
           end
+        else
+          whisper "Radio is NOT configured. Ready to play.", 2
         end
 
 				# Currently 2 methods of doing radio:
@@ -2925,22 +2933,32 @@ module Tunewich
 				# http://dzello.com/blog/2012/11/21/live-stream-audio-from-osx-mountain-lion-with-icecast-and-darkice/
 
 				if isRadioConfigured
-					puts "#" * 40
-					puts "## Open Soundflowerbed and make sure that the volume is all the way up on Soundflower (2ch)."
-					puts "## If you mute your system audio, \"Soundflower (2ch)\" may also be muted, so take care not to do that. Open up Soundflowerbed \"Audio Setup\" and unmute \"Soundflower (2ch)\" if that happens."
-					puts "#" * 40
+          if UNAME == 'Darwin'
+            puts "#" * 40
+            puts "## Open Soundflowerbed and make sure that the volume is all the way up on Soundflower (2ch)."
+            puts "## If you mute your system audio, \"Soundflower (2ch)\" may also be muted, so take care not to do that. Open up Soundflowerbed \"Audio Setup\" and unmute \"Soundflower (2ch)\" if that happens."
+            puts "#" * 40
+          end
 					if streamingServerType == 'homebrew'
 						@services = []
 						whisper "starting jackd (to capture audio)", 2
 						@services << Thread.new { `sudo jackd -d #{jackAudioDeviceAndOptions}` }
 						whisper "starting icecast (to stream audio to listeners)", 2
-						@services << Thread.new { `icecast -c "#{icecastConfigFile}"` }
+            if UNAME == 'Darwin'
+              @services << Thread.new { `icecast -c "#{icecastConfigFile}"` }
+            else
+              @services << Thread.new { `icecast2 -c "#{icecastConfigFile}"` }
+            end
 						darkiceStartDelay = 5.0
 						whisper "waiting #{darkiceStartDelay} seconds to start darkice", 2
 						sleep darkiceStartDelay
 						whisper "starting darkice (to encode and push audio to streaming server)", 2
-						@services << Thread.new { `sudo darkice -v 10 -c "#{darkiceConfigFile}"` }
+						@services << Thread.new { `echo "hi there"; sudo darkice -v 10 -c "#{darkiceConfigFile}"` }
+          else
+            whisper "continue to Nicecast server", 2
 					end
+        else
+          puts "Unable to configure radio server."
 				end
 			end
 
