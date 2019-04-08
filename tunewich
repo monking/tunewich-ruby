@@ -63,13 +63,13 @@ module Tunewich
 			while playbackSuccessful do
 				break if !@trackIndex || !@tracks[@trackIndex]
 
+				titleBlock "[#{@trackIndex + 1}] - #{@tracks[@trackIndex]['title']}"
+
 				if @updateAllPlayedTrackInfo || !@tracks[@trackIndex].has_key?('duration') # TODO: remove the 'duration' check: it's here just until the library is more up-to-date
 					printRepeat "Getting latest track information..."
 					updateTrackInfo @tracks[@trackIndex]
 					writeLibraryToFile
 				end
-
-				titleBlock "[#{@trackIndex + 1}] - #{@tracks[@trackIndex]['title']}"
 
 				chapterIndex = @tracks[@trackIndex]['chapters'] ? promptForChapterIndex(@tracks[@trackIndex]['chapters']) : nil
 
