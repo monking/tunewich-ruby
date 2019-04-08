@@ -87,6 +87,8 @@ module Tunewich
 			@isPlayerPlaying = false
 			@tempFiles = {}
 			@loop = false
+			@loopLimit = 0
+			@lastLoop = [nil, 0] # [name, count}
 			@breakLoop = false
 
 			getConfigFiles
@@ -875,6 +877,7 @@ module Tunewich
 									timeMessage = "			time : #{getDurationStringFromSeconds @currentPlayerTime}"
 									if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
 										durationResponseFromPlayer = getMplayerProperty('get_time_length', /^(ANS_LENGTH=)(.*?)(\?)?$/, 0.1)
+										whisper("Got duration from player: '#{durationResponseFromPlayer}'", 2)
 										if durationResponseFromPlayer
 											track['duration'] = getDurationStringFromSeconds durationResponseFromPlayer.to_f
 										end
@@ -1727,12 +1730,20 @@ module Tunewich
 						}
 					},
 					'loop' => {
-						'description' => 'Toggle loop.',
+						'description' => '/loop [COUNT]: Set the loop limit, or toggle looping off/on.',
+						'args' => ['off', 'on'],
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							@loop = getToggledValueByInput.call(@loop, inputParts[1])
-							sendPlayerCommand "loop #{@loop ? '0' : '-1'}"
+							loopLimit = inputParts[1].to_i
+							if loopLimit > 1 || inputParts[1].chomp == '0'
+								@loop = true
+								@loopLimit = loopLimit
+							else
+								@loop = getToggledValueByInput.call(@loop, inputParts[1])
+							end
+
 							putsRealtime "loop: #{@loop ? 'on' : 'off'}"
+
 							{:chainedInput => inputParts[2]}
 						}
 					},
@@ -2314,7 +2325,8 @@ module Tunewich
 			end
 
 			if !streamName
-				playerStartupOptions << "-loop 0" if @loop
+				@lastLoop = [nil, 0]
+				playerStartupOptions << "-loop #{@loopLimit}" if @loop && !trackHasLoopingChapters?(@currentTrack)
 			end
 
 			@speed = 1 if @speed < 0.01
@@ -2390,13 +2402,23 @@ module Tunewich
 						!@breakLoop  &&
 						!@currentlySkippingChapter &&
 						@currentTrack['chapters'][@currentChapterIndex] &&
-						@currentTrack['chapters'][@currentChapterIndex].has_key?('loop_target')
+						@currentTrack['chapters'][@currentChapterIndex].has_key?('loop_target') &&
+						(
+							@lastLoop[0] != @currentTrack['chapters'][@currentChapterIndex]['loop_target'] ||
+							@lastLoop[1] < @loopLimit
+						)
 				)
 					whisper("jumping to target chapter '#{@currentTrack['chapters'][@currentChapterIndex]['loop_target']}'", 2)
 					@currentlySkippingChapter = @currentChapterIndex
 
 					targetChapterIndex = getChapterIndexByQuery @currentTrack['chapters'][@currentChapterIndex]['loop_target'], @currentTrack['chapters']
 					if targetChapterIndex
+						if @lastLoop[0] == @currentTrack['chapters'][@currentChapterIndex]['loop_target']
+							@lastLoop[1] += 1
+						else
+							@lastLoop = [@currentTrack['chapters'][@currentChapterIndex]['loop_target'], 1];
+						end
+						whisper("\nLoop ##{@lastLoop[1]}/#{@loopLimit}", 1)
 						fadeInterval = 0.0
 						seekToChapter targetChapterIndex, fadeInterval, fadeInterval
 					end
@@ -2665,6 +2687,21 @@ module Tunewich
 				tags << name if tag.has_key?('tracks') && tag['tracks'].include?(track['id'])
 			}
 			tags
+		end
+
+		def trackHasLoopingChapters? track
+			hasLoopingChapters = false
+
+			if track && track.has_key?('chapters')
+				track['chapters'].each { |c|
+					if c && c['loop_target']
+						hasLoopingChapters = true 
+						break
+					end
+				}
+			end
+
+			hasLoopingChapters
 		end
 
 		def doesTrackHaveTag(track, *tagNames)
@@ -3695,8 +3732,9 @@ module Tunewich
 				exit
 			end
 
-			parser.on("-l", "--loop", "Loop a track. A track may contain chapters which loop.", " ") do
-				@loop = true
+			parser.on("-l [COUNT]", "--loop [COUNT]", "Loop tracks COUNT times (indefinitely if COUNT is 0 or missing. COUNT of 1 is the same as no loop). A track may contain chapters which loop, in which case each loop will be repeated COUNT times.", " ") do |count = 0|
+				@loopLimit = count.to_i
+				@loop = @loopLimit != 1
 			end
 
 			parser.on("-L FILE", "--log FILE", "Log most verbose output to FILE. This includes events and crosstalk between the script and player", " ") do |logFile|
