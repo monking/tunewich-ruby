@@ -2543,28 +2543,28 @@ module Tunewich
 			@library['tags'].delete tagName if @library['tags'].has_key? tagName
 		end
 
-		def getNextPlayableChapterIndex chapters, fromIndex = -1
-			nextChapterIndex = nil
-			chapters.each_with_index { |chapter, index|
-				if index > fromIndex && (!chapter.has_key?('skip') || !chapter['skip'])
-					nextChapterIndex = index
+		def getNextPlayableNoteIndex notes, fromIndex = -1
+			nextNoteIndex = nil
+			notes.each_with_index { |note, index|
+				if index > fromIndex && (!note.has_key?('skip') || !note['skip'])
+					nextNoteIndex = index
 					break
 				end
 			}
 
-			nextChapterIndex
+			nextNoteIndex
 		end
 
-		def seekToNextPlayableNoteOrSkip chapters, fromIndex
-			nextChapterIndex = getNextPlayableChapterIndex @currentTrack['chapters'], fromIndex
+		def seekToNextPlayableNoteOrSkip notes, fromIndex, noteType = 'note'
+			nextPlayableIndex = getNextPlayableNoteIndex notes, fromIndex
 
-			if nextChapterIndex
-				chapter = chapters[nextChapterIndex]
-				seekSeconds = getSecondsFromDurationString chapter['time']
-				whisper("Skipping chapter #{fromIndex + 1}, to #{nextChapterIndex + 1} (#{chapter['time']}, #{seekSeconds}).", 0)
+			if nextPlayableIndex
+				note = notes[nextPlayableIndex]
+				seekSeconds = getSecondsFromDurationString note['time']
+				whisper("Skipping #{noteType} #{fromIndex + 1}, to #{nextPlayableIndex + 1} (#{note['time']}, #{seekSeconds}).", 0)
 				seek seekSeconds, 0, 0
 			else
-				whisper("Skipping chapter #{fromIndex + 1}; no more playable chapters; skipping track.", 0)
+				whisper("Skipping #{noteType} #{fromIndex + 1}; no more playable #{noteType}s; skipping track.", 0)
 				fadeVolume 'out', 0.25, @currentPlayerIndex
 				exitPlayerCommand
 			end
@@ -2616,7 +2616,7 @@ module Tunewich
 				firstPlayableChapterIndex = 0
 				firstChapterStartTime = getSecondsFromDurationString(track['chapters'][0]['time'])
 				if firstChapterStartTime == 0
-					firstPlayableChapterIndex = getNextPlayableChapterIndex track['chapters']
+					firstPlayableChapterIndex = getNextPlayableNoteIndex track['chapters']
 				end # don't skip if first chapter doesn't start at 0:00
 			end
 
