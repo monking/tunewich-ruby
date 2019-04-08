@@ -59,6 +59,7 @@ module Tunewich
 			@playerThreads = []
 			@inputThread = nil
 			@playerApplicationThreads = []
+      @verbosity = 0
 
 			getEnvironmentConfig
 
@@ -1529,7 +1530,9 @@ module Tunewich
 
 		def notify(message)
 			if UNAME == 'Linux'
-				`notify-send --expire-time=3000 --urgency=low tunewich "#{message}"`
+				if @verbosity > 0
+					`notify-send --expire-time=3000 --urgency=low tunewich "#{message}"`
+				end
 			elsif UNAME == 'Darwin'
 				whisper message, 1
 			end
