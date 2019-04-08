@@ -1709,18 +1709,18 @@ module Tunewich
 					},
 					'loop' => {
 						'description' => '/loop [COUNT]: Set the loop limit, or toggle looping off/on.',
-						'args' => ['off', 'on'],
+						'args' => ['off', 'on', 'status'],
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1].match(/^[0-9]+$/)
 								loopLimit = inputParts[1].to_i
 								@loop = true
 								@loopLimit = loopLimit
-							else
+							elsif inputParts[1] != 'status' # if status, fall though
 								@loop = getToggledValueByInput.call(@loop, inputParts[1])
 							end
 
-							putsRealtime "loop: #{@loop ? 'on' : 'off'} (#{@loopLimit == 0 ? "indefinite" : "#{@loopLimit} times"})"
+							putsRealtime "loop: #{@loop ? 'on' : 'off'} (#{@lastLoop[1]}/#{@loopLimit == 0 ? "indefinite" : "#{@loopLimit} times"})"
 
 							{:chainedInput => inputParts[2]}
 						}
