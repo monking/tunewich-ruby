@@ -2388,7 +2388,7 @@ module Tunewich
 						@currentTrack['chapters'][@currentChapterIndex].has_key?('loop_target') &&
 						(
 							@lastLoop[0] != @currentTrack['chapters'][@currentChapterIndex]['loop_target'] ||
-							@lastLoop[1] < @loopLimit
+							(@loopLimit == 0 || @lastLoop[1] < @loopLimit)
 						)
 				)
 					whisper("jumping to target chapter '#{@currentTrack['chapters'][@currentChapterIndex]['loop_target']}'", 2)
