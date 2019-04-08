@@ -95,11 +95,47 @@ module Tunewich
 			commandRequiresNext = false
 
 			interactiveCommands = {
-				'related' => {
+				'more' => {
+					'info' => "Play all tracks on this video's page.",
 					'action' => Proc.new {
-						@tracks = getYouTubeTracksFromPage @tracks[@trackIndex]['src']
+						useTracks getYouTubeTracksFromPage(@tracks[@trackIndex]['src']), false
 						@trackIndex = 0
 						commandRequiresNext = true
+					}
+				},
+				'q' => {
+					'info' => "<query> Search YouTube.",
+					'action' => Proc.new { |query|
+						useTracks searchYouTube(query), false
+						@trackIndex = 0
+						commandRequiresNext = true
+					}
+				},
+				'filter' => {
+					'info' => 'Edit filters.',
+					'action' => Proc.new { |query|
+						filtersList = @trackFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackFilters
+						filtersList ||= []
+						@trackFilters = parseOptionParameters editListInVim(filtersList).join ','
+						useTracks @tracks, false
+					}
+				},
+				'add' => {
+					'info' => '<playlistName> add selection to a playlist.',
+					'action' => Proc.new { |playlistQuery|
+						if playlistQuery && playlistQuery.length > 0
+							playlistName = findPlaylistName playlistQuery
+
+							if playlistName
+								addTrackReferenceToPlaylist @tracks[@trackIndex]['id'], playlistName
+							elsif confirm "no existing playlist matching '#{playlistQuery}'. create one?"
+								createPlaylist playlistQuery, [@tracks[@trackIndex]['id']]
+							else
+								playlistName = nil
+							end
+						else
+							puts "#{@library['playlists'].map { |name, p| name } .join "\n"}\n\nPlease specify a playlist name (new or existing)."
+						end
 					}
 				},
 				'loop' => {
@@ -427,7 +463,8 @@ module Tunewich
 			@tracks = []
 		end
 
-		def useTracks tracks
+		def useTracks tracks, append = true
+			@tracks = [] if !append
 			@tracks += tracks
 			filterTracksOnDeck
 		end
@@ -673,25 +710,23 @@ module Tunewich
 
 		def usePlaylist(name, append = false)
 			@playlistName = name
-			clearTracks if not append
 			tracks = []
 
 			@library['playlists'][@playlistName]['tracks'].each do |trackReference|
 				tracks << @library['library'][trackReference]
 			end
 
-			useTracks tracks
+			useTracks tracks, append
 		end
 
 		def useEntireLibrary
-			clearTracks
 			tracks = []
 
 			@library['library'].keys.each do |trackKey|
 				tracks << @library['library'][trackKey]
 			end
 
-			useTracks tracks
+			useTracks tracks, false
 		end
 
 		def processLibraryJSON(json)
@@ -820,11 +855,8 @@ module Tunewich
 				'edit' => {
 					'info' => 'edit selection in Vim',
 					'action' => Proc.new {
-						putInTempFile 'cleanup', listTrackTitles(cleanupSelection)
-						system "vim #{getTempFilePath 'cleanup'}"
-						cleanupSelection = getTracksFromTitleList readTempFile('cleanup')
-						deleteTempFile 'cleanup'
-						puts "#{listTrackTitles cleanupSelection}\n\n(#{cleanupSelection.length} tracks selected)"
+						cleanupSelection = getTracksFromTitleList editListInVim(listTrackTitles(cleanupSelection), "remove or comment any tracks you want to deselect")
+						puts "#{listTrackTitles(cleanupSelection).join "\n"}\n\n(#{cleanupSelection.length} tracks selected)"
 					}
 				},
 				'clear' => {
@@ -878,15 +910,7 @@ module Tunewich
 							end
 						}
 						if filesToDelete.length > 0
-							deleteTempFile 'cleanup-rmfile'
-							fileDirections = "##\n# remove any files you don't want to delete\n##\n\n"
-							putInTempFile 'cleanup-rmfile', fileDirections + filesToDelete.join("\n")
-							system "vim #{getTempFilePath 'cleanup-rmfile'}"
-							filesToDelete = readTempFile('cleanup-rmfile').lines
-							filesToDelete.delete_if { |line| # remove empty and comment lines from the list
-								line.match(/^(#.*|\s*)$/)
-							}
-							deleteTempFile 'cleanup'
+							filesToDelete = editListInVim filesToDelete, "remove any files you don't want to delete"
 
 							filesToDelete.each { |file|
 								File.delete "#{@fileDirectory}/#{file.chomp}"
@@ -1089,6 +1113,7 @@ module Tunewich
 			page = (offset.to_f / resultsPerPage.to_f).to_i + 1
 			queryParameter = URI::encode(query)
 			queryUrl="https://www.youtube.com/results?search_query=#{queryParameter}&page=#{page}"
+			puts "queryUrl: #{queryUrl}" # XXX
 			getYouTubeTracksFromPage queryUrl
 		end
 
@@ -1305,6 +1330,14 @@ module Tunewich
 			end
 		end
 
+		def encodeOptionParameters hash
+			clumps = []
+			hash.each { |key, value|
+				clumps << "#{key}=#{value}"
+			}
+			clumps.join ','
+		end
+
 		def parseOptionParameters serialized
 			hash = {}
 
@@ -1332,6 +1365,25 @@ module Tunewich
 			end
 
 			@cliRotateCharacters[@cliRotateIndex]
+		end
+
+		def editListInVim list, instructions = nil
+			instructions ||= "edit"
+			fileDirections = "##\n# #{instructions}\n##\n\n"
+
+			deleteTempFile 'edit-list'
+			putInTempFile 'edit-list', fileDirections + list.join("\n")
+
+			system "vim #{getTempFilePath 'edit-list'}"
+
+			list = readTempFile('edit-list').lines
+			list.delete_if { |line| # remove empty and comment lines from the list
+				line.match(/^(#.*|\s*)$/)
+			}
+
+			deleteTempFile 'edit-list'
+
+			list
 		end
 
 		def commandPrompt message = nil, commands = nil
@@ -1473,12 +1525,12 @@ module Tunewich
 		end
 
 		def listTrackTitles(tracks)
-			tracks.map { |id, t| "#{t['title']} [#{id}]" } .join "\n"
+			tracks.map { |id, t| "#{t['title']} [#{id}]" }
 		end
 
-		def getTracksFromTitleList(titleString)
+		def getTracksFromTitleList(titleList)
 			tracks = {}
-			titleString.chomp.lines.each { |line|
+			titleList.each { |line|
 				matches = line.match(/^.*\[(.*)\]$/)
 				if matches
 					id = matches[1]
