@@ -470,8 +470,8 @@ module Tunewich
 								waitEvent = nil
 								waitInput = inputParts[1].chomp.strip
 								if waitInput.length > 0
-									if waitInput.match(/^[0-9.]+\s*$/)
-										waitTime = waitInput.to_f
+									if waitInput.match(/^[0-9:.]+\s*$/)
+										waitTime = getSecondsFromDurationString waitInput
 										whisper("sleeping for #{waitTime} seconds", 3)
 										waitEvent = "timed_wait_in_player_#{@currentPlayerIndex}"
 										Thread.new {
