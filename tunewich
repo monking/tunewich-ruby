@@ -415,7 +415,7 @@ module Tunewich
 			mplayerConfigFile = "#{$serviceConfigDir}/mplayer.options"
 
 			if File.exist?(mplayerConfigFile)
-				@playerOverrideCommands << File.read(mplayerConfigFile).chomp.strip.gsub(/[\r\n]+/, ' ')
+				@playerOverrideCommands += File.read(mplayerConfigFile).chomp.strip.gsub(/[\r\n]+/, ' ').split(/ (?=-)/)
 			end
 		end
 
@@ -1903,6 +1903,30 @@ module Tunewich
 								@downmixMono = getToggledValueByInput.call(@downmixMono, inputParts[1])
 								sendPlayerCommand 'af_del pan'
 								sendPlayerCommand 'af_add pan=1:0.5:0.5' if @downmixMono # assuming stereo source
+							end
+
+							command['showStatus'].call
+
+							{:chainedInput => inputParts[2]}
+						}
+					},
+					'video' => {
+						'description' => 'Shortcut to enable/disable video-related settings. Toggles between mp4/bestaudio youtube-dl formats (regardless of your previous settings).',
+						'showStatus' => Proc.new {
+							isVideoEnabled = !@playerOverrideCommands.join(' ').match('-novideo')
+							putsRealtime "Video: #{isVideoEnabled ? 'on' : 'off'}"
+							isVideoEnabled
+						},
+						'action' => Proc.new { |input, command|
+							inputParts = input.match(/^([^\/]*)(.*)$/)
+							isVideoEnabled = getToggledValueByInput.call(command['showStatus'].call(), inputParts[1])
+
+							if isVideoEnabled
+								@playerOverrideCommands.delete_if { |option| option.match(/-novideo\b/) }
+								@preferredFileFormat = 'mp4'
+							else
+								@playerOverrideCommands << '-novideo'
+								@preferredFileFormat = 'bestaudio'
 							end
 
 							command['showStatus'].call
