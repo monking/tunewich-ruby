@@ -43,7 +43,7 @@ module Tunewich
 			end
 
 			if @trackFilters
-				applyTrackFilters @trackFilters
+				filterTracks! @tracks, @trackFilters
 			end
 
 			if @trackIndex == nil
@@ -153,7 +153,7 @@ module Tunewich
 			parser.on("-D", "--keep-download", "Keep the downloaded file. Normally the file will be removed after playback, unless it belongs to a playlist.") do
 				@keepUnattachedDownload = true
 			end
-			parser.on("-f", "--filter RULES", "Filter by rules, in the format 'name=value,name=value'. Available rules are: min-rating=[0-5],title=[query],tag=[tag],chapters.") do |rules|
+			parser.on("-f", "--filter RULES", "Filter by rules, in the format 'name=value,name=value'. Available rules are: [min-,max-]rating=[0-5],title=[query],tag=[tag],chapters.") do |rules|
 				@trackFilters = parseOptionParameters rules
 			end
 			parser.on("-h", "--help", "Show this help.") do
@@ -279,12 +279,12 @@ module Tunewich
 			}
 		end
 
-		def getTrackTitles
-			@tracks.map{|t| t['title']}
+		def getTrackTitles tracks
+			tracks.map{|t| t['title']}
 		end
 
 		def findTrackIndex(query)
-			match = firstFuzzyMatch query, getTrackTitles
+			match = firstFuzzyMatch query, getTrackTitles(@tracks)
 			match ? match[:index] : false
 		end
 
@@ -307,7 +307,7 @@ module Tunewich
 					match[:density] = query.length.to_f / match[:matchLength].to_f
 					match[:breadth] = match[:matchLength].to_f / match[:value].length.to_f
 					match[:score] = match[:density] * 10 + match[:breadth]
-					matches.push(match)
+					matches << match
 				end
 			end
 
@@ -328,14 +328,14 @@ module Tunewich
 			@playlist = @library['playlists'][@playlistName]
 			@tracks = []
 			@playlist['tracks'].each do |trackReference|
-				@tracks.push @library['library'][trackReference]
+				@tracks << @library['library'][trackReference]
 			end
 		end
 
 		def useEntireLibrary
 			@tracks = []
 			@library['library'].keys.each do |trackKey|
-				@tracks.push @library['library'][trackKey]
+				@tracks << @library['library'][trackKey]
 			end
 		end
 
@@ -369,10 +369,10 @@ module Tunewich
 					if not streaming
 						titleBlock "Chapter #{chapterIndex + 1}: #{track['chapters'][chapterIndex]['name']}"
 						offsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex]['time']
-						mplayerCommands.push("-ss #{offsetSeconds}")
+						mplayerCommands << "-ss #{offsetSeconds}"
 						if chapterIndex < track['chapters'].length - 1
 							nextTrackoffsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex + 1]['time']
-							mplayerCommands.push("-endpos #{nextTrackoffsetSeconds - offsetSeconds}")
+							mplayerCommands << "-endpos #{nextTrackoffsetSeconds - offsetSeconds}"
 						end
 					else
 						titleBlock "This track has chapters, but seeking backward is not supported while streaming. Add the -d option to enable downloading."
@@ -385,11 +385,11 @@ module Tunewich
 					duration = track['loop'][1] - track['loop'][0]
 
 					mplayerInputFile = putInTempFile 'mplayer-input', "seek -999:00:00\n" # this is a silly way to do it. -100% doesn't work. Still, there's a moment of the audio heard before this command is run.
-					mplayerCommands.push("-input file=#{mplayerInputFile}")
+					mplayerCommands << "-input file=#{mplayerInputFile}"
 
 					# loop back from B to A
-					mplayerCommands.push("-ss #{track['loop'][0]}")
-					mplayerCommands.push("-endpos #{duration}")
+					mplayerCommands << "-ss #{track['loop'][0]}"
+					mplayerCommands << "-endpos #{duration}"
 				else
 					titleBlock "This track has an A/B loop, but looping is not supported while streaming. Add the -d option to enable downloading."
 				end
@@ -414,7 +414,7 @@ module Tunewich
 			end
 
 			if !streamName
-				mplayerCommands.push("-loop 0") if track['loop'] or @loop
+				mplayerCommands << "-loop 0" if track['loop'] or @loop
 			end
 
 			mplayerCommands += ["-novideo", "-af scaletempo"]
@@ -578,30 +578,43 @@ module Tunewich
 			url.sub(/^.*v=/, '')
 		end
 
-		def applyTrackFilters filters
-			if filters['min-rating']
-				@tracks.keep_if { |track| track['rating'] && track['rating'] >= rating }
+		def filterTracks! tracks, filters
+
+			if filters['rating']
+				tracks.keep_if { |track| track['rating'] && track['rating'] == filters['rating'].to_i }
 			end
+
+			if filters['min-rating']
+				tracks.keep_if { |track| track['rating'] && track['rating'] >= filters['min-rating'].to_i }
+			end
+
+			if filters['max-rating']
+				tracks.keep_if { |track| !track['rating'] || track['rating'] <= filters['max-rating'].to_i }
+			end
+
 			if filters['tag']
 				taggedPlaylistTrackIds = []
 				@library['playlists'].each { |name, p| taggedPlaylistTrackIds += p['tracks'] if p['tags'] && p['tags'].find_index(filters['tag']) }
-				@tracks.keep_if { |t| taggedPlaylistTrackIds.find_index(t['src']) }
-				if @tracks.length === 0
+				tracks.keep_if { |t| taggedPlaylistTrackIds.find_index(t['src']) }
+
+				if tracks.length === 0 # list available tags if no matches
 					allTags = []
 					@library['playlists'].each { |name, p| allTags += p['tags'] if p['tags'] }
 					puts "No matches. Available tags are: #{allTags.uniq.sort.join ", "}"
 				end
 			end
+
 			if filters['title']
-				matches = fuzzyStringSearchInList(filters['title'], getTrackTitles)
-				oldTracks = @tracks
-				@tracks = []
+				matches = fuzzyStringSearchInList(filters['title'], getTrackTitles(tracks))
+				oldTracks = tracks
+				tracks = []
 				matches.each { |match|
-					@tracks.push oldTracks[match[:index]]
+					tracks << oldTracks[match[:index]]
 				}
 			end
+
 			if filters.has_key? 'chapters'
-				@tracks.keep_if { |track|
+				tracks.keep_if { |track|
 					if track
 						track.has_key? 'chapters'
 					else
@@ -609,6 +622,9 @@ module Tunewich
 					end
 				}
 			end
+
+			tracks
+
 		end
 
 		def createPlaylist name, tracks = [], description = ''
@@ -622,7 +638,8 @@ module Tunewich
 
 		def createTrack id
 			{
-				'src' => id,
+				'id' => id,
+				'src' => id, # NOTE: assuming ID is a YouTube video ID, so that it's also the "src"
 				'unattached' => true
 			}
 		end
@@ -672,8 +689,9 @@ module Tunewich
 
 		def addTrackReferenceToPlaylist trackReference, playlistName
 			tracks = @library['playlists'][playlistName]['tracks']
+			track = @library['library'][trackReference]
 			if not tracks.index trackReference
-				tracks.push trackReference
+				tracks << trackReference
 				puts "Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'"
 			else
 				puts "Track '#{track['title']}' (#{trackReference}) is already in playlist '#{playlistName}'"
@@ -696,7 +714,7 @@ module Tunewich
 			queryResultIds = []
 			open(queryUrl) do |handle|
 				html = []
-				handle.each_line { |line| html.push(line) }
+				handle.each_line { |line| html << line }
 				queryResultIds = html.grep(/href="\/watch/).map! do |line|
 					line.sub!(/^.*watch\?v=([^\"&<]+).*\n/, '\1')
 				end
@@ -709,7 +727,7 @@ module Tunewich
 			printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
 			queryResultIds.each do |id|
 				track = createTrack id
-				resultTracks.push track
+				resultTracks << track
 				threads << Thread.new {
 					updateTrackInfo track
 					receivedCount += 1
@@ -723,53 +741,98 @@ module Tunewich
 		end
 
 		def interactiveCleanup
-			tracksToDelete = {}
-			initialLibraryLength = @library['library'].length
-			puts "Library contains #{initialLibraryLength} tracks."
+			libraryCleanupSegment = {}
 
-			# find tracks which are not included in any playlist
-			unattachedTracks = {}
-			@library['library'].map { |id, t| unattachedTracks[id] = t }
-			@library['playlists'].each do |name, playlist|
-				playlist['tracks'].each do |id|
-					unattachedTracks.delete id if unattachedTracks.has_key? id
-				end
-			end
-			if unattachedTracks.length > 0
-				unattachedTracks.each { |id, track| tracksToDelete[id] = track }
-			else
-				puts "Every track is assigned to a playlist. No suggestions for deletion."
-			end
+			commands = {
+				'unlisted' => Proc.new {
 
-			# delete chosen tracks from library
-			if tracksToDelete.length > 0
-				commands = {
-					'edit' => Proc.new {
-						putInTempFile 'cleanup', listTrackTitles(tracksToDelete)
-						system "vim #{getTempFilePath 'cleanup'}"
-						tracksToDelete = getTracksFromTitleList readTempFile('cleanup')
-						deleteTempFile 'cleanup'
-						puts listTrackTitles tracksToDelete
-					}
-				}
+					unattachedTracks = {}
 
-				puts listTrackTitles tracksToDelete
-				if confirm "\nRemove these #{tracksToDelete.length} tracks?", commands
+					@library['library'].map { |id, t| unattachedTracks[id] = t }
 
-					tracksToDelete.each do |id, track|
-						@library['library'].delete id
+					@library['playlists'].each do |name, playlist|
+						playlist['tracks'].each do |id|
+							unattachedTracks.delete id if unattachedTracks.has_key? id
+						end
 					end
 
-					checksum = initialLibraryLength - tracksToDelete.length == @library['library'].length
-					checksumString = "#{initialLibraryLength} - #{tracksToDelete.length} == #{@library['library'].length}"
+					if unattachedTracks.length > 0
+						unattachedTracks.each { |id, track| libraryCleanupSegment[id] = track }
+						puts "#{listTrackTitles libraryCleanupSegment}\n\n(#{libraryCleanupSegment.length} tracks selected)"
+					else
+						puts "Every track is assigned to a playlist. No suggestions for cleanup."
+					end
+
+				},
+				'all' => Proc.new {
+					libraryCleanupSegment = cloneLibrary @library['library']
+					puts "All tracks selected (#{libraryCleanupSegment.length})"
+				},
+				'add' => Proc.new { |playlistQuery|
+					if !playlistQuery || playlistQuery.length == 0
+						puts "Please specify a playlist name (new or existing).\n#{@library['playlists'].map { |p| p['title'] } .join "\n"}"
+						break
+					end
+
+					playlistName = findPlaylistName playlistQuery
+
+					if playlistName
+						libraryCleanupSegment.keys.each { |id| addTrackReferenceToPlaylist id, playlistName }
+					elsif confirm "No existing playlist matching '#{playlistQuery}'. Create one?"
+						createPlaylist playlistName, libraryCleanupSegment.keys
+					else
+						playlistName = nil
+					end
+
+					if playlistName
+						libraryCleanupSegment = {}
+						puts "Added #{libraryCleanupSegment.length} tracks to playlist '#{playlistName}'"
+					else
+						puts "No change"
+					end
+				},
+				'filter' => Proc.new { |filterString|
+					libraryCleanupSegment = cloneLibrary @library['library'] if libraryCleanupSegment.length == 0
+					# FIXME: lots of back and forth from arrays to hashes here. Want to pick one?
+					libraryCleanupSegment = cloneTracksToLibrary filterTracks! cloneLibraryToTracks(libraryCleanupSegment), parseOptionParameters(filterString)
+					puts "#{libraryCleanupSegment.length} tracks selected"
+				},
+				'edit' => Proc.new {
+					putInTempFile 'cleanup', listTrackTitles(libraryCleanupSegment)
+					system "vim #{getTempFilePath 'cleanup'}"
+					libraryCleanupSegment = getTracksFromTitleList readTempFile('cleanup')
+					deleteTempFile 'cleanup'
+					puts "#{listTrackTitles libraryCleanupSegment}\n\n(#{libraryCleanupSegment.length} tracks selected)"
+				},
+				'clear' => Proc.new {
+					libraryCleanupSegment = {}
+					puts "0 tracks selected"
+				},
+				'rm' => Proc.new {
+					initialLibraryLength = @library['library'].length
+					libraryCleanupSegment.each do |id, track|
+						@library['library'].delete id
+						playlistMatches = []
+						@library['playlists'].each { |playlistName, p|
+							index = p['tracks'].index id
+							if index
+								playlistMatches << playlistName
+								p['tracks'].delete_at index
+							end
+						}
+					end
+					checksum = initialLibraryLength - libraryCleanupSegment.length == @library['library'].length
+					checksumString = "#{initialLibraryLength} - #{libraryCleanupSegment.length} == #{@library['library'].length}"
 					puts "#{checksumString} ... #{checksum ? 'OK' : 'Mismatch'}"
+					libraryCleanupSegment = {}
+				}
+			}
 
-					confirmMsg = "\nLibrary now contains #{@library['library'].length} tracks. Write to file?"
-					writeLibraryToFile if confirm confirmMsg
-
-				end
+			confirmMsg = "Choose a command, or \"y\" to write changes to file"
+			if confirm confirmMsg, commands
+				writeLibraryToFile
 			else
-				puts "No tracks to delete."
+				puts "No changes saved."
 			end
 
 			puts "Cleanup finished."
@@ -818,23 +881,33 @@ module Tunewich
 		end
 
 		def confirm message, commands = nil
-			print "#{message} (y/N): "
-			commandPrompt(commands)[:input].match(/^[Yy]/)
+			confirmMessage = "#{message} (y/N): "
+			commandPrompt(commands, confirmMessage)[:input].match(/^[Yy]/)
 		end
 
-		def commandPrompt commands = nil
+		def commandPrompt commands = nil, message = nil
+			prompt = Proc.new {
+				puts "\n(commands: \"#{commands.keys.join '", "'}\")" if commands
+				print message if message
+			}
+			prompt.call
+
 			response = {
 				:input => nil,
 				:commands => []
 			}
 
 			while input = STDIN.gets.chomp
+
 				if commands && !input.empty? && input[0] == '/'
-					commandParts = input.slice(1..-1).split(/\s+/)
-					commandName = commandParts[0]
-					commandArgs = commandParts.slice(1..-1)
+
+					commandParts = input.match(/^\/([^\s]+)\s*(.*)/)
+					commandName = commandParts[1]
+					commandArgs = commandParts[2]
+					puts "commandArgs: #{commandArgs}" # XXX
+
 					if commands[commandName]
-						response[:commands].push({
+						response[:commands] << ({
 							:name => commandName,
 							:args => commandArgs,
 							:output => commands[commandName].call(commandArgs)
@@ -842,9 +915,15 @@ module Tunewich
 					else
 						puts "Invalid command '#{commandName}'; available commands: #{commands.keys.join ', '}"
 					end
+
+					prompt.call
+
 				else
+
 					break
+
 				end
+
 			end
 
 			response[:input] = input
@@ -853,18 +932,46 @@ module Tunewich
 		end
 
 		def listTrackTitles(tracks)
-			tracks.map { |id, t| "#{t['title']}" } .join "\n"
+			tracks.map { |id, t| "#{t['title']} [#{id}]" } .join "\n"
 		end
 
 		def getTracksFromTitleList(titleString)
 			tracks = {}
-			titleList = titleString.chomp.lines
-
-			@library['library'].each { |id, track| 
-				tracks[id] = track if titleList.index track['title']
+			titleString.chomp.lines.each { |line|
+				matches = line.match(/^.*\[(.*)\]$/)
+				if matches
+					id = matches[1]
+					tracks[id] = @library['library'][id]
+				else
+					puts "IGNORING: #{line}"
+				end
 			}
 
 			tracks
+		end
+
+		def cloneTracks inputTracks
+			tracks = []
+			inputTracks.each { |id, t| tracks <<  t }
+			tracks
+		end
+
+		def cloneLibraryToTracks inputLibrary
+			tracks = []
+			inputLibrary.each { |id, t| tracks << t }
+			tracks
+		end
+
+		def cloneLibrary inputLibrary
+			library = {}
+			inputLibrary.each { |id, t| library[t['id']] = t }
+			library
+		end
+
+		def cloneTracksToLibrary inputTracks
+			library = {}
+			inputTracks.each { |t| library[t['id']] = t }
+			library
 		end
 
 		alias deleteStream deleteTempFile
