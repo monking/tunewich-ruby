@@ -58,6 +58,7 @@ module Tunewich
 			# TODO: catch SIGINT (ctrl+c) & prompt for playlist again
 			playbackSuccessful = true
 			while playbackSuccessful do
+				break if not @tracks[@trackIndex]
 				playbackSuccessful = play @tracks[@trackIndex]
 				nextTrack()
 			end
@@ -254,7 +255,12 @@ module Tunewich
 		end
 
 		def play(track)
-			titleBlock "[#{@trackIndex + 1}] - #{@tracks[@trackIndex]['title']}"
+			if track['get_info']
+				track.delete 'get_info'
+				track = updateTrackInfo track
+			end
+
+			titleBlock "[#{@trackIndex + 1}] - #{track['title']}"
 
 			if not fileExistsFromID? track['src']
 				if not @enableDownload
@@ -302,11 +308,7 @@ module Tunewich
 
 			mplayerPlayTime = mplayerEndTime - mplayerStartTime
 			if (@playthroughThreshold && mplayerPlayTime > @playthroughThreshold)
-				puts "Played more than #{@playthroughThreshold}s, ading to playlist '#{@playlistName}'."
-				if track['get_info']
-					delete track['get_info']
-					track = updateTrackInfo track
-				end
+				puts "Played more than #{@playthroughThreshold}s, adding to playlist '#{@playlistName}'."
 				addTrackToPlaylist track, @playlistName if @playlistName
 				writeLibraryToFile
 			end
@@ -431,15 +433,19 @@ module Tunewich
 		end
 
 		def getTrackInfo id
-			puts "Fetching title for YouTube ID #{id}..."
-			title = `youtube-dl --get-title -- #{id}`.chomp
 
-			if title.empty?
-				title = 'Unknown'
+			track = {
+				'title' => `youtube-dl --get-title -- #{id}`.chomp
+			}
+
+			if track['title'].empty?
+				track['title'] = 'Unknown'
 				puts "Video not found. Cannot get title."
+			else
+				track['description'] = `youtube-dl --get-description -- #{id}`.chomp
 			end
 
-			title
+			track
 		end
 
 		def getTrackDescription id
@@ -467,11 +473,14 @@ module Tunewich
 		end
 
 		def updateTrackInfo track
+			puts "getting track info for #{track['src']}" # XXX
 			trackInfo = getTrackInfo track['src']
+			puts "trackInfo: #{trackInfo}" # XXX
 			track['title'] = trackInfo['title']
 
 			if trackInfo['description']
-				chapters = getChaptersFromDescription trackInfo['description']
+				chapters = getChaptersFromDescription trackInfo['description'].lines
+				puts "chapters found #{chapters}" # XXX
 				track['chapters'] = chapters if chapters
 			end
 
@@ -480,7 +489,8 @@ module Tunewich
 
 		def getChaptersFromDescription description
 			description.grep(/[0-9]+:[0-9:.]+/).map! do |line|
-				matches = line[/^(.*?) *([0-9]+:[0-9:.]+) *(.*)$/]
+				matches = line.match(/^(.*?)[ (]*([0-9]+:[0-9:.]+)[ )]*(.*)$/)
+				puts "#{line} => #{matches}" # XXX
 				{
 					'time' => matches[2],
 					'name' => "#{matches[1]} #{matches[3]}".strip
@@ -530,10 +540,10 @@ module Tunewich
 			end
 
 			resultTracks = []
-			queryResultIds.slice(0, count).each_with_index do |id, index|
+			queryResultIds.slice(0, count).each do |id|
 				track = createTrack id, false
-				track.title = "Search '#{query}': (#{id})"
-				track.get_info = true
+				track['title'] = "Search '#{query}': (#{id})"
+				track['get_info'] = true
 				resultTracks.push track
 			end
 
