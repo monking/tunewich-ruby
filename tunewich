@@ -248,6 +248,7 @@ module Tunewich
 				whisper("gliding bpm for #{@bpmGlideDuration} seconds (after #{@bpmGlideDelay} seconds) seconds between #{trackA['bpm']} and #{trackB['bpm']} (adjust for current speed #{@speed}).", 2)
 				initialSpeed = @speed
 				# TODO: ramp to the nearest multiple: e.g. if going from 60bpm to 120, do nothing. If going from 60 to 140, ramp to 70; from 140 to 60, ramp to 120.
+				# This is already implemented in getSoftBPMRatio
 				@speed = @speed * trackA['bpm'] / trackB['bpm']
 				bindOnce 'time_update', Proc.new {
 					Thread.new {
@@ -310,7 +311,7 @@ module Tunewich
 			handlerId = bind eventName, selfRemovingHandlerProc, handlerGroup
 			handlerId
 		end
-		
+
 		def unbind handlerId
 			if @eventBindingsIndex.has_key? handlerId
 				@eventBindings[@eventBindingsIndex[handlerId][:eventName]].delete_if { |id| id == handlerId }
@@ -416,7 +417,7 @@ module Tunewich
 			@isVolumeAlreadyLogarithmic = !(UNAME == "Darwin")
 		end
 
-		def findBPMRatio firstTrack, secondTrack
+		def getSoftBPMRatio firstTrack, secondTrack
 			# TODO: 1gG4Ve
 			ratio = 1
 			if not firstTrack.has_key? 'bpm'
@@ -548,7 +549,7 @@ module Tunewich
 				'base' => {
 					'wait' => {
 						'description' => 'Wait for an event, or some number of seconds, to execute following chained commands. Events: chapter_change, play_start, play_end, fade_start, fade_end, speed_ramp_start, speed_ramp_end, download_success. You may use fuzzy substrings of the event names, e.g. "ch" will match "chapter_change", and "ple" will match "play_end".',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
 							if inputParts[2] && inputParts[2].length > 0
@@ -569,19 +570,9 @@ module Tunewich
 											trigger waitEvent
 										}
 									else
-										availableWaitEvents = [ # @refactor store 1 copy only
-											'chapter_change',
-											'play_start',
-											'play_end',
-											'fade_start',
-											'fade_end',
-											'speed_ramp_start',
-											'speed_ramp_end',
-											'download_success'
-										]
-										waitEvent = firstFuzzyMatchValue waitInput.strip.downcase, availableWaitEvents
+										waitEvent = firstFuzzyMatchValue waitInput.strip.downcase, command['args']
 										if !waitEvent
-											putsRealtime "Unknown event '#{waitInput}'. Not waiting. Available events: #{availableWaitEvents.join ', '}"
+											putsRealtime "Unknown event '#{waitInput}'. Not waiting. Available events: #{command['args'].join ', '}"
 										end
 									end
 								else
@@ -598,7 +589,7 @@ module Tunewich
 
 							output
 						},
-						'availableWaitEvents' => [
+						'args' => [
 							'chapter_change',
 							'play_start',
 							'play_end',
@@ -607,28 +598,7 @@ module Tunewich
 							'speed_ramp_start',
 							'speed_ramp_end',
 							'download_success'
-						],
-						'tabComplete' => Proc.new { |input|
-							inputParts = input.match(/^([^\/]*)(.*)$/)
-							availableWaitEvents = [ # @refactor store 1 copy only
-								'chapter_change',
-								'play_start',
-								'play_end',
-								'fade_start',
-								'fade_end',
-								'speed_ramp_start',
-								'speed_ramp_end',
-								'download_success'
-							]
-							whisper("/wait '#{inputParts[1]}'", 2) # XXX
-							if inputParts[1] && inputParts[1].length > 0
-								guessWaitEvent = firstFuzzyMatchValue(inputParts[1], availableWaitEvents)
-								if guessWaitEvent && guessWaitEvent.length > 0
-									input = input.sub!(inputParts[1], guessWaitEvent)
-								end
-							end
-							input
-						}
+						]
 					},
 					'clear' => {
 						'description' => 'Clear current tracklist',
@@ -1289,29 +1259,64 @@ module Tunewich
 						}
 					},
 					'rmfile' => {
-						'description' => 'Remove files not referenced in the library.',
-						'action' => Proc.new { |input|
+						'description' => 'Remove files: (options: this (default), unknown (files not referenced by the library), current (files for all selected tracks), all (what it sounds like), You\'ll be prompted with a list to edit; clear the list if you want to cancel the operation.',
+						'args' => ['this', 'unknown', 'current', 'all'],
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
+							setDescriptor = inputParts[1] && inputParts[1].length > 0 ? inputParts[1] : 'this'
+
 							filesToDelete = []
 							filesToIgnore = ['.', '..']
-							Dir.entries(@fileDirectory).each { |file|
-								if !filesToIgnore.include? file
-									id = getIdFromFileName file
-									if !id || !@library['tracks'][id]
+
+							case setDescriptor
+							when "this"
+								trackFiles = findTrackFiles @currentTrack
+								if trackFiles
+									filesToDelete.concat(trackFiles.map { |p|
+										p.sub "#{@fileDirectory}/", ''
+									})
+								end
+							when "unknown"
+								Dir.entries(@fileDirectory).each { |file|
+									if !filesToIgnore.include? file
+										id = getIdFromFileName file
+										if !id || !@library['tracks'][id]
+											filesToDelete << file
+										end
+									end
+								}
+							when "current"
+								Dir.entries(@fileDirectory).each { |file|
+									if !filesToIgnore.include? file
+										id = getIdFromFileName file
+										if !id || !@tracks.include?(id)
+											filesToDelete << file
+										end
+									end
+								}
+							when "all"
+								Dir.entries(@fileDirectory).each { |file|
+									if !filesToIgnore.include? file
 										filesToDelete << file
 									end
-								end
-							}
-							if filesToDelete.length > 0
-								filesToDelete = editListInVim filesToDelete, "remove any files you don't want to delete"
-
-								filesToDelete.each { |file|
-									File.delete "#{@fileDirectory}/#{file.chomp}"
 								}
-								putsRealtime "#{filesToDelete.length} files deleted."
-								writeLibraryToFile
 							else
-								putsRealtime "No orphaned files found."
+								putsRealtime "\nUnrecognized option '#{setDescriptor}'. Use one of #{command['args'].join(", ")}"
+							end
+
+							filesToDelete = editListInVim filesToDelete, "remove any files you don't want to delete" if filesToDelete.length > 0
+
+							if filesToDelete.length > 0
+
+								if confirm("Delete #{filesToDelete.length} files?")
+									filesToDelete.each { |file|
+										File.delete "#{@fileDirectory}/#{file.chomp}"
+									}
+									putsRealtime "#{filesToDelete.length} files deleted."
+									writeLibraryToFile
+								end
+							else
+								putsRealtime "No files to delete."
 							end
 							{:chainedInput => inputParts[2]}
 						}
@@ -1335,7 +1340,7 @@ module Tunewich
 							{:chainedInput => inputParts[2]}
 						}
 					},
-					'loadlibrary' => {
+					'refresh' => {
 						'description' => 'Load the latest version of the media library.',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
@@ -1621,7 +1626,7 @@ module Tunewich
 						'description' => 'Mark the point at which to play this track next time. Pass any argument to remove an existing mark',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							loadlibrary
+							loadLibrary
 							@currentTrack = matchExistingLibraryTrack @currentTrack
 							if inputParts[1] && inputParts[1].length > 0
 								removeMarkFromTrack @currentTrack
@@ -2663,7 +2668,7 @@ module Tunewich
 		end
 
 		def deleteTrackFile(track)
-			`rm #{getTrackFilePrefix track}*`
+			`rm #{getTrackFilePrefix track}.*` # including `.` after prefix
 		end
 
 		def firstTrackFile(track)
@@ -2683,14 +2688,14 @@ module Tunewich
 		end
 
 		def getIdFromFileName(fileName)
-			id = fileName.gsub(/^tunewich-([A-Za-z0-9_-]{11}).*$/) {
+			id = fileName.gsub(/^tunewich.([^.]+).*$/) {
 				$1
 			}
 			id != fileName ? id : false
 		end
 
 		def getTrackFilePrefix(track)
-			"#{@fileDirectory}/tunewich-#{track['id']}"
+			"#{@fileDirectory}/tunewich.#{track['id']}"
 		end
 
 		# @param hash track
@@ -2706,7 +2711,7 @@ module Tunewich
 				if streamPath
 					downloadCommand = "rm -f -- --Frag*; #{youtubeDlCommandBegin} -o - #{youtubeDlCommandEnd} > \"#{streamPath}\" 2> \"#{downloadFeedbackFile}\""
 				else
-					downloadCommand = "#{youtubeDlCommandBegin} -o \"#{getTrackFilePrefix track}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd}"
+					downloadCommand = "#{youtubeDlCommandBegin} -o \"#{getTrackFilePrefix track}.%(title)s.%(ext)s\" #{youtubeDlCommandEnd}"
 				end
 			else
 				if streamPath
@@ -4140,7 +4145,7 @@ module Tunewich
 						:output => nil
 					}
 					begin
-						commandInfo[:output] = commands[commandName]['action'].call(commandInput)
+						commandInfo[:output] = commands[commandName]['action'].call(commandInput, commands[commandName])
 					rescue Exception => e
 						putsRealtime "There was a problem running '#{commandName}' with input '#{commandInput}'"
 						whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 3)
@@ -4225,7 +4230,7 @@ module Tunewich
 			elsif /[\n\r]/.match inputCharacter
 				inputLine = @commandUserInput
 				@commandUserInput = nil
-				actionResponse = handleInputLine(inputLine, commands, leftoverAction)
+				actionResponse = handleInputLine(inputLine, commands, leftoverAction) if inputLine
 
 				if actionResponse
 					prompt.call
@@ -4244,7 +4249,7 @@ module Tunewich
 				if inputCharacter == "\e[A" # up arrow
 					if @commandInputTyped
 						matchingCommands = @commandHistory.select { |command|
-							command.start_with? @commandInputTyped
+							command.start_with? @commandInputTyped if command
 						}
 						if matchingCommands && matchingCommands.length > 0
 							@commandUserInput = matchingCommands.last
@@ -4299,11 +4304,22 @@ module Tunewich
 								if commands.has_key?(commandName)
 									if commandInput.length == 0
 										printRepeat "#{commandName}: #{commands[commandName]['description']}\n"
+										if commands[commandName].has_key?('args')
+											printRepeat commands[commandName]['args'].join("\n") + "\n"
+										end
 									end
 
 									if commands[commandName].has_key?('tabComplete')
 										modifiedCommandInput = commands[commandName]['tabComplete'].call(commandInput)
 										commandInput = modifiedCommandInput if modifiedCommandInput
+									elsif commands[commandName].has_key?('args')
+										inputParts = commandInput.match(/^([^\/]*)(.*)$/)
+										if inputParts[1] && inputParts[1].length > 0
+											guessArg = firstFuzzyMatchValue(inputParts[1], commands[commandName]['args'])
+											if guessArg && guessArg.length > 0
+												commandInput = commandInput.sub!(inputParts[1], guessArg)
+											end
+										end
 									end
 								end
 
@@ -4350,7 +4366,7 @@ module Tunewich
 			}, nil, true);
 			externalCommandHandlerId = bind('external_command', Proc.new { |extInput|
 				whisper("external_command: #{extInput}", 3)
-				handleInputLine(extInput, commands, action)
+				handleInputLine(extInput, commands, action) if extInput
 				false # stop propagation of event
 			}, nil, true);
 
