@@ -3287,8 +3287,17 @@ module Tunewich
 				@enableDownload = true
 			end
 
+			parser.on("-D DIR", "--input-dir DIR", "Directory from which to read the playlist and files.\nNOTE: when used, this must be the first option. Recommended to define TUNEWICH_DIR instead.", " ") do |inputDir|
+				# FIXME: always process this option first, even if it's provided last
+				setLibraryPath inputDir
+			end
+
 			parser.on("-f", "--filter RULES", Player::FILTER_HELP_1, Player::FILTER_HELP_2, Player::FILTER_HELP_3, " ") do |rules|
 				@trackFilters = parseOptionParameters rules
+			end
+
+			parser.on("-f FORMAT", "--format FORMAT", "Set the file format to request for streaming or downloading.", " ") do |format|
+				@preferredFileFormat = format
 			end
 
 			parser.on("-h", "--help", "Show this help.", " ") do
@@ -3298,6 +3307,33 @@ module Tunewich
 
 			parser.on("-l", "--loop", "Loop, even if a track doesn't have an A/B loop defined.", " ") do
 				@loop = true
+			end
+
+			parser.on("-m MODE", "--mode MODE", "Choose a player mode: #{Player::MODES.keys.join ', '}", " ") do |modeName|
+				if Player::MODES.has_key? modeName
+					@userMode = modeName
+				else
+					putsRealtime "#{modeName} is not a valid player mode. Please use one of #{Player::MODES.keys.join ', '}"
+				end
+			end
+
+			parser.on("-N", "--no-network", "Don't fetch any information or media from the internet. Use only local files.", " ") do
+				@noNetwork = true
+				@trackFilters ||= {}
+				@trackFilters['local'] = ''
+			end
+
+			parser.on("-o OPTIONS", "--player-opts OPTIONS", "Set player options. Set interactively with the /player command.", " ") do |options|
+				# TODO: 1pnpNcT25tY
+				isFirstElement = true
+				@playerOverrideCommands += options.split(' -').map { |option|
+					if isFirstElement
+						isFirstElement = false
+					else
+						option = "-#{option}"
+					end
+					option
+				}
 			end
 
 			parser.on("-p", "--playlist [NAME]", "Choose or create a playlist. If no NAME/QUERY is given, a name is guessed from other input, such as a -q query", " ") do |playlistQuery|
@@ -3312,74 +3348,7 @@ module Tunewich
 				@ratingsPromptDuration = seconds ? seconds.to_i : 5
 			end
 
-			parser.on("-s", "--shuffle", "Enable shuffle.", " ") do
-				@shuffle = true
-			end
-
-			parser.on("-t", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).", " ") do |trackQuery|
-				if trackQuery.to_i != 0
-					@trackIndex = trackQuery.to_i - 1
-				else
-					@trackIndex = findTrackIndex(trackQuery) || nil
-					puts "@trackIndex: #{@trackIndex}" # XXX
-				end
-			end
-
-			parser.on("-v [LEVEL]", "--verbose", "Chatter about what's going on (more detailed or frequent messages are in levels 2 or 3.", " ") do |level|
-				@configuredVerbosity = level ? level.to_i : 1
-				whisper("Verbosity level: #{@configuredVerbosity}", 1)
-			end
-
-			parser.on("-w", "--write [SECONDS]", "Save changes to the library. If SECONDS are given, only tracks played that many seconds will be written.", " ") do |seconds|
-				@writeEnabled = true
-				@writeAfterSecondsPlayed = seconds ? seconds.to_f : 0.0
-			end
-
-			parser.on("-x", "--exclude-filter RULES", "Excludes tracks matching the rules. See --filter", " ") do |rules|
-				@trackExcludeFilters = parseOptionParameters rules
-			end
-
-			parser.on("-m MODE", "--mode MODE", "Choose a player mode: #{Player::MODES.keys.join ', '}", " ") do |modeName|
-				if Player::MODES.has_key? modeName
-					@userMode = modeName
-				else
-					putsRealtime "#{modeName} is not a valid player mode. Please use one of #{Player::MODES.keys.join ', '}"
-				end
-			end
-
-			parser.on("--input-dir DIR", "Directory from which to read the playlist and files.", "NOTE: when used, this must be the first option. Recommended to define TUNEWICH_DIR instead.", " ") do |inputDir|
-				# FIXME: always process this option first, even if it's provided last
-				setLibraryPath inputDir
-			end
-
-			parser.on("--no-network", "Don't fetch any information or media from the internet. Use only local files.", " ") do
-				@noNetwork = true
-				@trackFilters ||= {}
-				@trackFilters['local'] = ''
-			end
-
-			parser.on("--format FORMAT", "Set the file format to request for streaming or downloading.", " ") do |format|
-				@preferredFileFormat = format
-			end
-
-			parser.on("--update-track-info", "Fetch updated track information for every track played.", " ") do
-				@updateAllPlayedTrackInfo = true
-			end
-
-			parser.on("--player-opts OPTIONS", "Set player options. Set interactively with the /player command.", " ") do |options|
-				# TODO: 1pnpNcT25tY
-				isFirstElement = true
-				@playerOverrideCommands += options.split(' -').map { |option|
-					if isFirstElement
-						isFirstElement = false
-					else
-						option = "-#{option}"
-					end
-					option
-				}
-			end
-
-			parser.on("--radio [SERVER_TYPE]", "TODO: stream to a network radio service (SERVER_TYPE: default 'homebrew' or 'Nicecast'", " ") do |streamingServerType = 'homebrew'| #1pnpNkTKjoO
+			parser.on("-R [SERVER_TYPE]", "--radio [SERVER_TYPE]", "TODO: stream to a network radio service (SERVER_TYPE: default 'homebrew' or 'Nicecast'", " ") do |streamingServerType = 'homebrew'| #1pnpNkTKjoO
 				if !streamingServerType || streamingServerType.length == 0
 					streamingServerType = 'homebrew'
 				end
@@ -3475,6 +3444,37 @@ module Tunewich
 				else
 					puts "Unable to configure radio server."
 				end
+			end
+
+			parser.on("-s", "--shuffle", "Enable shuffle.", " ") do
+				@shuffle = true
+			end
+
+			parser.on("-t", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).", " ") do |trackQuery|
+				if trackQuery.to_i != 0
+					@trackIndex = trackQuery.to_i - 1
+				else
+					@trackIndex = findTrackIndex(trackQuery) || nil
+					puts "@trackIndex: #{@trackIndex}" # XXX
+				end
+			end
+
+			parser.on("-U", "--update-track-info", "Fetch updated track information for every track played.", " ") do
+				@updateAllPlayedTrackInfo = true
+			end
+
+			parser.on("-v [LEVEL]", "--verbose", "Chatter about what's going on (more detailed or frequent messages are in levels 2 or 3.", " ") do |level|
+				@configuredVerbosity = level ? level.to_i : 1
+				whisper("Verbosity level: #{@configuredVerbosity}", 1)
+			end
+
+			parser.on("-w", "--write [SECONDS]", "Save changes to the library. If SECONDS are given, only tracks played that many seconds will be written.", " ") do |seconds|
+				@writeEnabled = true
+				@writeAfterSecondsPlayed = seconds ? seconds.to_f : 0.0
+			end
+
+			parser.on("-x", "--exclude-filter RULES", "Excludes tracks matching the rules. See --filter", " ") do |rules|
+				@trackExcludeFilters = parseOptionParameters rules
 			end
 
 			unparsedOptions = parser.parse(ARGV)
