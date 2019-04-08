@@ -105,7 +105,7 @@ module Tunewich
 					markedTrack = @library["tracks"][@library["lastMarked"]]
 					if markedTrack["mark"]
 						whisper "Returning to last marked track.", 1
-						@trackIndex = @tracks.index markedTrack
+						@trackIndex = @tracks.index(markedTrack)
 						removeMarkFromTrack markedTrack
 					end
 					@library.delete "lastMarked"
@@ -366,7 +366,7 @@ module Tunewich
 						'description' => "Rate this track.",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							newRating = inputParts[1] if (inputParts[1].length > 0) && (inputParts[1].match /^[0-9]/)
+							newRating = inputParts[1] if (inputParts[1].length > 0) && (inputParts[1].match(/^[0-9]/))
 							if !newRating || newRating.length < 1
 								putsRealtime "current rating: #{@currentTrack['rating']}"
 							else
@@ -539,7 +539,6 @@ module Tunewich
 						'description' => "Show track info. Track is: without input = currently playing track; with '>' = the track that will play next; with numeric input = the track at that position in the track list; any other input = the track with the title that best matches that input",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							index = inputParts[1]
 							track = nil
 							trackIndex = nil
 							if inputParts[1] && inputParts[1].length > 0
@@ -664,7 +663,7 @@ module Tunewich
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1] && inputParts[1].length > 0
-								@shuffle = !!((inputParts[1].match /^(y(es)?|o(n|[^f]))/i))
+								@shuffle = !!(inputParts[1].match(/^(y(es)?|o(n|[^f]))/i))
 							else
 								@shuffle = !@shuffle
 							end
@@ -748,7 +747,7 @@ module Tunewich
 
 							feed = nil
 
-							feedNames = @library['feeds'].map { |feed| feed['title'] }
+							feedNames = @library['feeds'].map { |libraryFeed| libraryFeed['title'] }
 							availableFeedsMessage = "Available feeds:\n  #{feedNames.join "\n  "}"
 							if @library.has_key?('feeds') && @library['feeds'].length > 0
 								if inputParts[1] && inputParts[1].length > 0
@@ -784,7 +783,6 @@ module Tunewich
 						'action' => Proc.new { |input|
 							whisper "chapter command - input: #{input}", 3
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							fileExists = trackFileExists? @currentTrack
 							if inputParts[1] && inputParts[1].length > 0
 								chapterIndex = getChapterIndexByQuery inputParts[1]
 								input = inputParts[2]
@@ -906,7 +904,7 @@ module Tunewich
 							@trackFilters = {}
 							@trackExcludeFilters = {}
 							filters.each { |name, filter|
-								if name.match /^-/
+								if name.match(/^-/)
 									@trackExcludeFilters[name.sub(/^-/, '')] = filter
 								else
 									@trackFilters[name] = filter
@@ -1085,7 +1083,7 @@ module Tunewich
 									editedNotesList = editListInVim notesList
 									editedNotes = []
 									editedNotesList.each_with_index { |editedLine, index|
-										lineMatches = editedLine.match /^([0-9:]+) - (.*)/
+										lineMatches = editedLine.match(/^([0-9:]+) - (.*)/)
 										if lineMatches
 											editedNotes << {
 												'time' => lineMatches[1],
@@ -1346,10 +1344,10 @@ module Tunewich
 								end
 
 								relativeDirection = nil
-								relativeDirectionMatch = seekInput.match /^[+-]/
+								relativeDirectionMatch = seekInput.match(/^[+-]/)
 								if relativeDirectionMatch
 									whisper seekInput # XXX
-									seekInput.sub! /^[+-]/, ''
+									seekInput.sub!(/^[+-]/, '')
 									whisper seekInput # XXX
 									relativeDirection = relativeDirectionMatch[0] == '-' ? -1 : 1
 								end
@@ -1518,11 +1516,9 @@ module Tunewich
 
 			# TODO: catch SIGINT (ctrl+c) & prompt for playlist again
 			playerOutput = nil
-			commandCustomPlayerConfig = ''
 
 			interactiveCommands = getInteractiveCommands [@userMode], bindingGroupName
 
-			track = nil
 			# chaptersNotPlayed = []
 
 			while not playerOutput or playerOutput[:exit] do
@@ -1603,9 +1599,9 @@ module Tunewich
 		def getOffsetFromInputString input
 			offset = 0
 			input.strip!
-			if input.match /^>+$/
+			if input.match(/^>+$/)
 				offset += input.length
-			elsif input.match /^<+$/
+			elsif input.match(/^<+$/)
 				offset -= input.length - 1
 			else
 				offset = false
@@ -1672,8 +1668,8 @@ module Tunewich
 			outputMessageLines << "Hit ENTER key on the beat. Type \"k\" to accept, \"r\" to accept the nearest whole number, or anything else to cancel setting the BPM."
 			putsRealtime outputMessageLines.join "\n"
 			while bpmInput = readCharacter
-				if not /[\n\r]/.match(bpmInput)
-					if bpmInput.match /^[kr]$/
+				if not (/[\n\r]/).match(bpmInput)
+					if bpmInput.match(/^[kr]$/)
 						if bpmInput == 'r'
 							bpm = bpm.round
 						end
@@ -1708,7 +1704,7 @@ module Tunewich
 			elsif targetFadeVolume == 'in'
 				targetFadeVolume = @volume
 				whisper "fading in volume (to #{targetFadeVolume})", 2
-			elsif targetFadeVolume.match /x$/
+			elsif targetFadeVolume.match(/x$/)
 				multiplier = targetFadeVolume.to_f
 				targetFadeVolume = transitionVolume * multiplier
 				@volume = targetFadeVolume
@@ -1725,7 +1721,6 @@ module Tunewich
 			volumeSpan = targetFadeVolume - transitionVolume
 			lowerVolume = [transitionVolume, targetFadeVolume].min
 			if volumeSpan != 0
-				absoluteVolumeSmap = volumeSpan.abs
 				if @isVolumeAlreadyLogarithmic
 					volumeStepStrategy = Proc.new { |stepIndex|
 						transitionVolume = lowerVolume + volumeSpan.abs * (stepIndex.to_f / volumeFadeStepCount)
@@ -1777,6 +1772,7 @@ module Tunewich
 				speedStep = (targetRampSpeed - transitionSpeed) / duration * speedRampInterval
 				whisper "about to ramp speed by #{speedStep} every #{speedRampInterval} seconds", 3
 				for stepIndex in 1..speedRampStepCount
+          whisper "rampSpeed: step #{stepIndex} of #{speedRampStepCount}"
 					transitionSpeed += speedStep
 					putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "speed_set #{transitionSpeed}\n"
 					@currentSpeed = transitionSpeed
@@ -1914,7 +1910,7 @@ module Tunewich
 			playerStartupOptions << "-slave -quiet -input file=#{playerInputFile}"
 			playerStatus = nil
 			playerAction = Proc.new { |command|
-				tmpPath = putInTempFile playerInputStreamName, "#{command}\n"
+				putInTempFile(playerInputStreamName, "#{command}\n")
 				true
 			}
 
@@ -2348,7 +2344,7 @@ module Tunewich
 		def findTrackFiles(track)
 			globString = "#{getTrackFilePrefix track}*"
 			files = Dir.glob(globString)
-			files.delete_if { |fileName| fileName.match /\.part$/ }
+			files.delete_if { |fileName| fileName.match(/\.part$/) }
 			files
 		end
 
@@ -2410,7 +2406,7 @@ module Tunewich
 				downloadPid = spawn(downloadCommand)
 			else
 				trigger 'download_begin', track
-				downloadThread = Thread.new {
+				Thread.new {
 					fullDownloadShellCommand = "#{downloadCommand} 2> \"#{downloadFeedbackFile}\""
 					whisper fullDownloadShellCommand, 3
 					downloadPid = spawn(fullDownloadShellCommand)
@@ -2434,7 +2430,7 @@ module Tunewich
 				if UNAME == 'Linux'
 						`notify-send --expire-time=3000 --urgency=low tunewich "#{message}"`
 				elsif UNAME == 'Darwin'
-					clean_message = message.gsub /"/, '\\"'
+					clean_message = message.gsub(/"/, '\\"')
 					system "osascript -e 'display notification \"#{clean_message}\" with title \"tunewich\"' &>/dev/null"
 				end
 			end
@@ -2647,8 +2643,6 @@ module Tunewich
 		end
 
 		def interactiveCleanup
-			cleanupSelection = {}
-
 			commands = {
 			}
 
@@ -2665,7 +2659,7 @@ module Tunewich
 		def determineRelativeSpeed input, track, shouldSetPlayingBPM = false
 			relativeSpeed = input.to_f
 			whisper "relativeSpeed: #{input} -> #{relativeSpeed}", 3
-			if input.to_s.match /bpm$/
+			if input.to_s.match(/bpm$/)
 				if track.has_key? 'bpm'
 					inputBPM = relativeSpeed
 					if shouldSetPlayingBPM
@@ -3322,7 +3316,7 @@ module Tunewich
 					`sudo ls &>/dev/null`
 				end
 				if UNAME == "Darwin"
-					audioDeviceID = `say -a ? | grep 'Soundflower (2ch)'`.chomp.sub /^\s*(\d+).*/, '\1'
+					audioDeviceID = `say -a ? | grep 'Soundflower (2ch)'`.chomp.sub(/^\s*(\d+).*/, '\1')
 					if audioDeviceID && audioDeviceID.length > 0
 						@playerOverrideCommands << "-ao coreaudio:device_id=#{audioDeviceID}"
 						jackAudioDeviceAndOptions = "coreaudio -d SoundflowerEngine:0"
@@ -3536,7 +3530,6 @@ module Tunewich
 			@library['feeds'].each { |feed|
 				if feed['src'] == url
 					feedAlreadyInLibrary = true
-					podcastFeed = feed 
 					break
 				end
 			}
@@ -3586,7 +3579,7 @@ module Tunewich
 			tracks = []
 			open(url) do |handle|
 				handle.each_line { |line|
-					matchResults = line.match /^\s*trackinfo: (.*?),?$/
+					matchResults = line.match(/^\s*trackinfo: (.*?),?$/)
 					if matchResults
 						whisper "loadBandcamp: found trackinfo: #{matchResults[1]}", 3
 						trackinfo = JSON.parse matchResults[1]
@@ -3831,7 +3824,7 @@ module Tunewich
 									whisper "command info: #{commandInfo}", 3
 									if commandInfo[:output] && commandInfo[:output][:action]
 										whisper "chained command calling action (#{commandInfo[:output][:action]})", 3
-										actionResponse = action.call commandInfo[:output][:action]
+										action.call commandInfo[:output][:action]
 									end
 									if commandInfo[:output] && commandInfo[:output][:chainedInput] && commandInfo[:output][:chainedInput].length > 0
 										whisper "chained commandLoopInput: #{commandInfo[:output][:chainedInput]}", 3
@@ -3940,7 +3933,7 @@ module Tunewich
 			}
 			scopedShouldShowRealtimeOutput = @shouldShowPlaybackInfo
 			@shouldShowPlaybackInfo = false
-			commandResponse = commandPrompt(confirmMessage, commands, confirmAction)
+			commandPrompt(confirmMessage, commands, confirmAction)
 			@shouldShowPlaybackInfo = scopedShouldShowRealtimeOutput
 			confirmed
 		end
