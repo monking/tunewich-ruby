@@ -2009,8 +2009,9 @@ module Tunewich
 		def getChapterIndexByQuery input, chapters, referenceChapterIndex = nil
 			chapterIndex = nil
 
-			chapterIndex = input.to_i - 1
-			if chapterIndex < 0
+			if input.match(/^[0-9]+$/)
+				chapterIndex = input.to_i - 1
+			else
 				chapterIndexOffset = getOffsetFromInputString input
 				if chapterIndexOffset
 					referenceChapterIndex ||= getChapterIndexAtTime chapters, @currentPlayerTime
