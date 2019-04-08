@@ -1233,7 +1233,7 @@ module Tunewich
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1].length > 0
-								@preferredFileFormat = inputParts[1]
+								@preferredFileFormat = inputParts[1].chomp
 							else
 								putsRealtime "preferred file format: #{@preferredFileFormat}"
 							end
@@ -3753,7 +3753,7 @@ module Tunewich
 			end
 
 			parser.on("-F FORMAT", "--format FORMAT", "Set the file format to request for streaming or downloading.", " ") do |format|
-				@preferredFileFormat = format
+				@preferredFileFormat = format.chomp
 			end
 
 			parser.on("-h", "--help", "Show this help.", " ") do
