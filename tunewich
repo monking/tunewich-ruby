@@ -29,6 +29,7 @@ module Tunewich
 		CHAPTER_SELECT_TIMEOUT = 15
 		FILTER_HELP_1 = "Filter tracks by rules, in the format 'key=value,key=value 2,key'."
 		FILTER_HELP_2 = "Available rules are: [min-,max-]rating=<#0-5>,title=<query>,tag=<tag>,chapters,last=<[[[DD:]HH:]MM:]SS>."
+		TAG_INPUT_SPLIT = /[,\s]+/
 
 		def initialize
 			@library = nil
@@ -172,32 +173,107 @@ module Tunewich
 				#  d: download
 				playerOutput = play track, chapterIndex
 
-				if (@playthroughThreshold && playerOutput[:playtime] > @playthroughThreshold)
-					puts "Played more than #{@playthroughThreshold}s, saving to library."
-					loadLibrary
-					track = matchExistingLibraryTrack track
-					track['played'] = Time.now.to_i
-					trackReference = addTrackToLibrary track
-					addTrackReferenceToPlaylist trackReference, @playlistName if @playlistName
-					changesToWrite = true
-				end
-
-				if !track['unattached'] && @ratingsPromptDuration
-					new_rating = timedTextPrompt @ratingsPromptDuration, "rating (#{track['rating']}): "
-
-					if new_rating && new_rating.length > 0
-						track['rating'] = new_rating.to_i
-						@tracks[@trackIndex] = track # FIXME: set up @tracks to reference @library
+				if playerOutput
+					if (@playthroughThreshold && playerOutput[:playtime] > @playthroughThreshold)
+						puts "Played more than #{@playthroughThreshold}s, saving to library."
+						loadLibrary
+						track = matchExistingLibraryTrack track
+						track['played'] = Time.now.to_i
+						trackReference = addTrackToLibrary track
+						addTrackReferenceToPlaylist trackReference, @playlistName if @playlistName
 						changesToWrite = true
+					end
+
+					if !track['unattached'] && @ratingsPromptDuration
+						input = timedTextPrompt @ratingsPromptDuration, "rating/tags (#{track['rating']}): "
+
+						if input && input.length
+							tags = []
+							new_rating = nil
+							input.split(Player::TAG_INPUT_SPLIT).each { |chunk|
+								if chunk.match(/^\d+$/) # is numeric
+									new_rating = chunk.to_i
+								else
+									tags << chunk
+								end
+							}
+
+							if new_rating
+								track['rating'] = new_rating
+								@tracks[@trackIndex] = track # FIXME: set up @tracks to reference @library
+								changesToWrite = true
+							end
+
+							if tags.length
+								addTrackToTags track, tags
+								changesToWrite = true
+							end
+						end
 					end
 				end
 
-				writeLibraryToFile if changesToWrite
+				writeLibraryToFile if changesToWrite # uncomment
 
 				filterTracksOnDeck
 
 				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
 			end
+		end
+
+		def findTag(query)
+			tag = nil
+
+			if @library['tags'][query]
+				tag = @library['tags'][query]
+			else
+				@library['tags'].each { |name, t|
+					tag = t if t['aliases'].include? query
+				}
+			end
+
+			tag
+		end
+
+		def addTrackToTags(track, tagNames)
+			tagNames.each { |tagName|
+				matchingTag = findTag tagName
+				matchingTag ||= createTag tagName
+				matchingTag['tracks'] << track['id']
+				matchingTag['tracks'].uniq!
+			}
+		end
+
+		def combineTags(tagNames)
+			firstTag = findTag tagNames.shift
+
+			if firstTag
+				tagNames.each { |tagName|
+					tag = findTag tagName
+					if tag && tag != firstTag
+						firstTag['aliases'] << tagName
+						firstTag['tracks'].concat tag['tracks']
+						deleteTag tagName
+					end
+				}
+
+				firstTag['aliases'].uniq!
+				firstTag['tracks'].uniq!
+			end
+
+			firstTag
+		end
+
+		def createTag(tagName)
+			@library['tags'][tagName] = {
+				'aliases' => [],
+				'tracks' => []
+			}
+
+			@library['tags'][tagName]
+		end
+
+		def deleteTag(tagName)
+			@library['tags'].delete tagName if @library['tags'][tagName]
 		end
 
 		def play(track, chapterIndex)
@@ -621,6 +697,23 @@ module Tunewich
 			end
 		end
 
+		def removeTrackFromLibrary(id)
+			@library['library'].delete id
+			@library['playlists'].each { |playlistName, p|
+				index = p['tracks'].index id
+				if index
+					p['tracks'].delete_at index
+				end
+			}
+			@library['tags'].each { |tagName, t|
+				index = t['tracks'].index id
+				if index
+					playlistMatches << tagName
+					t['tracks'].delete_at index
+				end
+			}
+		end
+
 		def interactiveCleanup
 			cleanupSelection = {}
 
@@ -720,20 +813,29 @@ module Tunewich
 					'action' => Proc.new {
 						initialLibraryLength = @library['library'].length
 						cleanupSelection.each do |id, track|
-							@library['library'].delete id
-							playlistMatches = []
-							@library['playlists'].each { |playlistName, p|
-								index = p['tracks'].index id
-								if index
-									playlistMatches << playlistName
-									p['tracks'].delete_at index
-								end
-							}
+							removeTrackFromLibrary id
 						end
 						checksum = initialLibraryLength - cleanupSelection.length == @library['library'].length
 						checksumString = "#{initialLibraryLength} - #{cleanupSelection.length} == #{@library['library'].length}"
 						puts "#{checksumString} ... #{checksum ? 'OK' : 'Mismatch'}"
 						cleanupSelection = {}
+					}
+				},
+				'jointag' => {
+					'info' => '<playlistName> remove a playlist.',
+					'action' => Proc.new { |tagsString|
+						success = false
+
+						if tagsString.length > 0
+							tags = tagsString.split(Player::TAG_INPUT_SPLIT)
+							if tags.length > 1
+								success = combineTags tags
+							else
+								puts "Please give at least two tags."
+							end
+						end
+
+						puts "Tags: \n  #{@library['tags'].keys.sort.join(", ")}" if not success
 					}
 				},
 				'rmlist' => {
@@ -805,7 +907,6 @@ module Tunewich
 			if filters['last']
 				now = Time.now.to_i
 				watershed = now - getSecondsFromDurationString(filters['last']).to_i
-				puts "watershed: #{watershed}" # XXX
 				tracks.send(action) { |t|
 					t['played'] ? t['played'].to_i >= watershed : false
 				}
@@ -1024,7 +1125,7 @@ module Tunewich
 				@youtubeSearch = query
 			end
 
-			parser.on("-r", "--rating-prompt [SECONDS]", "Prompt for a rating after every track plays, waiting 5 (or the number given) seconds before continuing to the next track", " ") do |seconds|
+			parser.on("-r", "--rating-prompt [SECONDS]", "Prompt for a rating and tags after every track plays, waiting 5 (or the number given) seconds before continuing to the next track", " ") do |seconds|
 				@ratingsPromptDuration = seconds ? seconds.to_i : 5
 			end
 
