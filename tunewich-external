@@ -9,6 +9,9 @@ queueFile="$(ls -t ~/.tunewich/tmp/tunewich*-command-queue | head -1)"
 
 if [[ -n "$@" ]]; then
 	echo "$@" > "$queueFile" &
+elif [[ ! -t 1 || -p /dev/stdin ]]; then
+	cat /dev/stdin > "$queueFile"
+	echo > "$queueFile" # newline for safety
 else
 	echo "Beginning interactive input"
 	echo "Run 'tunewich --help' to see the list of interactive commands."
