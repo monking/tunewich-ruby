@@ -103,7 +103,7 @@ module Tunewich
 			end
 			if @library["lastMarked"]
 				markedTrack = @library["tracks"][@library["lastMarked"]]
-				if markedTrack["mark"]
+				if markedTrack && markedTrack["mark"]
 					if @tracks.include?(markedTrack)
 						whisper("Returning to last marked track.", 1)
 						@trackIndex = @tracks.index(markedTrack)
