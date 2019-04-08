@@ -1336,11 +1336,12 @@ module Tunewich
 						}
 					},
 					'seek' => {
-						'description' => 'Seek to a time code. Prefix with "+" or "-" to seek relative to current play position."',
+            'description' => 'Seek to a time code. Prefix with "+" or "-" to seek relative to current play position. use "/seek mark" to seek to a time marked with the "/mark" command."',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
-							seekInput = inputParts[1]
+							seekInput = inputParts[1].strip
+              whisper("seek input: #{seekInput}")
 							if seekInput && seekInput.length > 0
 								if seekInput == 'mark' && @currentTrack.has_key?('mark')
 									seekInput = @currentTrack['mark']
@@ -1349,9 +1350,7 @@ module Tunewich
 								relativeDirection = nil
 								relativeDirectionMatch = seekInput.match(/^[+-]/)
 								if relativeDirectionMatch
-									whisper(seekInput) # XXX
 									seekInput.sub!(/^[+-]/, '')
-									whisper(seekInput) # XXX
 									relativeDirection = relativeDirectionMatch[0] == '-' ? -1 : 1
 								end
 
@@ -1361,6 +1360,7 @@ module Tunewich
 										seekTimeInSeconds = @currentPlayerTime + relativeDirection * seekTimeInSeconds
 									end
 								else
+                  whisper("Failed to get seconds from input '#{seekInput}'")
 									# TODO: seek to either a chapter or a note
 									#		- make chapter functions generic
 									#		- search among chapters and notes as a flat list
@@ -1369,6 +1369,8 @@ module Tunewich
 								if seekTimeInSeconds
 									putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "seek #{seekTimeInSeconds} 2\n"
 								end
+              else
+                whisper("seek input is empty: '#{seekInput}'")
 							end
 							{:chainedInput => inputParts[2]}
 						}
