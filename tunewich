@@ -15,6 +15,7 @@ $enableWrapCharacter = "\033[?7h"
 $tunewichWorkingDirectory = "#{ENV['HOME']}/.tunewich"
 $tunewichTmpDirectory = "#{$tunewichWorkingDirectory}/tmp"
 $serviceConfigDir = "#{$tunewichWorkingDirectory}/config"
+$uniqueId = 0
 
 # Go to .tunewich directory so that any temp files are stored there.
 Dir.mkdir $tunewichWorkingDirectory if not Dir.exist? $tunewichWorkingDirectory
@@ -45,7 +46,7 @@ module Tunewich
 			@library = nil
 			@libraryHash = nil
 			@eventBindings = {}
-			@eventBindingsIndex = []
+			@eventBindingsIndex = {}
 			@eventBindingGroups = {}
 			@sessionID = Random.rand(1024)
 			@currentTrack = nil
@@ -54,6 +55,7 @@ module Tunewich
 			@trackIndex = 0
 			@tracks = []
 			@configuredVerbosity = 0
+			@logVerbosity = nil
 			@shouldShowPlaybackInfo = true
 			@trackFilters = nil
 			@trackExcludeFilters = nil
@@ -71,6 +73,7 @@ module Tunewich
 			@inputThread = nil
 			@playerApplicationThreads = []
 			@forceStreaming = false
+			@commandPrompts = []
 			@commandHistory = []
 			@commandHistoryIndex = nil
 			@commandUserInput = nil
@@ -134,6 +137,10 @@ module Tunewich
 			@tempFiles.each { |path, nonsense|
 				File.delete(path) if File.exist?(path)
 			}
+		end
+
+		def getUniqueId
+			$uniqueId = $uniqueId + 1
 		end
 
 		def sendPlayerCommand command, playerIndex = nil
@@ -227,55 +234,67 @@ module Tunewich
 		def trigger eventName, data = nil
 			if @eventBindings.has_key? eventName
 				whisper("trigger #{eventName}, #{@eventBindings[eventName].length} handlers bound", 5)
-				@eventBindings[eventName].each { |handlerProc| handlerProc.call(data) if handlerProc }
+				@eventBindings[eventName].each { |handlerId|
+					whisper("event #{eventName}, calling handler handler #{handlerId}", 5)
+					result = @eventBindingsIndex[handlerId][:handler].call(data)
+					break if result == false
+				}
 			else
 				whisper("trigger #{eventName} (no handlers bound)", 5)
 			end
 		end
 
-		def bind eventName, handlerProc, handlerGroup = nil
-			@eventBindings[eventName] ||= []
-
-			handlerIndexOnEvent = @eventBindings[eventName].length
-			@eventBindings[eventName] << handlerProc
-
-			handlerID = @eventBindingsIndex.length
-			@eventBindingsIndex << {
-				:name => eventName,
-				:index => handlerIndexOnEvent
+		def bind eventName, handlerProc, handlerGroup = nil, jumpQueue = false
+			handlerId = getUniqueId
+			@eventBindingsIndex[handlerId] = {
+				:eventName => eventName,
+				:handler => handlerProc,
+				:id => handlerId,
+				:group => handlerGroup
 			}
+
+			@eventBindings[eventName] ||= []
+			if jumpQueue
+				@eventBindings[eventName].unshift << handlerId
+			else
+				@eventBindings[eventName] << handlerId
+			end
 
 			if handlerGroup
 				@eventBindingGroups[handlerGroup] ||= []
-				@eventBindingGroups[handlerGroup] << handlerID
+				@eventBindingGroups[handlerGroup] << handlerId
 			end
 
-			whisper("bind, #{eventName}, #{handlerGroup}, #{handlerID}", 5)
+			whisper("bind, #{eventName}, #{handlerGroup}, #{handlerId}", 5)
 
-			handlerID
+			handlerId
 		end
 
 		def bindOnce eventName, handlerProc, handlerGroup = nil
-			bindingID = nil
+			handlerId = nil
 			selfRemovingHandlerProc = Proc.new { |data|
-				unbind bindingID
+				unbind handlerId
 				handlerProc.call data
 			}
-			bindingID = bind eventName, selfRemovingHandlerProc, handlerGroup
-			bindingID
+			handlerId = bind eventName, selfRemovingHandlerProc, handlerGroup
+			handlerId
 		end
 		
-		def unbind bindingID
-			if @eventBindingsIndex[bindingID]
-				@eventBindings[@eventBindingsIndex[bindingID][:name]][@eventBindingsIndex[bindingID][:index]] = nil
-				@eventBindingsIndex[bindingID] = nil # if lots of bindings are set, will all these nils bloat memory?
+		def unbind handlerId
+			if @eventBindingsIndex.has_key? handlerId
+				@eventBindings[@eventBindingsIndex[handlerId][:eventName]].delete_if { |id| id == handlerId }
+				if @eventBindingsIndex[handlerId][:group]
+					@eventBindingGroups[@eventBindingsIndex[handlerId][:group]].delete_if { |id| id == handlerId }
+				end
+				@eventBindingsIndex.delete handlerId
 			end
 		end
 
 		def unbindGroup groupName
 			if @eventBindingGroups.has_key? groupName
 				whisper("Unbinding: #{@eventBindingGroups[groupName].length} handlers in binding group '#{groupName}'", 3)
-				@eventBindingGroups[groupName].each { |bindingID| unbind bindingID }
+				@eventBindingGroups[groupName].each { |handlerId| unbind handlerId }
+				@eventBindingGroups.delete groupName
 			else
 				whisper("Unbinding: No bindings assigned to group '#{groupName}'", 3)
 			end
@@ -303,6 +322,16 @@ module Tunewich
 			return char
 		end
 
+		def enablePlaybackInfo
+			@shouldShowPlaybackInfo = true
+			whisper("DISABLING realtime playback info", 3)
+		end
+
+		def disablePlaybackInfo
+			@shouldShowPlaybackInfo = false
+			whisper("ENABLING realtime playback info", 3)
+		end
+
 		def putsRealtime message
 			if @shouldShowPlaybackInfo
 				print "\n#{message}\n"
@@ -325,7 +354,7 @@ module Tunewich
 					STDERR.puts formattedMessage
 				end
 			end
-			if $logFilePath
+			if $logFilePath && (!@logVerbosity || @logVerbosity >= verbosity)
 				open($logFilePath, 'a') { |f|
 					f.puts formattedMessage
 				}
@@ -373,18 +402,18 @@ module Tunewich
 			ratio
 		end
 
-		def editChapters chapters
-			formattedChapters = chapters.map { |c|
-				"#{c.has_key?('skip') && c['skip'] ? 'skip' : '    '}" +
-					"#{" " * (9-c['time'].length)}#{c['time']}" +
-					" #{c['name']}"
-			}
+		def editChapters chapters, emphasizeChapterIndex = nil
+			formattedChapters = getFormattedChapterList chapters
+			if emphasizeChapterIndex
+				emphasisLine = "# ^ current chapter"
+				formattedChapters.insert(emphasizeChapterIndex + 1, emphasisLine)
+			end
 			editedFormattedChapters = editListInVim formattedChapters
 			editedChapters = editedFormattedChapters.map { |l|
 				bits = l.match(/^\s*(skip)?\s*([0-9.:]+)\s+(.*)$/)
 				#              /    1         2            3    /
 				if bits
-					chapter = {'time' => bits[2], 'name' => bits[3]}
+					chapter = {'time' => bits[2], 'text' => bits[3]}
 					chapter['skip'] = true if bits[1] == 'skip'
 					chapter
 				else
@@ -637,13 +666,13 @@ module Tunewich
 						'description' => "Play all tracks on this video's page.",
 						'action' => Proc.new { |input|
 							if @currentTrack['type'] == 'youtube'
-								@shouldShowPlaybackInfo = false
+								disablePlaybackInfo
 								tracks = getYouTubeTracksFromPage(@currentTrack['link'] || @currentTrack['src'])
-								@shouldShowPlaybackInfo = true
+								enablePlaybackInfo
 							elsif @currentTrack['type'] == 'soundcloud'
-								@shouldShowPlaybackInfo = false
+								disablePlaybackInfo
 								tracks = getSoundcloudRecommendations(@currentTrack['link'] || @currentTrack['src'])
-								@shouldShowPlaybackInfo = true
+								enablePlaybackInfo
 							else
 								putsRealtime "The /more currently only supports YouTube and Soundcloud tracks."
 							end
@@ -706,9 +735,9 @@ module Tunewich
 									timeMessage += " / #{track['duration']}"
 									timeMessage += " (#{@speed}x)" if @speed != 1
 									if @currentTrack.has_key? 'chapters'
-										chapterIndex = getChapterIndexAtTime @currentTrack, @currentPlayerTime
+										chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
 										if chapterIndex
-											timeMessage += "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['name']}"
+											timeMessage += "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
 										end
 									end
 									outputMessageLines << "#{timeMessage}"
@@ -768,9 +797,9 @@ module Tunewich
 						'description' => "<query> Search YouTube. (not chainable)",
 						'action' => Proc.new { |input|
 							if input and input.length > 1
-								@shouldShowPlaybackInfo = false
+								disablePlaybackInfo
 								searchedTracks = searchYouTube(input)
-								@shouldShowPlaybackInfo = true
+								enablePlaybackInfo
 								if searchedTracks
 									@trackIndex = @tracks.length
 									@trackFilters = nil
@@ -831,9 +860,9 @@ module Tunewich
 								if trackFileExists? track
 									putsRealtime "This file is already downloaded."
 								else
-									@shouldShowPlaybackInfo = false
+									disablePlaybackInfo
 									downloadTrack track
-									@shouldShowPlaybackInfo = true
+									enablePlaybackInfo
 								end
 							end
 
@@ -905,32 +934,33 @@ module Tunewich
 						'action' => Proc.new { |input|
 							whisper("chapter command - input: #{input}", 3)
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							if inputParts[1] && inputParts[1].length > 0
-								chapterIndex = getChapterIndexByQuery inputParts[1]
-								input = inputParts[2]
-							else
-								if @currentTrack['chapters']
-									whisper("Prompting to select a chapter from the list...", 3)
-
-									chapterPromptMessage = nil
-
-									@shouldShowPlaybackInfo = false
-									chapterResponse = promptForChapterIndex @currentTrack['chapters'], interactiveCommands, chapterPromptMessage
-									@shouldShowPlaybackInfo = true
-									chapterIndex = chapterResponse[:index]
+							if @currentTrack['chapters']
+								if inputParts[1] && inputParts[1].length > 0
+									chapterIndex = getChapterIndexByQuery inputParts[1], @currentTrack['chapters']
 								else
-									putsRealtime "No chapters on the current track."
+									putsRealtime getFormattedChapterList(@currentTrack['chapters']).join("\n")
+									# FIXME: promptForChapterIndex doesn't respond correctly to input, even ctrl+c
+									# whisper("Prompting to select a chapter from the list...", 3)
+
+									# chapterPromptMessage = nil
+
+									# disablePlaybackInfo
+									# chapterResponse = promptForChapterIndex @currentTrack['chapters'], interactiveCommands, chapterPromptMessage
+									# enablePlaybackInfo
+									# chapterIndex = chapterResponse[:index]
 								end
+							else
+								putsRealtime "No chapters on the current track."
 							end
 
 							if chapterIndex && chapterIndex >= 0 && chapterIndex < @currentTrack['chapters'].length
 								whisper("Done with chapter selection. Resulting chapter index: #{chapterIndex}", 3)
 								seekToChapter chapterIndex
-							else
+							elsif inputParts[1] && inputParts[1].length > 0
 								putsRealtime "No chapter found."
 							end
 
-							{:chainedInput => input}
+							{:chainedInput => inputParts[2]}
 						}
 					},
 					'mkchapter' => {
@@ -939,7 +969,7 @@ module Tunewich
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							newChapter = {
 								'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime),
-								'name' => inputParts[1]
+								'text' => inputParts[1]
 							}
 
 							if not @currentTrack['chapters']
@@ -948,7 +978,8 @@ module Tunewich
 
 							@currentTrack['chapters'] << newChapter
 							@currentTrack['chapters'] = sortChapters @currentTrack['chapters']
-							@currentTrack['chapters'] = editChapters @currentTrack['chapters']
+							currentChapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
+							@currentTrack['chapters'] = editChapters(@currentTrack['chapters'], currentChapterIndex)
 							@currentTrack['chapters'] = sortChapters @currentTrack['chapters']
 							writeLibraryToFile
 							whisper("New chapter written to library file", 3)
@@ -960,7 +991,7 @@ module Tunewich
 						'description' => "Remove the current chapter.",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							chapterIndex = getChapterIndexAtTime @currentTrack, @currentPlayerTime
+							chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
 							if chapterIndex
 								@currentTrack['chapters'].delete_at chapterIndex
 								writeLibraryToFile
@@ -973,7 +1004,7 @@ module Tunewich
 						'description' => "Edit all the chapters for the current track (using vim).",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							chapters = editChapters(@currentTrack['chapters'] || [])
+							chapters = editChapters(@currentTrack['chapters'] || [], @currentChapterIndex)
 							if chapters && chapters.length > 0
 								@currentTrack['chapters'] = sortChapters chapters
 							elsif @currentTrack['chapters'] && @currentTrack['chapters'].length > 0
@@ -1292,7 +1323,7 @@ module Tunewich
 								eqBands = @eqSetting.split(':').map { |level| level.to_i }
 								selectedBandIndex = 0
 								showInteractiveEQ eqBands, selectedBandIndex
-								@shouldShowPlaybackInfo = false
+								disablePlaybackInfo
 								interactivePresetNameInput = ''
 								while eqInput = readCharacter
 									inputCausedEQChange = false
@@ -1335,7 +1366,7 @@ module Tunewich
 										sendPlayerCommand "af_clr\naf_add equalizer=#{@eqSetting}"
 									end
 								end
-								@shouldShowPlaybackInfo = true
+								enablePlaybackInfo
 							end
 							{:chainedInput => inputParts[2]}
 						}
@@ -1452,7 +1483,7 @@ module Tunewich
 
 							seekInput = inputParts[1].strip
 							seekTimeInSeconds = parseRelativeTime seekInput
-							seek seekTimeInSeconds, 0.1, 0.1
+							seek seekTimeInSeconds, 0.5, 0.5
 							{:chainedInput => inputParts[2]}
 						}
 					},
@@ -1594,61 +1625,46 @@ module Tunewich
 			requestedCommandSet
 		end
 
-		def getChapterIndexAtTime track, seconds
+		def getChapterIndexAtTime chapters, seconds
 			chapterIndex = nil
-			whisper("Finding chapter at #{seconds} seconds on track: #{track['title']}", 5)
-			if track.has_key? 'chapters'
-				whisper("Looping through chapters.", 5)
-				track['chapters'].each_with_index { |chapter, index|
-					chapterSeconds = getSecondsFromDurationString chapter['time']
-					if chapterSeconds <= seconds
-						chapterIndex = index
-					else
-						break
-					end
-				}
-			else
-				whisper("This track has no chapters: #{track['title']}", 2)
-			end
+			chapters.each_with_index { |chapter, index|
+				chapterSeconds = getSecondsFromDurationString chapter['time']
+				if chapterSeconds <= seconds
+					chapterIndex = index
+				else
+					break
+				end
+			}
 			chapterIndex
 		end
 
 		def getOffsetFromInputString input
-			offset = 0
+			offset = nil
 			input.strip!
 			if input.match(/^>+$/)
-				offset += input.length
+				offset = input.length
 			elsif input.match(/^<+$/)
-				offset -= input.length - 1
+				offset = -input.length + 1
 			end
 
 			offset
 		end
 
-		def getChapterIndexByQuery input, track = nil, referenceChapterIndex = nil
+		def getChapterIndexByQuery input, chapters, referenceChapterIndex = nil
 			chapterIndex = nil
-			track = @currentTrack if !track
 
-			if track['chapters']
-				chapterIndex = input.to_i - 1
-				if chapterIndex < 0
-					if referenceChapterIndex
-						chapterIndex = referenceChapterIndex
-					else
-						chapterIndex = getChapterIndexAtTime track, @currentPlayerTime
-					end
-					chapterIndexOffset = getOffsetFromInputString input
-					if chapterIndexOffset
-						chapterIndex += chapterIndexOffset
-					else
-						chapterList = track['chapters'].map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
-						chapterIndex = firstFuzzyMatchIndex input, chapterList
-					end
+			chapterIndex = input.to_i - 1
+			if chapterIndex < 0
+				chapterIndexOffset = getOffsetFromInputString input
+				if chapterIndexOffset
+					referenceChapterIndex ||= getChapterIndexAtTime chapters, @currentPlayerTime
+					chapterIndex = referenceChapterIndex + chapterIndexOffset
+				else
+					chapterList = chapters.map { |chapter| "#{chapter['time']} - #{chapter['text']}" }
+					chapterIndex = firstFuzzyMatchIndex input, chapterList
 				end
-				whisper("Choosing chapter #{chapterIndex}", 2)
-			else
-				putsRealtime "No chapters on the current track."
 			end
+			whisper("Choosing chapter #{chapterIndex}", 2)
 
 			chapterIndex
 		end
@@ -1696,18 +1712,27 @@ module Tunewich
 			end
 		end
 		
+		def seekToNote noteIndex, fadeOutPeriod = 1.0, fadeInPeriod = 0.1
+			whisper("seeking to note #{noteIndex} (fade #{fadeOutPeriod}/#{fadeInPeriod}", 3)
+			seekTime = @currentTrack['notes'][noteIndex]['time']
+			seekSeconds = getSecondsFromDurationString seekTime
+			whisper("seeking to note at #{seekSeconds} seconds", 3)
+
+			seek seekSeconds, fadeOutPeriod, fadeInPeriod
+		end
+		
 		def seekToChapter chapterIndex, fadeOutPeriod = 1.0, fadeInPeriod = 0.1
 			whisper("seeking to chapter #{chapterIndex} (fade #{fadeOutPeriod}/#{fadeInPeriod}", 3)
-			chapterTime = @currentTrack['chapters'][chapterIndex]['time']
-			chapterSeconds = getSecondsFromDurationString chapterTime
-			whisper("seeking to chapter at #{chapterSeconds} seconds", 3)
+			seekTime = @currentTrack['chapters'][chapterIndex]['time']
+			seekSeconds = getSecondsFromDurationString seekTime
+			whisper("seeking to chapter at #{seekSeconds} seconds", 3)
 
-			seek chapterSeconds, fadeOutPeriod, fadeInPeriod
+			seek seekSeconds, fadeOutPeriod, fadeInPeriod
 		end
 
 		def getUserInputBPM
 
-			@shouldShowPlaybackInfo = false
+			disablePlaybackInfo
 			firstTimeInSeconds = nil
 			lastTimeInSeconds = nil
 			iterations = 0;
@@ -1739,7 +1764,7 @@ module Tunewich
 			end
 			print "\n"
 
-			@shouldShowPlaybackInfo = true
+			enablePlaybackInfo
 
 			return bpm
 		end
@@ -2075,16 +2100,18 @@ module Tunewich
 				@inputThread.kill if @inputThread
 			}
 
-			@shouldShowPlaybackInfo = true # might have been set false if the player quit while realtime output was hidden
+			enablePlaybackInfo # might have been set false if the player quit while realtime output was hidden
 			bind('time_update', Proc.new {
 				if @currentTrack.has_key?('chapters')
-					newChapterIndex = getChapterIndexAtTime @currentTrack, @currentPlayerTime
+					newChapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
 					if newChapterIndex
 						if @currentChapterIndex != newChapterIndex
 							@currentChapterIndex = newChapterIndex
 							trigger 'chapter_change'
 						end
 					end
+				else
+					@currentChapterIndex = nil
 				end
 				showPlaybackInfo
 			}, bindingGroupName)
@@ -2181,7 +2208,7 @@ module Tunewich
 				# show current chapter name
 				if @currentTrack.has_key?('chapters')
 					if @currentChapterIndex
-						playbackInfo << "#{unicodeChars[:openBook]}	#{@currentTrack['chapters'][@currentChapterIndex]['name']}" # undefined method `[]' for nil:NilClass (NoMethodError)
+						playbackInfo << "#{unicodeChars[:openBook]}	#{@currentTrack['chapters'][@currentChapterIndex]['text']}" # undefined method `[]' for nil:NilClass (NoMethodError)
 					end
 				else
 					@currentChapterIndex = nil
@@ -3127,7 +3154,7 @@ module Tunewich
 				matches = line.match(/^(.*?)[ (]*([0-9]+:[0-9:.]+)[ )]*(.*)$/)
 				{
 					'time' => matches[2],
-					'name' => "#{matches[1]} #{matches[3]}".gsub(/^[^0-z]/, '').strip
+					'text' => "#{matches[1]} #{matches[3]}".gsub(/^[^0-z]/, '').strip
 				}
 			end
 		end
@@ -3379,6 +3406,11 @@ module Tunewich
 				$logFilePath = logFile
 			end
 
+			parser.on("--loglevel LEVEL", "Set the log verbosity, as with -v, but applying only to logs. By default, all messages are logged.", " ") do |level|
+				@logVerbosity = level ? level.to_i : 1
+				whisper("Log level: #{@logVerbosity}", 1)
+			end
+
 			parser.on("-m MODE", "--mode MODE", "Choose a player mode: #{Player::MODES.keys.join ', '}", " ") do |modeName|
 				if Player::MODES.has_key? modeName
 					@userMode = modeName
@@ -3450,7 +3482,7 @@ module Tunewich
 						updateRadioMetadata @currentTrack['title']
 					}
 					bind 'chapter_change', Proc.new {
-						updateRadioMetadata "#{@currentTrack['title']} (#{@currentTrack['chapters'][@currentChapterIndex]['name']})"
+						updateRadioMetadata "#{@currentTrack['title']} (#{@currentTrack['chapters'][@currentChapterIndex]['text']})"
 					}
 					if streamingServerType == 'homebrew'
 						icecastConfigFile = "#{$serviceConfigDir}/icecast.xml"
@@ -3808,7 +3840,7 @@ module Tunewich
 
 		def editListInVim list, instructions = nil
 			scopedShouldShowRealtimeOutput = @shouldShowPlaybackInfo
-			@shouldShowPlaybackInfo = false
+			disablePlaybackInfo
 			instructions ||= "edit"
 			fileDirections = "##\n#{instructions.gsub(/^/, '# ')}\n##"
 
@@ -3951,7 +3983,7 @@ module Tunewich
 
 		def handleInputLine inputLine, commands, leftoverAction
 			@commandHistory.unshift inputLine
-			@shouldShowPlaybackInfo = true
+			enablePlaybackInfo
 
 			whisper("received input: #{inputLine}", 3)
 			if commands
@@ -3972,7 +4004,7 @@ module Tunewich
 
 			if inputCharacter == "" # control-c character
 				whisper("interrupt character, is that you?", 3)
-				@shouldShowPlaybackInfo = true
+				enablePlaybackInfo
 				result = false
 			elsif inputCharacter == "" # backspace
 				if @commandUserInput
@@ -3981,7 +4013,7 @@ module Tunewich
 						printRepeat @commandUserInput
 					else
 						@commandUserInput = nil
-						@shouldShowPlaybackInfo = true;
+						enablePlaybackInfo;
 					end
 				end
 			elsif inputCharacter == "" # stop job
@@ -3994,7 +4026,9 @@ module Tunewich
 				end
 				@commandInputTyped = nil
 			elsif /[\n\r]/.match inputCharacter
-				actionResponse = handleInputLine(@commandUserInput, commands, leftoverAction)
+				inputLine = @commandUserInput
+				@commandUserInput = nil
+				actionResponse = handleInputLine(inputLine, commands, leftoverAction)
 
 				if actionResponse
 					prompt.call
@@ -4004,7 +4038,7 @@ module Tunewich
 			else
 				if not @commandUserInput
 					@commandUserInput = ''
-					@shouldShowPlaybackInfo = false
+					disablePlaybackInfo
 					if inputCharacter == '/'
 						@commandinputStartPlayerTime = @currentPlayerTime
 					end
@@ -4074,10 +4108,12 @@ module Tunewich
 
 			externalInputHandlerId = bind('external_input', Proc.new { |extInputChar|
 				handleInputCharacter(extInputChar, prompt, commands, action)
-			});
+				false # stop propagation of event
+			}, nil, true);
 			externalCommandHandlerId = bind('external_command', Proc.new { |extInput|
 				handleInputLine(extInput, commands, action)
-			});
+				false # stop propagation of event
+			}, nil, true);
 
 			while directInputCharacter = readCharacter
 				inputResult = handleInputCharacter(directInputCharacter, prompt, commands, action)
@@ -4106,7 +4142,7 @@ module Tunewich
 				!input
 			}
 			scopedShouldShowRealtimeOutput = @shouldShowPlaybackInfo
-			@shouldShowPlaybackInfo = false
+			disablePlaybackInfo
 			commandPrompt(confirmMessage, commands, confirmAction)
 			@shouldShowPlaybackInfo = scopedShouldShowRealtimeOutput
 			confirmed
@@ -4134,11 +4170,19 @@ module Tunewich
 			selectedListName
 		end
 
+		def getFormattedChapterList chapters
+			chapters.map { |c|
+				"#{c.has_key?('skip') && c['skip'] ? 'skip' : '    '}" +
+					"#{" " * (9-c['time'].length)}#{c['time']}" +
+					" #{c['text']}"
+			}
+		end
+
 		def promptForChapterIndex chapters, commands = nil, message = nil
 			whisper("prompting for chapter selection", 3)
 			selectedChapterIndex = nil
 
-			chapterList = chapters.map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
+			chapterList = getFormattedChapterList chapters
 			prePromptMessage = "	#{chapterList.join "\n	"}"
 			prePromptMessage += "\n#{message}" if message
 			promptMessage = "Please choose a chapter (leave blank to play first):"
