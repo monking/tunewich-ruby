@@ -58,16 +58,33 @@ module Tunewich
 				@trackIndex = @trackIndex.to_i
 			end
 
-			commands = {
-				'quit' => true,
-				'loop' => true,
-				'shuffle' => true,
-				'download' => true
-			}
-
 			# TODO: catch SIGINT (ctrl+c) & prompt for playlist again
 			playbackSuccessful = true
+			commandRequiresBreak = false
+			commandRequiresNext = false
+
+			interactiveCommands = {
+				'quit' => Proc.new {
+					puts "quitting..."
+					commandRequiresBreak = true
+				},
+				'skip' => Proc.new {
+					puts "skipping..."
+					nextTrack()
+					commandRequiresNext = true
+				},
+				'loop' => Proc.new {
+					@loop = !@loop
+					puts "loop: #{@loop ? 'on' : 'off'}"
+				},
+				'shuffle' => Proc.new {
+					@shuffle = !@shuffle
+					puts "shuffle: #{@shuffle ? 'on' : 'off'}"
+				}
+			}
+
 			while playbackSuccessful do
+
 				break if !@trackIndex || !@tracks[@trackIndex]
 
 				titleBlock "[#{@trackIndex + 1}] - #{@tracks[@trackIndex]['title']}"
@@ -80,11 +97,20 @@ module Tunewich
 
 				chapterIndex = nil
 				if @tracks[@trackIndex]['chapters']
+
+					commandRequiresBreak = false
+					commandRequiresNext = false
+
 					chapterPromptMessage = nil
 					if !fileExistsFromId?(@tracks[@trackIndex]['src']) && !@enableDownload # TODO: checking fileExists, and checking again inside self.play
 						chapterPromptMessage = "NOTE: Choosing a chapter will cause the file to download fully before playing."
 					end
-					chapterIndex = promptForChapterIndex @tracks[@trackIndex]['chapters'], commands, chapterPromptMessage
+					chapterResponse = promptForChapterIndex @tracks[@trackIndex]['chapters'], interactiveCommands, chapterPromptMessage
+					chapterIndex = chapterResponse[:index]
+
+					next if commandRequiresNext
+					break if commandRequiresBreak
+
 				end
 
 				# TODO: catch C-t, or something like it, to pass commands to the script during playback
@@ -97,7 +123,9 @@ module Tunewich
 				playbackSuccessful = play @tracks[@trackIndex], chapterIndex
 
 				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
+
 			end
+
 		end
 
 		private
@@ -231,10 +259,6 @@ module Tunewich
 			while not selectedChapterIndex do
 				chapterResponse = commandPrompt commands
 				chapterQuery = chapterResponse[:input]
-
-				if chapterResponse[:commands].length
-					puts "TODO: handle commands: #{chapterResponse[:commands]}"
-				end
 				break if not chapterQuery or chapterQuery.length === 0
 
 				selectedChapter = firstFuzzyMatch chapterQuery, chapterList
@@ -248,7 +272,10 @@ module Tunewich
 
 			end
 
-			selectedChapterIndex
+			{
+				:index => selectedChapterIndex,
+				:commands => chapterResponse[:commands]
+			}
 		end
 
 		def getTrackTitles
@@ -695,33 +722,49 @@ module Tunewich
 
 		def interactiveCleanup
 			tracksToDelete = {}
+			initialLibraryLength = @library['library'].length
+			puts "Library contains #{initialLibraryLength} tracks."
 
 			# find tracks which are not included in any playlist
-			unattachedTracks = @library['library']
+			unattachedTracks = {}
+			@library['library'].map { |id, t| unattachedTracks[id] = t }
 			@library['playlists'].each do |name, playlist|
 				playlist['tracks'].each do |id|
 					unattachedTracks.delete id if unattachedTracks.has_key? id
 				end
 			end
 			if unattachedTracks.length > 0
-				puts "The following tracks are not in any playlist:"
-				puts "#{unattachedTracks.map { |id, t| "#{t['title']}" } .join "\n"}"#{t.title}" }}"
-
-				if confirm "\nRemove these tracks?"
-					unattachedTracks.each { |id, track| tracksToDelete[id] = track }
-				end
+				unattachedTracks.each { |id, track| tracksToDelete[id] = track }
 			else
 				puts "Every track is assigned to a playlist. No suggestions for deletion."
 			end
 
 			# delete chosen tracks from library
 			if tracksToDelete.length > 0
-				tracksToDelete.each do |id, track|
-					@library['library'].delete id
-				end
+				commands = {
+					'edit' => Proc.new {
+						putInTempFile 'cleanup', listTrackTitles(tracksToDelete)
+						system "vim #{getTempFilePath 'cleanup'}"
+						tracksToDelete = getTracksFromTitleList readTempFile('cleanup')
+						puts listTrackTitles tracksToDelete
+					}
+				}
 
-				confirmMsg = "\nLibrary now contains #{@library['library'].length} tracks. Write to file?"
-				writeLibraryToFile if confirm confirmMsg
+				puts listTrackTitles tracksToDelete
+				if confirm "\nRemove these #{tracksToDelete.length} tracks?", commands
+
+					tracksToDelete.each do |id, track|
+						@library['library'].delete id
+					end
+
+					checksum = initialLibraryLength - tracksToDelete.length == @library['library'].length
+					checksumString = "#{initialLibraryLength} - #{tracksToDelete.length} == #{@library['library'].length}"
+					puts "#{checksumString} ... #{checksum ? 'OK' : 'Mismatch'}"
+
+					confirmMsg = "\nLibrary now contains #{@library['library'].length} tracks. Write to file?"
+					writeLibraryToFile if confirm confirmMsg
+
+				end
 			else
 				puts "No tracks to delete."
 			end
@@ -771,9 +814,9 @@ module Tunewich
 			@cliRotateCharacters[@cliRotateIndex]
 		end
 
-		def confirm message
+		def confirm message, commands = nil
 			print "#{message} (y/N): "
-			commandPrompt.match(/^[Yy]/)
+			commandPrompt(commands)[:input].match(/^[Yy]/)
 		end
 
 		def commandPrompt commands = nil
@@ -787,12 +830,11 @@ module Tunewich
 					commandParts = input.slice(1..-1).split(/\s+/)
 					commandName = commandParts[0]
 					commandArgs = commandParts.slice(1..-1)
-					command = commands[commandName]
-					if command
+					if commands[commandName]
 						response[:commands].push({
 							:name => commandName,
-							:command => command,
-							:args => commandArgs
+							:args => commandArgs,
+							:output => commands[commandName].call(commandArgs)
 						})
 					else
 						puts "Invalid command '#{commandName}'; available commands: #{commands.keys.join ', '}"
@@ -805,6 +847,21 @@ module Tunewich
 			response[:input] = input
 
 			response
+		end
+
+		def listTrackTitles(tracks)
+			tracks.map { |id, t| "#{t['title']}" } .join "\n"
+		end
+
+		def getTracksFromTitleList(titleString)
+			tracks = {}
+			titleList = titleString.chomp.lines
+
+			@library['library'].each { |id, track| 
+				tracks[id] = track if titleList.index track['title']
+			}
+
+			tracks
 		end
 
 		alias deleteStream deleteTempFile
