@@ -1,4 +1,9 @@
 # todo:
+- [ ] should tracks in tags be stored in an object, with track IDs being the keys? This would allow data like thie time in a track when it was added, as well as a timestamp of when it was added.
+	- However, this could also bloat the library data footprint.
+	- Migration:
+		- `library.tags[tagName].tracks: string[]` : `library.tags[tagName].tracks[trackId]: object`
+		- merge `library.tags[tagName].times: object` into ^
 - [ ] 1gor9z: when typing `/note` and there are no existing notes, begin creating a note
 - [ ] 1gG4VT: fix /edit swapping first and last tracks
 - [ ] 1gG4Ve: optionally use common factors or time signatures to find other good ratios
