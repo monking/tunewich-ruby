@@ -391,7 +391,7 @@ module Tunewich
 			mplayerAction = Proc.new { |command|
 				fadeCommandMatch = /^f(ade)?(q(uit)?)?( (\d+))?$/.match command
 				if fadeCommandMatch
-					duration = fadeCommandMatch[5] && fadeCommandMatch[5].length > 0 ? fadeCommandMatch[5].to_f : 2.0
+					duration = fadeCommandMatch[5] && fadeCommandMatch[5].length > 0 ? fadeCommandMatch[5].to_f : 1.0
 					volume = getCurrentMplayerVolume
 					volumeFadeInterval = 0.1
 					volumeStep = volume / duration * volumeFadeInterval
