@@ -526,6 +526,13 @@ module Tunewich
 				#  x: remove from library
 				#  d: download
 				playerOutput = play track, chapterIndex, interactiveCommands
+				minimumPlayTime = getSecondsFromDurationString(track['duration']) / 2
+				track['lastPlayed'] = playerOutput[:endTime].to_i
+				track['playTime'] ||= 0
+				track['playTime'] += playerOutput[:playTime].to_i
+				track['playCount'] ||= 0
+				track['playCount'] += 1
+				writeLibraryToFile true
 
 				whisper "I've been asked to exit" if commandRequiresExit
 				exit if commandRequiresExit
@@ -709,7 +716,7 @@ module Tunewich
 				mplayerStartupOptions += ["-volume #{(getMplayerConfigVolume / track['loudness']).round}"]
 			end
 
-			mplayerStartTime = Time.now.to_f
+			response[:startTime] = Time.now.to_f
 
 			mplayerStdoutFile = getTempFilePath Player::MPLAYER_STDOUT_BUFFER_NAME
 
@@ -729,12 +736,12 @@ module Tunewich
 			whisper "killing user input thread (again)"
 			inputThread.kill if inputThread # FIXME: overkill?
 
-			mplayerEndTime = Time.now.to_f
+			response[:endTime] = Time.now.to_f
 
 			deleteStream Player::MPLAYER_INPUT_FIFO_NAME
 			deleteTempFile Player::MPLAYER_STDOUT_BUFFER_NAME
 
-			mplayerPlayTime = mplayerEndTime - mplayerStartTime
+			response[:playTime] = response[:endTime] - response[:startTime]
 
 			if streaming
 				deleteStream streamName
@@ -744,7 +751,6 @@ module Tunewich
 			end
 
 			response[:exit] = mplayerStatus
-			response[:playtime] = mplayerPlayTime
 			response
 		end
 
@@ -1455,7 +1461,7 @@ module Tunewich
 				now = Time.now.to_i
 				watershed = now - getSecondsFromDurationString(filters['last']).to_i
 				tracks.send(action) { |t|
-					t['played'] ? t['played'].to_i >= watershed : false
+					t['lastPlayed'] ? t['lastPlayed'].to_i >= watershed : false
 				}
 			end
 
