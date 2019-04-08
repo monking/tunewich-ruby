@@ -570,6 +570,7 @@ module Tunewich
 
 							if commitBPM
 								loadLibrary
+								@currentTrack = matchExistingLibraryTrack @currentTrack
 								if bpm == 0
 									putsRealtime "Removing BPM from track."
 									@currentTrack.delete 'bpm' if @currentTrack.has_key? 'bpm'
