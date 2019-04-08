@@ -486,6 +486,13 @@ module Tunewich
 						{:chainedInput => input}
 					}
 				},
+				'format' => {
+					'info' => 'Choose the file format to download (e.g. "mp4"; default "m4a").',
+					'action' => Proc.new { |input|
+						@preferredFileFormat = input
+						nil
+					}
+				},
 				'commands' => {
 					'info' => "List #{Player::PLAYER_APPLICATION} commands.",
 					'action' => Proc.new { |input|
@@ -553,6 +560,19 @@ module Tunewich
 				track['playTime'] += playerOutput[:playTime].to_i
 				track['playCount'] ||= 0
 				track['playCount'] += 1
+				writeLibraryToFile true
+
+				track['playTime'] ||= 0
+				track['playTime'] += playerOutput[:playTime].to_i
+				minimumPlayTime = [30, getSecondsFromDurationString(track['duration']) -10].min
+				if playerOutput[:playTime] >= minimumPlayTime
+					track['lastPlayed'] = playerOutput[:endTime].to_i
+					track['playCount'] ||= 0
+					track['playCount'] += 1
+				else
+					track['skipCount'] ||= 0
+					track['skipCount'] += 1
+				end
 				writeLibraryToFile true
 
 				track['playTime'] ||= 0
