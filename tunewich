@@ -1827,7 +1827,7 @@ module Tunewich
           },
           'loop' => {
             'description' => '/loop [COUNT]: Set the loop limit, or toggle looping off/on, or toggle only inner loops, or \'reset\' the loop counters.',
-            'args' => ['off', 'on', 'inner', 'reset'],
+            'args' => ['off', 'on', 'inner', 'break', 'reset'],
             'showStatus' => Proc.new {
               statusMessage = "Looping: #{@loop ? 'on' : 'off'} #{getLoopLimitStatusMessage}"
               statusExtras = []
@@ -1850,8 +1850,11 @@ module Tunewich
                 @loopLimit = loopLimit
               elsif inputParts[:query] == 'reset'
                 @loopHistory = {}
+                @breakLoop = false
               elsif inputParts[:query] == 'inner'
-                @innerLoopsOnly = getToggledValueByInput.call(@innerLoopsOnly, inputParts[:query])
+                @innerLoopsOnly = getToggledValueByInput.call(@innerLoopsOnly)
+              elsif inputParts[:query] == 'break'
+                @breakLoop = getToggledValueByInput.call(@breakLoop)
               else
                 @loop = getToggledValueByInput.call(@loop, inputParts[:query])
               end
@@ -2121,19 +2124,6 @@ module Tunewich
               end
               writeLibraryToFile
               {:chainedInput => input}
-            }
-          },
-          'breakloop' => {
-            'description' => 'Play the current track to the end, and on to the next, while keeping looping enabled. Run the command again to undo it.',
-            'showStatus' => Proc.new {
-              putsRealtime @breakLoop ? "Will break out of next loop." : "Looping normally (#{@loop ? 'on' : 'off'})"
-            },
-            'action' => Proc.new { |input, command|
-              inputParts = getCommandInputParts(input)
-              @breakLoop = getToggledValueByInput.call(@breakLoop, inputParts[:query])
-
-              command['showStatus'].call
-              {:chainedInput => inputParts[:remainder]}
             }
           },
           'seek' => {
