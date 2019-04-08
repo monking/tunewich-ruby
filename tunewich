@@ -234,7 +234,7 @@ module Tunewich
 			mplayerConfigFile = "#{$serviceConfigDir}/mplayer.options"
 
 			if File.exist?(mplayerConfigFile)
-				@playerOverrideCommands << File.read(mplayerConfigFile).chomp.strip
+				@playerOverrideCommands << File.read(mplayerConfigFile).chomp.strip.gsub(/[\r\n]+/, ' ')
 			end
 		end
 
