@@ -197,7 +197,7 @@ module Tunewich
 						if trackIndex.to_i == 0
 							@trackIndex = findTrackIndex trackIndex
 						else
-							@trackIndex = trackIndex.to_i - 1
+							@trackIndex = trackIndex.to_i - 1 % @tracks.length
 						end
 						commandRequiresNext = true
 					}
@@ -412,7 +412,14 @@ module Tunewich
 				'add' => {
 					'info' => 'Add a track by id.',
 					'action' => Proc.new { |videoID|
-						@tracks << matchExistingLibraryTrack(createTrack(videoID, 'youtube'))
+						if videoID.length > 0
+							puts "Adding #{videoID} to track list. Playing next."
+							@tracks << matchExistingLibraryTrack(createTrack(videoID, 'youtube'))
+
+							# FIXME: I don't necessarily want to go to the track next, but it's better than not being able to find the track
+							@trackIndex = @tracks.length - 1
+							commandRequiresNext = true
+						end
 					}
 				},
 				'again' => {
