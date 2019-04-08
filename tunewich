@@ -988,6 +988,10 @@ module Tunewich
 
 							{:chainedInput => inputParts[2]}
 						}
+						# 'tabComplete' => Proc.new { |input, command|
+						# 	trackTabComplete input.sub(Regexp.new("^(#{command['args'].join('|')}) "), '')
+						# }
+						## FIXME ^: erroring
 					},
 					'add' => {
 						'description' => 'Add a new track to the play queue. Input: <URL>[,<URL>,...] [<TAG>[,<TAG>,...]] -- URLs: comma-separated URLs or YouTube IDs (Some URLs will add multiple tracks, like a bandcamp album (or TODO: YouTube playliist); tags: comma-separated tags to add to the tracks.',
@@ -4439,7 +4443,7 @@ module Tunewich
 									end
 
 									if commands[commandName].has_key?('tabComplete')
-										modifiedCommandInput = commands[commandName]['tabComplete'].call(commandInput)
+										modifiedCommandInput = commands[commandName]['tabComplete'].call(commandInput, commands[commandName])
 										commandInput = modifiedCommandInput if modifiedCommandInput
 									elsif commands[commandName].has_key?('args')
 										inputParts = commandInput.match(/^([^\/]*)(.*)$/)
