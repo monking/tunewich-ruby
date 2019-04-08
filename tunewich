@@ -441,6 +441,7 @@ module Tunewich
 				'exclude' => {
 					'info' => 'Edit exclude filters.',
 					'action' => Proc.new { |query|
+						# TODO: replace this with "-" prefixed filter keys in the regular filter command (i.e. "-f tag=silly,-tag=vocal")
 						filtersList = @trackExcludeFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackExcludeFilters
 						filtersList ||= []
 						instructions = "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}\n\nAvailable tags: #{listAllTagsWithAliases.join ', '}"
@@ -1369,7 +1370,7 @@ module Tunewich
 			action = isExcludeFilter ? 'delete_if' : 'keep_if'
 
 			if filters.has_key? 'rating'
-				if filters['rating']
+				if filters['rating'] && filters['rating'].length > 0
 					tracks.send(action) { |t|
 						matchPropertyWithRangeString filters['rating'], t, 'rating'
 					}
@@ -1420,7 +1421,7 @@ module Tunewich
 			end
 
 			if filters.has_key? 'bpm'
-				if filters['bpm']
+				if filters['bpm'] && filters['bpm'].length > 0
 					tracks.send(action) { |t|
 						matchPropertyWithRangeString filters['bpm'], t, 'bpm'
 					}
