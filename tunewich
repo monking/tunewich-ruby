@@ -100,7 +100,7 @@ module Tunewich
 			commandRequiresExit = false
 
 			interactiveCommands = {
-				'r' => {
+				'rate' => {
 					'info' => "Rate this track.",
 					'action' => Proc.new { |new_rating|
 						if !new_rating || new_rating.length < 1
@@ -114,7 +114,7 @@ module Tunewich
 						end
 					}
 				},
-				't' => {
+				'tag' => {
 					'info' => "Tag this track.",
 					'action' => Proc.new { |tags|
 						track = @tracks[@trackIndex]
@@ -126,7 +126,7 @@ module Tunewich
 						end
 					}
 				},
-				'g' => {
+				'go' => {
 					'info' => "Go to a track in the current list.",
 					'action' => Proc.new { |trackIndex|
 						if trackIndex.to_i == 0
@@ -137,7 +137,7 @@ module Tunewich
 						commandRequiresNext = true
 					}
 				},
-				'p' => {
+				'list' => {
 					'info' => "Load a playlist.",
 					'action' => Proc.new { |playlistQuery|
 						puts "playlistQuery: #{playlistQuery}" # XXX
@@ -158,7 +158,7 @@ module Tunewich
 						commandRequiresNext = true
 					}
 				},
-				'm' => {
+				'more' => {
 					'info' => "Play all tracks on this video's page.",
 					'action' => Proc.new {
 						tracks = getYouTubeTracksFromPage(@tracks[@trackIndex]['src'])
@@ -168,7 +168,7 @@ module Tunewich
 						commandRequiresNext = true
 					}
 				},
-				'q' => {
+				'quit' => {
 					'info' => "<query> Search YouTube.",
 					'action' => Proc.new { |query|
 						useTracks searchYouTube(query), false
@@ -176,7 +176,7 @@ module Tunewich
 						commandRequiresNext = true
 					}
 				},
-				'l' => {
+				'loop' => {
 					'info' => 'Toggle loop.',
 					'action' => Proc.new {
 						@loop = !@loop
@@ -184,14 +184,14 @@ module Tunewich
 						puts "loop: #{@loop ? 'on' : 'off'}"
 					}
 				},
-				'sh' => {
+				'shuffle' => {
 					'info' => 'Toggle shuffle.',
 					'action' => Proc.new {
 						@shuffle = !@shuffle
 						puts "shuffle: #{@shuffle ? 'on' : 'off'}"
 					}
 				},
-				'v' => {
+				'defvolume' => {
 					'info' => "TODO: save current volume relative to default in library.",
 					'action' => Proc.new { |new_rating|
 						track = @tracks[@trackIndex]
@@ -245,7 +245,7 @@ module Tunewich
 						useTracks @tracks, false
 					}
 				},
-				'x' => {
+				'exit' => {
 					'info' => 'Exit.',
 					'action' => Proc.new {
 						commandRequiresExit = true
@@ -1553,9 +1553,14 @@ module Tunewich
 					'info' => 'show this info',
 					'action' => Proc.new {
 						commandInfo = []
+						maxCommandNameLength = 0
 						commands.each { |name, set|
-							info = "\"#{name}\""
-							info += " -- #{set['info']}" if set['info']
+							maxCommandNameLength = name.length if name.length > maxCommandNameLength
+						}
+						commands.each { |name, set|
+							info = "/#{name}"
+							info += " " * (maxCommandNameLength - info.length + 1)
+							info += " : #{set['info']}" if set['info']
 							commandInfo << info
 						}
 						puts commandInfo.join "\n"
