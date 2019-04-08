@@ -176,6 +176,28 @@ module Tunewich
 			selectedListName
 		end
 
+		def promptForChapterIndex chapters
+			chapterList = chapters.map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
+			puts "Please choose a chapter (leave blank to play first):\n  #{chapterList.join "\n  "}"
+			selectedChapter = nil
+			while not selectedChapter do
+				chapterQuery = STDIN.gets.chomp
+				if not chapterQuery or chapterQuery.length === 0
+					selectedChapterIndex = 0
+					break
+				end
+				selectedChapter = firstFuzzyMatch chapterQuery, chapterList
+				if selectedChapter
+					selectedChapterIndex = selectedChapter[:index]
+					break
+				else
+					puts "No matches. Try again"
+				end
+			end
+
+			selectedChapterIndex
+		end
+
 		def getTrackTitles
 			@tracks.map{|t| t['title']}
 		end
@@ -262,24 +284,13 @@ module Tunewich
 
 			titleBlock "[#{@trackIndex + 1}] - #{track['title']}"
 
-			if not fileExistsFromID? track['src']
-				if not @enableDownload
-					streamName = 'youtube-stream'
-					streamPath = mediaFilePath = makeStream streamName
-				end
-
-				if not downloadFromYouTubeID track['src'], streamPath
-					return false
-				end
-			end
-
-			mediaFilePath ||= findFile track['src']
-
 			mplayerCommands = []
 
-			# TODO: clean up these tests for streaming
+			fileExists = fileExistsFromID? track['src']
+			streaming = !fileExists && !@enableDownload
+
 			if track['loop'].kind_of?(Array)
-				if !streamName
+				if not streaming
 					duration = track['loop'][1] - track['loop'][0]
 
 					mplayerInputFile = putInTempFile 'mplayer-input', "seek -999:00:00\n" # this is a silly way to do it. -100% doesn't work. Still, there's a moment of the audio heard before this command is run.
@@ -291,7 +302,33 @@ module Tunewich
 				else
 					titleBlock "This track has an A/B loop, but looping is not supported while streaming. Add the -d option to enable downloading."
 				end
+			elsif track['chapters']
+				if not streaming
+					chapterIndex = promptForChapterIndex track['chapters']
+					puts "you chose the chapter: #{track['chapters'][chapterIndex]}" # XXX
+					offsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex]['time']
+					mplayerCommands.push("-ss #{offsetSeconds}")
+					if chapterIndex < track['chapters'].length - 1
+						nextTrackoffsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex + 1]['time']
+						mplayerCommands.push("-endpos #{nextTrackoffsetSeconds - offsetSeconds}")
+					end
+				else
+					titleBlock "This track has chapters, but seeking backward is not supported while streaming. Add the -d option to enable downloading."
+				end
 			end
+
+			if not fileExists
+				if streaming
+					streamName = 'youtube-stream'
+					streamPath = mediaFilePath = makeStream streamName
+				end
+
+				if not downloadFromYouTubeID track['src'], streamPath
+					return false
+				end
+			end
+
+			mediaFilePath ||= findFile track['src']
 
 			if !streamName
 				mplayerCommands.push("-loop 0") if track['loop'] or @loop
@@ -548,6 +585,19 @@ module Tunewich
 			end
 
 			resultTracks
+		end
+
+		def getSecondsFromDurationString durationString
+			seconds = 0
+			factor = 1
+			factors = [1,60,60,24]
+
+			durationString.split(':').reverse.each_with_index { |unit, index|
+				factor *= factors[index]
+				seconds += unit.to_f * factor
+			}
+
+			seconds
 		end
 
 		alias deleteStream deleteTempFile
