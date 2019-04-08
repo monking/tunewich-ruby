@@ -1069,25 +1069,38 @@ module Tunewich
             'tabComplete' => tagTabComplete
           },
           'list' => {
-            'description' => "Load a playlist. (not chainable)",
+            'description' => "Load, save, or remove a playlist.",
+            'args' => ['save', 'rm'],
+            'inputOptions' => Proc.new { @library['playlists'].keys },
             'action' => Proc.new { |input, command|
-              # TODO: 1gG4gW
-              whisper("playlistQuery: #{input}", 4)
-              playlistNames = @library['playlists'].keys
-              if input && input.length > 0
-                match = firstFuzzyMatch input, playlistNames
+              inputParts = getCommandInputParts(input, /^((?<action>(save|rm)) *)?(?<name>.*?)?(?<remainder> \/.*)?$/)
 
-                if match && match[:score] > 1 # FIXME 1gpaoq: what's a good baseline score for a playlist match?
-                  playlistName = match[:value]
+              if inputParts[:action] && inputParts[:action] == 'save'
+                loadLibrary
+                @library['playlists'] ||= {}
+                @library['playlists'][inputParts[:name]] = {
+                  'tracks' => @tracks.map { |t| t['id'] }
+                }
+                writeLibraryToFile
+              elsif inputParts[:action] && inputParts[:action] == 'rm'
+                loadLibrary
+                playlistNames = command['inputOptions'].call
+                chosenName = firstFuzzyMatchValue(inputParts[:name], playlistNames) if inputParts[:name] && inputParts[:name].length > 0
+                if chosenName && confirm("Delete the playlist '#{chosenName}'?")
+                  @library['playlists'].delete inputParts[:name]
+                  writeLibraryToFile
+                end
+              else
+                playlistNames = command['inputOptions'].call
+                chosenName = firstFuzzyMatchValue(inputParts[:name], playlistNames) if inputParts[:name] && inputParts[:name].length > 0
+
+                if chosenName
+                  usePlaylist chosenName
+                else
+                  putsRealtime playlistNames.join "\n"
                 end
               end
-
-              if playlistName
-                usePlaylist playlistName, true
-              else
-                putsRealtime playlistNames.join "\n"
-              end
-              nil
+              {:chainedInput => inputParts[:remainder]}
             }
           },
           'tracks' => {

@@ -9,7 +9,6 @@
 - [ ] 1gG4Ve: optionally use common factors or time signatures to find other good ratios
 - [ ] 1gG4fU @refactor: change any scoped variables referenced to trigger events with data, if needed, and move this into a static object on Player, or several (base, playing, editing)
 	- [x] bindingGroupName
-- [ ] 1gG4gW: generalized function to list playlists, their track count, and the average rating among rated tracks
 - [ ] 1gG4hJ: sorting notes in the same way as sortChapters, combine?
 - [ ] 1gG4hV: use the 'turn' command to only sort tracks by their similarity to the filter, rather than removing those that don't match
 	possible solutions:
