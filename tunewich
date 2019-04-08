@@ -588,6 +588,21 @@ module Tunewich
 				end
 				writeLibraryToFile true
 
+				if !track['unattached']
+					track['playTime'] ||= 0
+					track['playTime'] += playerOutput[:playTime].to_i
+					minimumPlayTime = [30, getSecondsFromDurationString(track['duration']) -10].min
+					if playerOutput[:playTime] >= minimumPlayTime
+						track['lastPlayed'] = playerOutput[:endTime].to_i
+						track['playCount'] ||= 0
+						track['playCount'] += 1
+					else
+						track['skipCount'] ||= 0
+						track['skipCount'] += 1
+					end
+					writeLibraryToFile true
+				end
+
 				whisper "I've been asked to exit" if commandRequiresExit
 				exit if commandRequiresExit
 				whisper "I've been asked to break" if commandRequiresBreak
@@ -2039,6 +2054,7 @@ module Tunewich
 						end
 					else
 						puts "Invalid command '#{commandName}'; available commands: #{commands.keys.join ', '}"
+						break
 					end
 				end
 				whisper "end command while loop" # XXX
