@@ -1671,27 +1671,25 @@ module Tunewich
             }
           },
           'relatetags' => {
-            'description' => '(USAGE: /relatetags A B...) Make tag A a child of tag(s) B...',
+            'description' => '(USAGE: /relatetags A B...) Make tag A the child of tag(s) B...',
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
-              success = false
 
               if inputParts[:query].length > 0
-                tags = inputParts[:query].split(TAG_INPUT_SPLIT)
-                if tags.length == 2
-                  # TODO: optionally remove parent tags from all tracks which contain child tag
-                  success = relateTags tags
-                  if success
+                tagNames = inputParts[:query].split(TAG_INPUT_SPLIT)
+                # TODO: optionally remove parent tags from all tracks which contain child tag
+                if tagNames && tagNames.length > 0
+                  childTag = relateTags tagNames
+                  if childTag
                     writeLibraryToFile
                   else
-                    putsRealtime "There was a problem with relating the tags. Your changes were not saved."
+                    whiper("There was a problem with relating the tags. Your changes were not saved.", 0)
                   end
                 else
-                  putsRealtime "Please give exactly two tags."
+                  whisper("Unable to parse tag names from command input.", 0)
                 end
               end
 
-              putsRealtime "Tags: \n	#{@library['tags'].keys.sort.join(", ")}" if not success
               {:chainedInput => inputParts[:remainder]}
             },
             'tabComplete' => tagTabComplete
