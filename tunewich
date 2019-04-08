@@ -559,7 +559,6 @@ module Tunewich
 					tagNames = @library['tags'].keys
 					@library['tags'].each { |tagName, tag|
 						if tag.has_key? 'aliases'
-							whisper("adding aliases for #{tagName} (#{tag['aliases'].length})")
 							tagNames = tagNames + tag['aliases']
 						end
 					}
@@ -586,6 +585,16 @@ module Tunewich
 				'base' => {
 					'wait' => {
 						'description' => 'Wait for an event, or some number of seconds, to execute following chained commands. Events: chapter_change, play_start, play_end, fade_start, fade_end, speed_ramp_start, speed_ramp_end, download_success. You may use fuzzy substrings of the event names, e.g. "ch" will match "chapter_change", and "ple" will match "play_end".',
+						'args' => [
+							'chapter_change',
+							'play_start',
+							'play_end',
+							'fade_start',
+							'fade_end',
+							'speed_ramp_start',
+							'speed_ramp_end',
+							'download_success'
+						],
 						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
@@ -625,17 +634,7 @@ module Tunewich
 							end
 
 							output
-						},
-						'args' => [
-							'chapter_change',
-							'play_start',
-							'play_end',
-							'fade_start',
-							'fade_end',
-							'speed_ramp_start',
-							'speed_ramp_end',
-							'download_success'
-						]
+						}
 					},
 					'clear' => {
 						'description' => 'Clear current tracklist',
@@ -680,7 +679,10 @@ module Tunewich
 					},
 					'bpm' => {
 						'description' => "Interactively set the beats-per-minute of the track. Do '/bpm 0' to remove (not chainable)",
-						'action' => Proc.new { |input|
+						'showStatus' => Proc.new { |command|
+							putsRealtime "BPM: #{@currentTrack.has_key?('bpm') ? @currentTrack['bpm'] : "none"}"
+						},
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							commitBPM = false
 
@@ -699,26 +701,28 @@ module Tunewich
 								loadLibrary
 								@currentTrack = matchExistingLibraryTrack @currentTrack
 								if bpm == 0
-									putsRealtime "Removing BPM from track."
 									@currentTrack.delete 'bpm' if @currentTrack.has_key? 'bpm'
 								else
-									putsRealtime "Setting track BPM to #{bpm}."
 									@currentTrack['bpm'] = bpm
 								end
 								writeLibraryToFile
 							else
 								putsRealtime "Canceling: leaving track BPM alone."
 							end
+							command['showStatus'].call
 
 							{:chainedInput => inputParts[2]}
 						}
 					},
 					'tag' => {
 						'description' => "Tag this track.",
-						'action' => Proc.new { |input|
+						'showStatus' => Proc.new {
+							putsRealtime "current tags: #{getTrackTags @currentTrack}"
+						},
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if !inputParts[1] || inputParts[1].length < 1
-								putsRealtime "current tags: #{getTrackTags @currentTrack}"
+								command['showStatus'].call
 							else
 								tagsToAdd = inputParts[1].split(/[, ]+/)
 								whisper("all tags given: #{tagsToAdd}", 2)
@@ -946,11 +950,14 @@ module Tunewich
 					'shuffle' => {
 						'description' => 'Toggle shuffle.',
 						'args' => ['on', 'off'],
-						'action' => Proc.new { |input|
+						'showStatus' => Proc.new {
+							putsRealtime "shuffle: #{@shuffle ? 'on' : 'off'}" if @configuredVerbosity >= 1
+						},
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							@shuffle = getToggledValueByInput.call(@shuffle, inputParts[1])
 							shuffleIndex() if @shuffle
-							putsRealtime "shuffle: #{@shuffle ? 'on' : 'off'}" if @configuredVerbosity >= 1
+							command['showStatus'].call
 							{:chainedInput => inputParts[2]}
 						}
 					},
@@ -1193,15 +1200,27 @@ module Tunewich
 						}
 					},
 					'filter' => {
-						'description' => 'Edit filters.',
-						'action' => Proc.new { |input|
+						'description' => 'Set filters (same as -f/--filter). With no arguments, the filters are edited in Vim.',
+						'listFilters' => Proc.new {
+							filtersList = []
+							filtersList += @trackFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackFilters
+							filtersList += @trackExcludeFilters.map { |filter, rule| "-#{filter}=#{rule}" } if @trackExcludeFilters
+							filtersList
+						},
+						'showStatus' => Proc.new { |command|
+							if @trackFilters || @trackExcludeFilters
+								filtersList = command['listFilters'].call()
+								putsRealtime "Current filters:\n" + filtersList.join("\n")
+							else
+								putsRealtime "No filters"
+							end
+						},
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1] && inputParts[1].length > 0
 								filters = parseOptionParameters inputParts[1]
 							else
-								filtersList = []
-								filtersList += @trackFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackFilters
-								filtersList += @trackExcludeFilters.map { |filter, rule| "-#{filter}=#{rule}" } if @trackExcludeFilters
+								filtersList = command['listFilters'].call()
 								filterInstructions = []
 								filterInstructions << Player::FILTER_HELP_1
 								filterInstructions << Player::FILTER_HELP_2
@@ -1225,6 +1244,19 @@ module Tunewich
 
 							filterTracksOnDeck
 							{:chainedInput => inputParts[2]}
+						},
+						'tabComplete' => Proc.new { |input|
+							if input.match(/tag=[^=]*$/)
+								tagListString = input.sub(/tag=([^=]*)$/, '\1')
+								lastTag = tagListString.split(/(,|\s)+/).pop
+								if lastTag && lastTag.length > 0
+									lastTag.sub!(/^\+/, '')
+									pattern = Regexp.new("#{lastTag}$") # assign before calling tagTabComplete
+									tabCompletedTag = tagTabComplete.call(lastTag) # alters lastTag by reference
+									input = input.sub(pattern, tabCompletedTag) if tabCompletedTag
+								end
+							end
+							input
 						}
 					},
 					'exit' => {
@@ -1236,24 +1268,31 @@ module Tunewich
 					},
 					'verbose' => {
 						'description' => 'Set level of verbosity: -1 (silent) to 5 (extra debugging).',
-						'action' => Proc.new { |input|
+						'showStatus' => Proc.new {
+							putsRealtime "verbosity set to #{@configuredVerbosity}"
+						},
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1] && inputParts[1].length > 0
 								@configuredVerbosity = inputParts[1].to_i
 							end
-							putsRealtime "verbosity set to #{@configuredVerbosity}"
+							command['showStatus'].call
+
 							{:chainedInput => inputParts[2]}
 						}
 					},
 					'format' => {
 						'description' => 'Choose the file format to download/stream (e.g. "mp4"; default "m4a").',
+						'showStatus' => Proc.new {
+							putsRealtime "preferred file format: #{@preferredFileFormat}"
+						},
 						'args' => ['m4a', 'mp4', 'bestaudio', 'bestvideo', '[height=720]'],
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1].length > 0
 								@preferredFileFormat = inputParts[1].chomp
 							else
-								putsRealtime "preferred file format: #{@preferredFileFormat}"
+								command['showStatus'].call
 							end
 							{:chainedInput => inputParts[2]}
 						}
@@ -4414,154 +4453,158 @@ module Tunewich
 		def handleInputCharacter inputCharacter, prompt, commands, leftoverAction
 			result = true
 
-			if /[\n\r]/.match inputCharacter
-				inputLine = @commandUserInput
-				@commandUserInput = nil
-				actionResponse = handleInputLine(inputLine, commands, leftoverAction) if inputLine
+			begin
+				if /[\n\r]/.match inputCharacter
+					inputLine = @commandUserInput
+					@commandUserInput = nil
+					actionResponse = handleInputLine(inputLine, commands, leftoverAction) if inputLine
 
-				if actionResponse
-					prompt.call
-				else
+					if actionResponse
+						prompt.call
+					else
+						result = false
+					end
+				elsif inputCharacter == " " && (!@commandUserInput || @commandUserInput.length == 0) # first space
+					togglePlay
+				elsif inputCharacter == "" # control-c character
+					whisper("interrupt character, is that you?", 3)
+					enablePlaybackInfo
 					result = false
-				end
-			elsif inputCharacter == " " && (!@commandUserInput || @commandUserInput.length == 0) # first space
-				togglePlay
-			elsif inputCharacter == "" # control-c character
-				whisper("interrupt character, is that you?", 3)
-				enablePlaybackInfo
-				result = false
-			elsif inputCharacter == "" # backspace
-				if @commandUserInput
-					@commandUserInput = @commandUserInput[0,@commandUserInput.length - 1]
-					if @commandUserInput.length > 0
+				elsif inputCharacter == "" # backspace
+					if @commandUserInput
+						@commandUserInput = @commandUserInput[0,@commandUserInput.length - 1]
+						if @commandUserInput.length > 0
+							printRepeat @commandUserInput
+						else
+							@commandUserInput = nil
+							enablePlaybackInfo;
+						end
+					end
+				elsif inputCharacter == "" # stop job
+					shouldTogglePause = @isPlayerPlaying
+					whisper("before STOP+toggle, shouldTogglePause: #{shouldTogglePause}", 0)
+					togglePlay if shouldTogglePause
+					whisper("before STOP, after toggle, shouldTogglePause: #{shouldTogglePause}", 0)
+					sleep 0.1
+					Process.kill("STOP", Process.pid)
+					# TODO: 1gG4ko: the player usually doesn't unpause :/
+					whisper("after STOP, shouldTogglePause: #{shouldTogglePause}, @isPlayerPlaying: #{@isPlayerPlaying}", 0)
+					togglePlay if shouldTogglePause
+				elsif inputCharacter == "" # clear line
+					if @commandUserInput
+						@commandInputTyped = nil
+						@commandUserInput = ''
 						printRepeat @commandUserInput
-					else
-						@commandUserInput = nil
-						enablePlaybackInfo;
 					end
-				end
-			elsif inputCharacter == "" # stop job
-				shouldTogglePause = @isPlayerPlaying
-				whisper("before STOP+toggle, shouldTogglePause: #{shouldTogglePause}", 0)
-				togglePlay if shouldTogglePause
-				whisper("before STOP, after toggle, shouldTogglePause: #{shouldTogglePause}", 0)
-				sleep 0.1
-				Process.kill("STOP", Process.pid)
-				# TODO: 1gG4ko: the player usually doesn't unpause :/
-				whisper("after STOP, shouldTogglePause: #{shouldTogglePause}, @isPlayerPlaying: #{@isPlayerPlaying}", 0)
-				togglePlay if shouldTogglePause
-			elsif inputCharacter == "" # clear line
-				if @commandUserInput
 					@commandInputTyped = nil
-					@commandUserInput = ''
-					printRepeat @commandUserInput
-				end
-				@commandInputTyped = nil
-			else
-				if not @commandUserInput
-					@commandUserInput = ''
-					disablePlaybackInfo
-					if inputCharacter == '/'
-						@commandinputStartPlayerTime = @currentPlayerTime
-					end
-				end
-
-				if inputCharacter == "\e[A" # up arrow
-					if @commandInputTyped
-						matchingCommands = @commandHistory.select { |command|
-							command.start_with? @commandInputTyped if command
-						}
-						if matchingCommands && matchingCommands.length > 0
-							@commandUserInput = matchingCommands.last
+				else
+					if not @commandUserInput
+						@commandUserInput = ''
+						disablePlaybackInfo
+						if inputCharacter == '/'
+							@commandinputStartPlayerTime = @currentPlayerTime
 						end
-					else
-						@commandHistoryIndex = (@commandHistoryIndex ? @commandHistoryIndex + 1 : 0) % @commandHistory.length
-						@commandUserInput = @commandHistory[@commandHistoryIndex]
 					end
 
-					printRepeat @commandUserInput
-				elsif inputCharacter == "\e[B" # down arrow
-					if @commandInputTyped
-						matchingCommands = @commandHistory.select { |command|
-							command.start_with? @commandInputTyped
-						}
-						if matchingCommands && matchingCommands.length > 0
-							@commandUserInput = matchingCommands.first
+					if inputCharacter == "\e[A" # up arrow
+						if @commandInputTyped
+							matchingCommands = @commandHistory.select { |command|
+								command.start_with? @commandInputTyped if command
+							}
+							if matchingCommands && matchingCommands.length > 0
+								@commandUserInput = matchingCommands.last
+							end
+						else
+							@commandHistoryIndex = (@commandHistoryIndex ? @commandHistoryIndex + 1 : 0) % @commandHistory.length
+							@commandUserInput = @commandHistory[@commandHistoryIndex]
 						end
-					else
-						@commandHistoryIndex = (@commandHistoryIndex ? @commandHistoryIndex - 1 : 0) % @commandHistory.length
-						@commandUserInput = @commandHistory[@commandHistoryIndex]
-					end
 
-					printRepeat @commandUserInput
-				elsif inputCharacter == "\e[C" # right arrow
-					whisper("TODO: move cursor right", 3)
-				elsif inputCharacter == "\e[D" # left arrow
-					whisper("TODO: move cursor left", 3)
-				elsif inputCharacter == "	" # tab
-					whisper("tab completion (TODO: repeat tab to step through matches)", 3)
-					if @commandUserInput[0] == "/"
-						inputCommands = @commandUserInput.sub(/^\//, '').split(/ \//)
-						lastCommandIndex = inputCommands.length - 1
-						if lastCommandIndex > -1
-							inputParts = inputCommands[lastCommandIndex].match(/^(\w+)( (.*))?/)
-							if inputParts
-								commandKeys = commands.keys
-								commandName = inputParts[1]
-								if (
-									commandName &&
-									commandName.length > 0 &&
-									!commands.has_key?(commandName)
-								)
-									newCommandName = firstFuzzyMatchValue commandName, commandKeys
-									if newCommandName
-										commandName = newCommandName 
-									end
-								end
+						printRepeat @commandUserInput
+					elsif inputCharacter == "\e[B" # down arrow
+						if @commandInputTyped
+							matchingCommands = @commandHistory.select { |command|
+								command.start_with? @commandInputTyped
+							}
+							if matchingCommands && matchingCommands.length > 0
+								@commandUserInput = matchingCommands.first
+							end
+						else
+							@commandHistoryIndex = (@commandHistoryIndex ? @commandHistoryIndex - 1 : 0) % @commandHistory.length
+							@commandUserInput = @commandHistory[@commandHistoryIndex]
+						end
 
-								commandInput = inputParts[3] || ''
-
-								if commands.has_key?(commandName)
-									if commandInput.length == 0
-										putsRealtime "\n#{commandName}: #{commands[commandName]['description']}"
-										if commands[commandName].has_key?('showStatus')
-											modifiedCommandInput = commands[commandName]['showStatus'].call(commands[commandName])
-										end
-										if commands[commandName].has_key?('args')
-											putsRealtime "options: #{commands[commandName]['args'].join(", ")}"
+						printRepeat @commandUserInput
+					elsif inputCharacter == "\e[C" # right arrow
+						whisper("TODO: move cursor right", 3)
+					elsif inputCharacter == "\e[D" # left arrow
+						whisper("TODO: move cursor left", 3)
+					elsif inputCharacter == "	" # tab
+						whisper("tab completion (TODO: repeat tab to step through matches)", 3)
+						if @commandUserInput[0] == "/"
+							inputCommands = @commandUserInput.sub(/^\//, '').split(/ \//)
+							lastCommandIndex = inputCommands.length - 1
+							if lastCommandIndex > -1
+								inputParts = inputCommands[lastCommandIndex].match(/^(\w+)( (.*))?/)
+								if inputParts
+									commandKeys = commands.keys
+									commandName = inputParts[1]
+									if (
+											commandName &&
+											commandName.length > 0 &&
+											!commands.has_key?(commandName)
+									)
+										newCommandName = firstFuzzyMatchValue commandName, commandKeys
+										if newCommandName
+											commandName = newCommandName 
 										end
 									end
 
-									if commands[commandName].has_key?('tabComplete')
-										modifiedCommandInput = commands[commandName]['tabComplete'].call(commandInput, commands[commandName])
-										commandInput = modifiedCommandInput if modifiedCommandInput
-									else
+									commandInput = inputParts[3] || ''
 
-										if commands[commandName].has_key?('args')
-											inputParts = commandInput.match(/^([^\/]*)(.*)$/)
-											if inputParts[1] && inputParts[1].length > 0
-												guessArg = firstFuzzyMatchValue(inputParts[1], commands[commandName]['args'])
-												if guessArg && guessArg.length > 0
-													commandInput = commandInput.sub!(inputParts[1], guessArg)
+									if commands.has_key?(commandName)
+										if commandInput.length == 0
+											putsRealtime "\n#{commandName}: #{commands[commandName]['description']}"
+											if commands[commandName].has_key?('showStatus')
+												modifiedCommandInput = commands[commandName]['showStatus'].call(commands[commandName])
+											end
+											if commands[commandName].has_key?('args')
+												putsRealtime "options: #{commands[commandName]['args'].join(", ")}"
+											end
+										end
+
+										if commands[commandName].has_key?('tabComplete')
+											modifiedCommandInput = commands[commandName]['tabComplete'].call(commandInput, commands[commandName])
+											commandInput = modifiedCommandInput if modifiedCommandInput
+										else
+
+											if commands[commandName].has_key?('args')
+												inputParts = commandInput.match(/^([^\/]*)(.*)$/)
+												if inputParts[1] && inputParts[1].length > 0
+													guessArg = firstFuzzyMatchValue(inputParts[1], commands[commandName]['args'])
+													if guessArg && guessArg.length > 0
+														commandInput = commandInput.sub!(inputParts[1], guessArg)
+													end
 												end
 											end
 										end
 									end
+
+									inputCommands[lastCommandIndex] = "#{commandName} #{commandInput}"
 								end
-
-								inputCommands[lastCommandIndex] = "#{commandName} #{commandInput}"
+								@commandUserInput = "/" + inputCommands.join(' /')
+							else
+								putsRealtime "Availble commands: #{commands.keys.join(", ")}\n"
 							end
-							@commandUserInput = "/" + inputCommands.join(' /')
-						else
-							putsRealtime "Availble commands: #{commands.keys.join(", ")}\n"
 						end
+					else
+						@commandUserInput += inputCharacter
+						@commandInputTyped = @commandUserInput
 					end
-				else
-					@commandUserInput += inputCharacter
-					@commandInputTyped = @commandUserInput
-				end
 
-				printRepeat @commandUserInput
+					printRepeat @commandUserInput
+				end
+			rescue Exception => e
+				puts "Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}"
 			end
 
 			result
