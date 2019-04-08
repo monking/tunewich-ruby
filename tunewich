@@ -1998,7 +1998,7 @@ module Tunewich
 			@library['tags'].delete tagName if @library['tags'].has_key? tagName
 		end
 
-		def getNextPlayableChapterIndex chapters, fromIndex
+		def getNextPlayableChapterIndex chapters, fromIndex = -1
 			nextChapterIndex = nil
 			chapters.each_with_index { |chapter, index|
 				if index > fromIndex && (!chapter.has_key?('skip') || !chapter['skip'])
@@ -2066,6 +2066,15 @@ module Tunewich
 				true
 			}
 
+			firstPlayableChapterIndex = nil
+			if track.has_key?('chapters') && track['chapters'].length > 0 && track['chapters'][0]['time']
+				firstPlayableChapterIndex = 0
+				firstChapterStartTime = getSecondsFromDurationString(track['chapters'][0]['time'])
+				if firstChapterStartTime == 0
+					firstPlayableChapterIndex = getNextPlayableChapterIndex track['chapters']
+				end # don't skip if first chapter doesn't start at 0:00
+			end
+
 			if track['mark'] && !liveStreaming
 				puts("Starting from mark at #{track['mark']}.", 0)
 				offsetSeconds = getSecondsFromDurationString track['mark']
@@ -2089,6 +2098,11 @@ module Tunewich
 				else
 					titleBlock "This track has an A/B loop, but looping is not supported while streaming. Add the -d option to enable downloading."
 				end
+			elsif firstPlayableChapterIndex && firstPlayableChapterIndex > 0
+				startTime = getSecondsFromDurationString track['chapters'][firstPlayableChapterIndex]['time']
+				playerStartupOptions << "-ss #{startTime}"
+				whisper("Skipping marked chapters at the beginning.", 2)
+				whisper("-ss #{startTime}", 2)
 			else
 				whisper("No mark, no A/B loop.", 2)
 			end
