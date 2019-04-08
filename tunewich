@@ -54,6 +54,7 @@ module Tunewich
 			@currentChapterIndex = nil
 			@currentlySkippingChapter = nil
 			@trackIndex = nil
+			@trackQuery = nil
 			@tracks = []
 			@configuredVerbosity = 0
 			@verbosityBoost = 0
@@ -101,8 +102,24 @@ module Tunewich
 			if trackTitleListFromLastSession && trackTitleListFromLastSession.length > 0
 				whisper("Using tracks from last session.", 1)
 				useTracks(getTracksFromTitleList(trackTitleListFromLastSession.strip.lines))
+			else
+				useTracks(@library['tracks'].values)
 			end
-			if @library["lastMarked"]
+
+			if @trackQuery
+				if @trackQuery.match(/^[0-9]+$/)
+					@trackIndex = @trackQuery.to_i - 1
+				else
+					@trackIndex = findTrackIndex(@trackQuery) || nil
+				end
+
+				if @trackIndex
+					whisper("Going to track #{@trackIndex + 1}, #{@tracks[@trackIndex]['title']}.", 2)
+				else
+					whisper("Could not find track by query '#{@trackQuery}'.", 0)
+				end
+				@trackQuery = nil
+			elsif @library["lastMarked"]
 				markedTrack = @library["tracks"][@library["lastMarked"]]
 				if markedTrack && markedTrack["mark"]
 					if @tracks.include?(markedTrack)
@@ -117,7 +134,7 @@ module Tunewich
 			end
 
 			if not @trackIndex
-				if @shuffle && !@trackIndex
+				if @shuffle
 					shuffleIndex()
 				else
 					@trackIndex = 0
@@ -4063,17 +4080,8 @@ module Tunewich
 			# 	# TODO 1gTpuh: implement named sessions
 			# end
 
-			parser.on("-t", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).", " ") do |trackQuery|
-				if trackQuery.to_i != 0
-					@trackIndex = trackQuery.to_i - 1
-				else
-					@trackIndex = findTrackIndex(trackQuery) || nil
-					if @trackIndex
-						whisper("Going to track #{@trackIndex + 1}.", 2)
-					else
-						whisper("Could not find track by query '#{trackQuery}'.", 0)
-					end
-				end
+			parser.on("-t INDEX/QUERY", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).", " ") do |trackQuery|
+				@trackQuery = trackQuery
 			end
 
 			parser.on("-U", "--update-track-info", "Fetch updated track information for every track played.", " ") do
