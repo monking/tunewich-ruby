@@ -138,7 +138,7 @@ module Tunewich
 					changesToWrite = true
 				end
 
-				fileExists = fileExistsFromId?(track['src'])
+				fileExists = trackFileExists? track
 
 				if !fileExists && @noNetwork
 					next
@@ -203,7 +203,7 @@ module Tunewich
 				:playtime => 0
 			}
 			mplayerCommands = []
-			fileAlreadyExists = fileExistsFromId? track['src']
+			fileAlreadyExists = trackFileExists? track
 			streaming = !fileAlreadyExists && !@enableDownload && !chapterIndex
 
 			if @noNetwork && !fileAlreadyExists
@@ -250,8 +250,9 @@ module Tunewich
 
 			end
 
-			if not fileAlreadyExists
-
+			if fileAlreadyExists
+        mediaFilePath = findTrackFile track
+      else
 				if streaming
 					streamName = 'youtube-stream'
 					streamPath = mediaFilePath = makeStream streamName
@@ -260,10 +261,7 @@ module Tunewich
 				if not downloadTrack track, streamPath
 					return response
 				end
-
 			end
-
-			mediaFilePath ||= findFileById track['src']
 
 			if not mediaFilePath
 				puts "File not found for #{track['title']}."
@@ -432,20 +430,17 @@ module Tunewich
 			`rm #{getFilePrefixFromId id}*`
 		end
 
-		def countFilesById(id)
-			findFileById(id).lines.length
+		def firstTrackFile(track)
+      files = findTrackFiles(track)
+      files.length ? files[0] : nil
 		end
 
-		def findFileById(id)
-			`ls -1 #{getFilePrefixFromId id}*`.strip
+		def findTrackFiles(track)
+      Dir.glob("#{getFilePrefixFromId track['src']}*")
 		end
 
-		def fileExistsFromId?(id)
-			system "ls -1 #{getFilePrefixFromId id}* &> /dev/null"
-		end
-
-		def fileSizeById(id)
-			`size #{getFilePrefixFromId id}*`
+		def trackFileExists?(track)
+      findTrackFiles(track).length > 0
 		end
 
 		def getFilePrefixFromId(id)
@@ -466,7 +461,7 @@ module Tunewich
 				downloadPid = spawn("#{youtubeDlCommandBegin} -o \"#{getFilePrefixFromId track['src']}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd} &> \"#{downloadFeedbackFile}\"")
 				Process.detach(downloadPid)
 
-				while not fileExistsFromId? track['src'] # FIXME: event driven approach to waiting for a file?
+				while not trackFileExists? track # FIXME: event driven approach to waiting for a file?
 					printRepeat "Fetching video information for download (#{cliRotate})"
 					sleep 0.1
 				end
