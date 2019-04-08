@@ -34,6 +34,7 @@ module Tunewich
 		PLAYER_APPLICATION = 'mplayer'
 		MPLAYER_STDOUT_BUFFER_NAME = 'mplayer-stdout'
 		MPLAYER_INPUT_FIFO_NAME = 'mplayer-input'
+		UNAME = `uname`
 
 		def initialize
 			@library = nil
@@ -389,7 +390,7 @@ module Tunewich
 					updateTrackInfo track
 				end
 
-				whisper "checking if file exists" 
+				whisper "checking if file exists"
 				fileExists = trackFileExists? track
 
 				if !fileExists && @noNetwork
@@ -424,7 +425,7 @@ module Tunewich
 				#  l: copy a link to share the source
 				#  x: remove from library
 				#  d: download
-				whisper "about to play track" 
+				whisper "about to play track"
 				playerOutput = play track, chapterIndex, interactiveCommands
 
 				whisper "I've been asked to exit" if commandRequiresExit
@@ -518,7 +519,7 @@ module Tunewich
 
 				true
 			}
-			whisper "checking again if file exist :[" 
+			whisper "checking again if file exist :["
 			fileAlreadyExists = trackFileExists? track
 			streaming = !fileAlreadyExists && !@enableDownload && !chapterIndex
 
@@ -528,7 +529,7 @@ module Tunewich
 			end
 
 			if track['chapters']
-				whisper "ooh, this track has chapters" 
+				whisper "ooh, this track has chapters"
 
 				if chapterIndex
 
@@ -551,16 +552,16 @@ module Tunewich
 				end
 
 			elsif track['loop'].kind_of?(Array)
-				whisper "ooh, this track has has an A/B loop!" 
+				whisper "ooh, this track has has an A/B loop!"
 
 				if not streaming
 					duration = track['loop'][1] - track['loop'][0]
 
 					# FIXME: this stalls when file is to be downloaded...
-					# whisper "putting a 'seek to the beginning' command in the player command input file" 
+					# whisper "putting a 'seek to the beginning' command in the player command input file"
 					# mplayerAction.call 'seek 0 1'
 
-					whisper "setting some player startup options" 
+					whisper "setting some player startup options"
 					# loop back from B to A
 					mplayerStartupOptions << "-ss #{track['loop'][0]}"
 					mplayerStartupOptions << "-endpos #{duration}"
@@ -589,7 +590,7 @@ module Tunewich
 				return false
 			end
 
-			whisper "Alright, file path is set to play from #{mediaFilePath}" 
+			whisper "Alright, file path is set to play from #{mediaFilePath}"
 
 			if !streamName
 				mplayerStartupOptions << "-loop 0" if track['loop'] or @loop
@@ -888,6 +889,12 @@ module Tunewich
 			downloadPid
 		end
 
+		def notify(message)
+			if UNAME == 'Linux'
+				`notify-send --expire-time=3000 --urgency=low tunewich "#{message}"`
+			end
+		end
+
 		def titleBlock(message, fill = '=', width = 80)
 			blockRow = fill * width
 			padding = '  '
@@ -898,6 +905,7 @@ module Tunewich
 			puts "\n#{blockRow}"
 			puts "#{marginLeft}#{padding}#{message}#{padding}#{marginRight}"
 			puts blockRow
+			notify message
 		end
 
 		##
@@ -1471,7 +1479,7 @@ module Tunewich
 				if sourceLine && sourceLine.length > 0
 					match = sourceLine[0].match sourcePattern
 					source = match[1]
-					whisper "source: #{source}" 
+					whisper "source: #{source}"
 				end
 			end
 
