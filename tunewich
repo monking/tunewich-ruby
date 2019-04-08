@@ -1200,12 +1200,12 @@ module Tunewich
 						## FIXME ^: erroring
 					},
 					'transcode' => {
-						'description' => "[FORMAT]  Transcode downloaded file to another format (default Ogg/Vorbis). This is the same as doing '/format FORMAT /download'.",
+						'description' => "[FORMAT] [FFMPEG_OPTIONS]  Transcode downloaded file to another format (default Ogg/Vorbis). This is the same as doing '/format FORMAT /download'.",
 						'args' => ['vorbis'],
 						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
+              inputParts = getCommandInputParts(input, /^(?<format>\w+)?( (?<options>.*?))?( (?<remainder>\/.*))?$/)
 
-							outputFormat = inputParts[:query] && inputParts[:query].length > 0 ? inputParts[:query] : 'vorbis'
+							outputFormat = inputParts[:format] && inputParts[:format].length > 0 ? inputParts[:format] : 'vorbis'
 
 							trackFiles = findTrackFiles(@currentTrack) if @currentTrack
 							if trackFiles
@@ -1231,6 +1231,8 @@ module Tunewich
 									else
 										outputFileExtension = outputFormat
 									end
+
+									commandArgs << inputParts[:options] if inputParts[:options] if inputParts[:options] && inputParts[:options].length > 0
 
 									outputFilePath = trackFiles[0].sub(/\.[^.]+$/, ".#{outputFileExtension}")
 									commandArgs << "\"#{outputFilePath}\""
