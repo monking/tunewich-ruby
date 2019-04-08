@@ -34,7 +34,7 @@ module Tunewich
 			@libraryHash = nil
 			@sessionID = Random.rand(1024)
 			@trackIndex = nil
-			@tracks = nil
+			@tracks = []
 			@trackFilters = nil
 			@trackExcludeFilters = nil
 			@playlistName = nil
@@ -59,14 +59,6 @@ module Tunewich
 			if not @fileDirectory
 				puts "please specify an input directory with -i"
 				exit
-			end
-
-			if @trackExcludeFilters
-				@tracks = filterTracks @tracks, @trackExcludeFilters, true
-			end
-
-			if @trackFilters
-				@tracks = filterTracks @tracks, @trackFilters
 			end
 
 			if @tracks && @tracks.length > 0
@@ -301,13 +293,29 @@ module Tunewich
 
 					if @youtubeSearchPage
 						@youtubeSearchPage += 1
-						@tracks += searchYouTube(@youtubeSearchQuery, (@youtubeSearchPage - 1) * 20)
+						addTracks searchYouTube(@youtubeSearchQuery, (@youtubeSearchPage - 1) * 20)
 					else
 						@trackIndex %= @tracks.length
 					end
 
 				end
 
+			end
+		end
+
+		def clearTracks
+			@tracks = []
+		end
+
+		def addTracks tracks
+			@tracks += tracks
+
+			if @trackFilters
+				@tracks = filterTracks @tracks, @trackFilters
+			end
+
+			if @trackExcludeFilters
+				@tracks = filterTracks @tracks, @trackExcludeFilters, true
 			end
 		end
 
@@ -539,19 +547,25 @@ module Tunewich
 		def usePlaylist(name)
 			@playlistName = name
 			@playlist = @library['playlists'][@playlistName]
-			@tracks = []
+			clearTracks
+			tracks = []
 
 			@playlist['tracks'].each do |trackReference|
-				@tracks << @library['library'][trackReference]
+				tracks << @library['library'][trackReference]
 			end
+
+			addTracks tracks
 		end
 
 		def useEntireLibrary
-			@tracks = []
+			clearTracks
+			tracks = []
 
 			@library['library'].keys.each do |trackKey|
-				@tracks << @library['library'][trackKey]
+				tracks << @library['library'][trackKey]
 			end
+
+			addTracks tracks
 		end
 
 		def processLibraryJSON(json)
@@ -763,8 +777,7 @@ module Tunewich
 			if filters['last']
 				now = Time.now.to_i
 				watershed = now - getSecondsFromDurationString(filters['last'])
-				puts "matching things played since: #{watershed}" # XXX
-				puts "#{Time.now}, #{Time.now - 86400}"
+				puts "watershed: #{watershed}" # XXX
 				tracks.send(action) { |t|
 					t['played'] ? Time.now.to_i - t['played'] < watershed.to_i : false
 				}
@@ -1003,7 +1016,8 @@ module Tunewich
 
 			parser.on("-q", "--query QUERY", "Search YouTube for a video.") do |query|
 				@youtubeSearch = query
-				@tracks = searchYouTube @youtubeSearch
+				@youtubeSearchPage = 0
+				addTracks searchYouTube @youtubeSearch
 			end
 
 			parser.on("-r", "--rating-prompt SECONDS", "Prompt for a rating after every track plays, waiting SECONDS before continuing to the next track") do |seconds|
