@@ -58,10 +58,10 @@ module Tunewich
 		private
 
 		def getEnvironmentConfig
-			if ENV.key? 'TUNEWICH_MPLAYER_OPTS'
-				@mplayerDefaultOptions = ENV['TUNEWICH_MPLAYER_OPTS']
+			if ENV.key? 'TUNEWICH_PLAYER_OPTS'
+				@mplayerDefaultOptions = ENV['TUNEWICH_PLAYER_OPTS']
 			else
-				puts "You can add `export TUNEWICH_MPLAYER_OPTS=\"<mplayer options>\"` to your ~/.profile or similar file."
+				puts "You can add `export TUNEWICH_PLAYER_OPTS=\"<player options>\"` to your ~/.profile or similar file. Default player is #{Player::PLAYER_APPLICATION}."
 			end
 
 			if ENV.key? 'TUNEWICH_DIR'
@@ -252,7 +252,7 @@ module Tunewich
 					}
 				},
 				'commands' => {
-					'info' => 'List mplayer commands.',
+					'info' => "List #{Player::PLAYER_APPLICATION} commands.",
 					'action' => Proc.new {
 						system "#{Player::PLAYER_APPLICATION} -input cmdlist"
 					}
@@ -495,7 +495,7 @@ module Tunewich
 			mplayerStdoutFile = getTempFilePath Player::MPLAYER_STDOUT_BUFFER_NAME
 
 			inputThread = Thread.new {
-				commandPrompt "mplayer", interactiveCommands, mplayerAction
+				commandPrompt Player::PLAYER_APPLICATION, interactiveCommands, mplayerAction
 			}
 			mplayerThread = Thread.new {
 				mplayerCommand = "#{Player::PLAYER_APPLICATION} \"#{mediaFilePath}\" #{mplayerStartupOptions.join ' '} &> #{mplayerStdoutFile}"
@@ -736,7 +736,7 @@ module Tunewich
 
 				while true
 					output = tailTempFile downloadFeedbackFileName
-					# FIXME: get mplayer to play the whole file, even if only part is downloaded when it starts
+					# FIXME: get player to play the whole file, even if only part is downloaded when it starts
 					# if trackDuration
 					# 	etaMatch = output.match(/ETA ([0-9:]+)/)
 					# 	if etaMatch
