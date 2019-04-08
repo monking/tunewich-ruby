@@ -2692,6 +2692,7 @@ module Tunewich
 				return if !confirm("Write changes to library?")
 			end
 			libraryJSON = JSON.pretty_generate(@library)
+			# FIXME 1gpb0C
 			if not libraryJSON || libraryJSON == 'null' || libraryJSON.length < 1
 				putsRealtime "Sorry! The loaded library has been corrupted. Please restart the player if you want to save any changes to your library."
 				return

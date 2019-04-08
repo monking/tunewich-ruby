@@ -67,6 +67,22 @@
 - [ ] 1gpapl: killing the @inputThread if it's truthy. overkill?
 - [ ] TODO 1gparD: output youtube-dl error messages to user
 	- e.g. `ERROR: requested format not available`
+- [ ] FIXME 1gpb0C: Somehow the library is being written as a completely empty string, despite this check.
+- [ ] FIXME 1gpbAe: somehow this entry got into the library JSON tracks object: `"undefined": "nhTdDLVS_Sk"`, and again somehow it is referenced again and again, resulting in this error:
+	```
+	tunewich:2325:in `extendHash': undefined method `each' for "nhTdDLVS_Sk":String (NoMethodError)
+					from tunewich:2334:in `block in matchExistingLibraryTrack'
+					from tunewich:2332:in `each'
+					from tunewich:2332:in `matchExistingLibraryTrack'
+					from tunewich:2683:in `block in loadLibrary'
+					from tunewich:2682:in `each'
+					from tunewich:2682:in `each_with_index'
+					from tunewich:2682:in `loadLibrary'
+					from tunewich:1589:in `interactivePlayback'
+					from tunewich:140:in `initialize'
+					from tunewich:4157:in `new'
+					from tunewich:4157:in `<main>'
+	```
 
 ## notes
 
