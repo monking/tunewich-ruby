@@ -914,8 +914,8 @@ module Tunewich
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							newChapter = {
-								'time' => '0:00',
-								'name' => getDurationStringFromSeconds(@commandinputStartPlayerTime)
+								'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime),
+								'name' => inputParts[1]
 							}
 
 							if not @currentTrack['chapters']
