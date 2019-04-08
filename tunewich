@@ -19,6 +19,8 @@ module Tunewich
 			@trackFilters = nil
 			@playlistName = nil
 			@playlist = nil
+			@enableDownload = false
+			@keepUnattachedDownload = false
 
 			if ENV.key? 'TUNEWICH_DIR'
 				setLibraryPath ENV['TUNEWICH_DIR']
@@ -89,6 +91,9 @@ module Tunewich
 			end
 			parser.on("-d", "--enable-download", "Enable downloading files when encountering a playlist file without a cached file already download.") do
 				@enableDownload = true
+			end
+			parser.on("-D", "--keep-download", "Keep the downloaded file. Normally the file will be removed after playback, unless it belongs to a playlist.") do
+				@keepUnattachedDownload = true
 			end
 			parser.on("-f", "--filter RULES", "Filter by rules, in the format 'name=value,name=value'. Available rules are: min-rating=[0-5],title=[query],chapters.") do |rules|
 				@trackFilters = parseOptionParameters rules
@@ -290,8 +295,7 @@ module Tunewich
 
 		def play(track, chapterIndex)
 			mplayerCommands = []
-
-			fileExists = fileExistsFromID? track['src']
+			fileExists = fileExistsFromId? track['src']
 			streaming = !fileExists && !@enableDownload
 
 			if track['chapters']
@@ -336,7 +340,7 @@ module Tunewich
 				end
 			end
 
-			mediaFilePath ||= findFile track['src']
+			mediaFilePath ||= findFileById track['src']
 
 			if !streamName
 				mplayerCommands.push("-loop 0") if track['loop'] or @loop
@@ -358,17 +362,27 @@ module Tunewich
 				writeLibraryToFile
 			end
 
-			deleteStream streamName if streamName
-			deleteTempFile 'mplayer-input'
+			if streaming
+				deleteStream streamName
+			elsif track['unattached'] && !@keepUnattachedDownload
+				deleteFileById track['src']
+				titleBlock "DELETED FILE", 'X'
+			end
+
+			deleteTempFile 'mplayer-input' if mplayerInputFile
 
 			mplayerStatus
 		end
 
-		def findFile(id)
+		def deleteFileById(id)
+			`rm #{getFilePrefixFromId id}*`
+		end
+
+		def findFileById(id)
 			`ls -1 #{getFilePrefixFromId id}*`.strip
 		end
 
-		def fileExistsFromID?(id)
+		def fileExistsFromId?(id)
 			system "ls -1 #{getFilePrefixFromId id}*"
 		end
 
@@ -410,12 +424,6 @@ module Tunewich
 
 		def getTempFilePath(name)
 			"/tmp/tunewich-#{@sessionID}-#{name}"
-		end
-
-		def putInTempFile(name, value)
-			path = getTempFilePath name
-			File.write(path, value)
-			path
 		end
 
 		def putInTempFile(name, value)
@@ -496,7 +504,8 @@ module Tunewich
 
 		def createTrack id, getInfo = true
 			track = {
-				'src' => id
+				'src' => id,
+				'unattached' => true
 			}
 
 			if getInfo
@@ -529,6 +538,7 @@ module Tunewich
 		end
 
 		def addTrackToLibrary track
+			track.delete 'unattached' if track.has_key? 'unattached'
 			trackReference = track['src']
 			@library['library'][trackReference] ||= track
 
