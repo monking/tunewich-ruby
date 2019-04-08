@@ -1,6 +1,47 @@
 #!/usr/bin/env ruby
 
-# TODO: fix /edit swapping first and last tracks
+## TODO:
+# - [ ] fix /edit swapping first and last tracks #1pnp8J9btX6
+# - [ ] optionally use common factors or time signatures to find other good ratios #1pnp8VG9YA4
+# - [ ] change any scoped variables referenced to trigger events with data, if needed, and move this into a static object on Player, or several (base, playing, editing) #1pnpJF2KIY4
+#   - [x] bindingGroupName
+# - [ ] generalized function to list playlists, their track count, and the average rating among rated tracks #1pnpKMgOD2m
+# - [ ] getDownloadCommand, bind download_complete, etc. #1pnpL0cTQwS
+# - [ ] check if editChapter was successful #1pnpL3Do9W4
+# - [ ] it would be nice to make the chapter, if the intent is clear. #1pnpL5bWrGa
+# - [ ] same as sortChapters, combine? #1pnpLF55sNk
+# - [ ] use the 'turn' command to only sort tracks by their #1pnpLRdDbCi
+#   similarity to the filter, rather than removing those that don't
+#   match
+#
+#   possible solutions:
+#   - add a paramter to make `filterTracks` only sort, and not `keep_if`/`delete_if`
+#   - compartmentalize sort and inclusion/exclusion aspects of different filters
+#	  	- make another function that uses only the sort parts
+#	  	- call this function in the 'turn' command
+# - [ ] seek to either a chapter or a note #1pnpLuPzN72
+#   - make chapter functions generic
+#   - search among chapters and notes as a flat list
+# - [ ] [Toggle ON/off] Change next track's playback speed to BPM of a current track. If either track does not have BPM metadata, then the curent playback speed is maintained. #1pnpMNOiSmO
+# - [ ] add @currentTrack to queue #1pnpN3wDVqi
+# - [ ] catch SIGINT (ctrl+c) & prompt for playlist again #1pnpN6rMo7U
+# - [ ] I shouldn't need to check twice #1pnpNACYZQO
+# - [ ] fade out and skip to next track (i.e. quit player) #1pnpNCgNj0y
+# - [ ] get time position without unpausing #1pnpNEtDDLE
+# - [ ] maybe this needs pausing_keep (http://www.mplayerhq.hu/DOCS/tech/slave.txt). doesn't quite work in my testing #1pnpNHGx9JY
+# - [ ] find places where stuff is not being saved, and do matchExistingLibraryTrack first #1pnpNSNN0Hw
+# - [ ] add a tag fuzzy factor: include tags of tracks that have the current tag (only 1 degree separation to start) #1pnpNUIDYRc
+# - [ ] make a list of IDs and filter tracks against it once, rather than filtering separately for each tag #1pnpNWljGG8
+# - [ ] getOCRemixSource url #1pnpNaBZyEi
+# - [ ] ruby probably has an easier way of getting an element index in an Array#map block #1pnpNcT25tY
+# - [ ] stream to a network radio service (SERVER_TYPE: default 'homebrew' or 'Nicecast'", " ") do |streamingServerType = 'homebrew'| #1pnpNkTKjoO
+# - [ ] application/rss+xml, application/rdf+xml;q=0.8, application/atom+xml;q=0.6, application/xml;q=0.4, text/xml;q=0.4 #1pnpOj709xo
+# - [ ] parse normal & negated options from one list #1pnpOluGteS
+#   hash = {
+#   	:normal => [],
+#   	:negate => []
+#   }
+# - [ ] also stop mplayer #1pnpP3BJJnE
 
 require "io/console" # STDIN.getch
 require "open-uri" # URI
@@ -245,8 +286,7 @@ module Tunewich
 		end
 
 		def findBPMRatio firstTrack, secondTrack
-			# TODO: optionally use common factors or time signatures to find other
-			# good ratios
+			# TODO: 1pnp8VG9YA4
 			ratio = 1
 			if not firstTrack.has_key? 'bpm'
 				whisper("The first track being compared doesn't have BPM set.", 2)
@@ -264,7 +304,6 @@ module Tunewich
 		end
 
 		def editChapter chapter
-			# TODO: set chapter rating
 			editableChapterInfo = chapter # want to pass this by value, not by reference
 			editableChapterInfo['name'] = '<empty>' if !editableChapterInfo.has_key? 'name'
 			editableChapterInfo['skip'] = 'false' if !editableChapterInfo.has_key? 'skip'
@@ -294,8 +333,7 @@ module Tunewich
 		end
 
 		def getInteractiveCommands modes = [], bindingGroupName
-			# TODO: change any scoped variables referenced to trigger events with data, if needed, and move this into a static object on Player, or several (base, playing, editing)
-			# - [x] bindingGroupName
+			# TODO: 1pnpJF2KIY4
 			interactiveCommands = {
 				'base' => {
 					'wait' => {
@@ -468,7 +506,7 @@ module Tunewich
 					'list' => {
 						'description' => "Load a playlist. (not chainable)",
 						'action' => Proc.new { |input|
-							# TODO: generalized function to list playlists, their track count, and the average rating among rated tracks
+							# TODO: 1pnpKMgOD2m
 							whisper("playlistQuery: #{input}", 4)
 							playlistNames = @library['playlists'].keys
 							if input && input.length > 0
@@ -687,7 +725,7 @@ module Tunewich
 					'download' => {
 						'description' => "Download the current track for faster play in the future. Optional 'get' parameter prints the download shell command instead.",
 						'action' => Proc.new { |input|
-							# TODO: getDownloadCommand, bind download_complete, etc.
+							# TODO: 1pnpL0cTQwS
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
 							if inputParts[1] == 'get'
@@ -869,7 +907,7 @@ module Tunewich
 									chapter = @currentTrack['chapters'][chapterIndex]
 									whisper("About to edit chapter #{chapter}", 3)
 									chapter = editChapter chapter
-									# TODO: check if editChapter was successful
+									# TODO: 1pnpL3Do9W4
 									@currentTrack['chapters'][chapterIndex] = chapter
 									@currentTrack['chapters'] = sortChapters @currentTrack['chapters']
 									writeLibraryToFile
@@ -878,7 +916,7 @@ module Tunewich
 									putsRealtime "Unable to find the chapter you want to edit."
 								end
 							else
-								putsRealtime "No chapters to edit. Use /mkchapter to create chapters." # TODO: it would be nice to make the chapter, if the intent is clear.
+								putsRealtime "No chapters to edit. Use /mkchapter to create chapters." # TODO: 1pnpL5bWrGa
 							end
 
 							{:chainedInput => inputParts[2]}
@@ -1112,12 +1150,12 @@ module Tunewich
 									note['text'] = editListInVim([], 'Write your note').join "\n"
 								end
 								@currentTrack['notes'] << note
-								@currentTrack['notes'].sort! { |a, b| getSecondsFromDurationString(a['time']) <=> getSecondsFromDurationString(b['time']) } # TODO: same as sortChapters, combine?
+								@currentTrack['notes'].sort! { |a, b| getSecondsFromDurationString(a['time']) <=> getSecondsFromDurationString(b['time']) } # TODO: 1pnpLF55sNk
 								notesChanged = true
 							end
 
 							if notesChanged
-								@currentTrack['notes'].sort! { |a, b| getSecondsFromDurationString(a['time']) <=> getSecondsFromDurationString(b['time']) } # TODO: same as sortChapters, combine?
+								@currentTrack['notes'].sort! { |a, b| getSecondsFromDurationString(a['time']) <=> getSecondsFromDurationString(b['time']) } # TODO: 1pnpLF55sNk
 								addTrackToLibrary @currentTrack if @currentTrack['unattached']
 								writeLibraryToFile
 							end
@@ -1299,15 +1337,7 @@ module Tunewich
 						}
 					},
 					'turn' => {
-						# TODO: use the 'turn' command to only sort tracks by their
-						# similarity to the filter, rather than removing those that don't
-						# match
-						#
-						# possible solutions:
-						# - add a paramter to make `filterTracks` only sort, and not `keep_if`/`delete_if`
-						# - compartmentalize sort and inclusion/exclusion aspects of different filters
-						#		- make another function that uses only the sort parts
-						#		- call this function in the 'turn' command
+						# TODO: 1pnpLRdDbCi
 						'description' => "Use all this track's tags to populate the track list.",
 						'action' => Proc.new { |input|
 							trackTags = getTrackTags @currentTrack
@@ -1362,9 +1392,7 @@ module Tunewich
 									end
 								else
 									whisper("Failed to get seconds from input '#{seekInput}'")
-									# TODO: seek to either a chapter or a note
-									#		- make chapter functions generic
-									#		- search among chapters and notes as a flat list
+									# TODO: 1pnpLuPzN72
 								end
 
 								if seekTimeInSeconds
@@ -1444,7 +1472,7 @@ module Tunewich
 						}
 					},
 					'fixbpm' => {
-						'description' => "TODO: [Toggle ON/off] Change next track's playback speed to BPM of a current track. If either track does not have BPM metadata, then the curent playback speed is maintained.",
+						'description' => "TODO: [Toggle ON/off] Change next track's playback speed to BPM of a current track. If either track does not have BPM metadata, then the curent playback speed is maintained.", #1pnpMNOiSmO
 						'action' => Proc.new { |input|
 							@fixbpm = !@fixbpm
 							putsRealtime "TODO: fixbpm #{@fixbpm ? "on" : "off"}"
@@ -1467,7 +1495,7 @@ module Tunewich
 							if !@trackIndex
 								useTracks [@currentTrack]
 								@trackIndex = @tracks.length - 1
-								# TODO: add @currentTrack to queue
+								# TODO: 1pnpN3wDVqi
 							end
 							{:chainedInput => input}
 						}
@@ -1520,7 +1548,7 @@ module Tunewich
 				useEntireLibrary
 			end
 
-			# TODO: catch SIGINT (ctrl+c) & prompt for playlist again
+			# TODO: 1pnpN6rMo7U
 			playerOutput = nil
 
 			interactiveCommands = getInteractiveCommands [@userMode], bindingGroupName
@@ -1885,7 +1913,7 @@ module Tunewich
 		end
 
 		def play(track, interactiveCommands)
-			fileAlreadyExists = !@forceStreaming && trackFileExists?(track) # TODO: I shouldn't need to check twice
+			fileAlreadyExists = !@forceStreaming && trackFileExists?(track) # TODO: 1pnpNACYZQO
 			streaming = @forceStreaming || (!fileAlreadyExists && !@enableDownload)
 
 			if @noNetwork && !fileAlreadyExists
@@ -2059,14 +2087,14 @@ module Tunewich
 					if nextNonSkippingChapter
 						seekToChapter nextNonSkippingChapter, 0.25, 0.25
 					else
-						# TODO: fade out and skip to next track (i.e. quit player)
+						# TODO: 1pnpNCgNj0y
 					end
 					@currentlySkippingChapter = nil
 				end
 			}, bindingGroupName)
 			while @playerApplicationThreads[@currentPlayerIndex].alive?
 				playerResponseDelay = 0.1
-				# TODO: get time position without unpausing
+				# TODO: 1pnpNEtDDLE
 				playerTimeResponse = getMplayerProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(.*?)(\?)?$/, playerResponseDelay)
 				if playerTimeResponse
 					@currentPlayerTime = playerTimeResponse.to_f
@@ -2167,7 +2195,7 @@ module Tunewich
 				pattern ||= /^()(.*)$/
 				command = "#{property}\n"
 				command = "get_property #{command}" if not property.match(/^get_/)
-				# TODO: maybe this needs pausing_keep (http://www.mplayerhq.hu/DOCS/tech/slave.txt). doesn't quite work in my testing
+				# TODO: 1pnpNHGx9JY
 				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", command
 				sleep responseDelay if responseDelay
 				lastPlayerOutput = tailTempFile "#{Player::MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
@@ -2176,6 +2204,9 @@ module Tunewich
 					matches = lastPlayerOutput.match pattern
 					output = matches[2] if matches
 				end
+      else
+        # don't use 100% CPU while doing nothing
+				sleep responseDelay if responseDelay
 			end
 			output
 		end
@@ -2621,7 +2652,7 @@ module Tunewich
 			end
 		end
 
-		# TODO: find places where stuff is not being saved, and do matchExistingLibraryTrack first
+		# TODO: 1pnpNSNN0Hw
 		def writeLibraryToFile shouldPrompt = false
 			if shouldPrompt && !@writeEnabled
 				return if !confirm("Write changes to library?")
@@ -2761,7 +2792,7 @@ module Tunewich
 
 			if filters.has_key? 'tag'
 				if filters['tag']
-					# TODO: add a tag fuzzy factor: include tags of tracks that have the current tag (only 1 degree separation to start)
+					# TODO: 1pnpNUIDYRc
 					selectedTags = []
 					unionTagTracks = []
 					filterTags = filters['tag'].split(' ')
@@ -2795,7 +2826,7 @@ module Tunewich
 
 					whisper("filtering for tags: #{selectedTags}", 4)
 					if selectedTags.length > 0
-						# TODO: make a list of IDs and filter tracks against it once, rather than filtering separately for each tag
+						# TODO: 1pnpNWljGG8
 						selectedTags.each { |tagInfo|
 							tracks.send(action) { |t| tagInfo[:tag]['tracks'] && tagInfo[:tag]['tracks'].index(t['id']) || unionTagTracks.index(t['id']) }
 						}
@@ -2935,7 +2966,7 @@ module Tunewich
 				newTrack['src'] = looksLikeAYouTubeID?(url) ? url : getYoutubeIdFromUrl(url)
 				newTrack['id'] = newTrack['src']
 			elsif type == 'ocremix'
-				newTrack['src'] = url # TODO: getOCRemixSource url
+				newTrack['src'] = url # TODO: 1pnpNaBZyEi
 				newTrack['id'] = getIDFromOCRemixURL url
 			else
 				newTrack['src'] = url
@@ -3327,7 +3358,7 @@ module Tunewich
 			end
 
 			parser.on("--player-opts OPTIONS", "Set player options. Set interactively with the /player command.", " ") do |options|
-				# TODO: ruby probably has an easier way of getting an element index in an Array#map block
+				# TODO: 1pnpNcT25tY
 				isFirstElement = true
 				@playerOverrideCommands += options.split(' -').map { |option|
 					if isFirstElement
@@ -3339,7 +3370,7 @@ module Tunewich
 				}
 			end
 
-			parser.on("--radio [SERVER_TYPE]", "TODO: stream to a network radio service (SERVER_TYPE: default 'homebrew' or 'Nicecast'", " ") do |streamingServerType = 'homebrew'|
+			parser.on("--radio [SERVER_TYPE]", "TODO: stream to a network radio service (SERVER_TYPE: default 'homebrew' or 'Nicecast'", " ") do |streamingServerType = 'homebrew'| #1pnpNkTKjoO
 				if !streamingServerType || streamingServerType.length == 0
 					streamingServerType = 'homebrew'
 				end
@@ -3535,7 +3566,7 @@ module Tunewich
 						urlCanBeScraped = false
 						soundcloudTracks = loadSoundcloud url
 						tracks += soundcloudTracks if soundcloudTracks
-					elsif urlContentType && ['text/xml', 'application/rss+xml'].include?(urlContentType) # TODO: application/rss+xml, application/rdf+xml;q=0.8, application/atom+xml;q=0.6, application/xml;q=0.4, text/xml;q=0.4
+					elsif urlContentType && ['text/xml', 'application/rss+xml'].include?(urlContentType) # TODO: 1pnpOj709xo
 						whisper("WIP: try to load podcast feed")
 						urlCanBeScraped = false
 						podcastTracks = loadPodcast url
@@ -3660,11 +3691,7 @@ module Tunewich
 
 		def parseOptionParameters serialized
 			hash = {}
-			# TODO: parse normal & negated options from one list
-			# hash = {
-			# 	:normal => [],
-			# 	:negate => []
-			# }
+			# TODO: 1pnpOluGteS
 
 			serialized.split(',').each { |clump|
 				pair = clump.split '='
@@ -3803,7 +3830,7 @@ module Tunewich
 					end
 				elsif inputCharacter == "" # stop job
 					Process.kill("STOP", Process.pid)
-					# TODO: also stop mplayer
+					# TODO: 1pnpP3BJJnE
 				elsif inputCharacter == "" # clear line
 					if input
 						@commandInputTyped = nil
