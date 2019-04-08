@@ -578,13 +578,6 @@ module Tunewich
 				#  x: remove from library
 				#  d: download
 				playerOutput = play track, chapterIndex, interactiveCommands
-				minimumPlayTime = getSecondsFromDurationString(track['duration']) / 2
-				track['lastPlayed'] = playerOutput[:endTime].to_i
-				track['playTime'] ||= 0
-				track['playTime'] += playerOutput[:playTime].to_i
-				track['playCount'] ||= 0
-				track['playCount'] += 1
-				writeLibraryToFile true
 
 				track['playTime'] ||= 0
 				track['playTime'] += playerOutput[:playTime].to_i
