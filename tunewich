@@ -758,6 +758,9 @@ module Tunewich
         {
           'description' => "#{property.upcase} [DURATION] - Blend to #{property}",
           'args' => ['out', 'in'],
+          'showStatus' => Proc.new { |input, command|
+            putsRealtime "#{property}: #{@currentVisualEffects[property]}"
+          },
           'action' => Proc.new { |input, command|
             inputParts = getCommandInputParts input, /^(?<target>out|in|[0-9.-]+)( (?<duration>[0-9.]+))?[^\/]*(?<remainder>.*)$/
             if inputParts[:target]
@@ -881,8 +884,9 @@ module Tunewich
                   writeLibraryToFile
                 else
                   output[:chainedInput] = inputParts[:remainder]
-                  if @library['commandMacros'].has_key?(inputParts[:name])
-                    output[:chainedInput] = "#{@library['commandMacros'][inputParts[:name]]} #{output[:chainedInput]}"
+                  macroName = firstFuzzyMatchValue(inputParts[:name], @library['commandMacros'].keys)
+                  if @library['commandMacros'].has_key?(macroName)
+                    output[:chainedInput] = "#{@library['commandMacros'][macroName]} #{output[:chainedInput]}"
                   end
                 end
               else
@@ -1366,14 +1370,16 @@ module Tunewich
             }
           },
           'add' => {
-            'description' => 'Add a new track to the play queue. Input: <URL>[,<URL>,...] [<TAG>[,<TAG>,...]] -- URLs: comma-separated URLs or YouTube IDs (Some URLs will add multiple tracks, like a bandcamp album (or TODO: YouTube playliist); tags: comma-separated tags to add to the tracks.',
+            'description' => '[all] <URL>[,<URL>,...] [<TAG>[,<TAG>,...]] - Add a new track to the play queue. URLs: comma-separated URLs or YouTube IDs (Some URLs will add multiple tracks, like a bandcamp album (or TODO: YouTube playliist); tags: comma-separated tags to add to the tracks.',
+            'args' => ['all'],
             'action' => Proc.new { |input, command|
-              inputParts = getCommandInputParts(input, /^(?<query>[^ ]*?)(?<tags> .*?)?(?<remainder> \/.*)?$/)
+              inputParts = getCommandInputParts(input, /^((?<all>all) *)?(?<query>[^ ]*?)(?<tags> .*?)?(?<remainder> \/.*)?$/)
               urls = inputParts[:query].split ',' if inputParts[:query]
               tags = inputParts[:tags].split ',' if inputParts[:tags]
+              getAllVideos = (inputParts[:all] && inputParts[:all] == 'all')
               whisper("urls: #{urls}\ntags: #{tags}", 3)
               if urls && urls.length > 0
-                tracks = getTracksFromURLs urls
+                tracks = getTracksFromURLs urls, getAllVideos
                 putsRealtime "Adding #{tracks.length} tracks to queue. Playing next."
                 if tracks.length && tags && tags.length > 0
                   tracks.each { |t|
@@ -4436,7 +4442,7 @@ module Tunewich
       end
     end
 
-    def getTracksFromURLs(urls, onePerUrl = true)
+    def getTracksFromURLs(urls, getAll = false)
       tracks = []
 
       getHTTPHeaderByPattern = Proc.new { |head, pattern|
@@ -4497,7 +4503,7 @@ module Tunewich
         end
 
         begin
-          if urlCanBeScraped && !onePerUrl
+          if urlCanBeScraped && getAll
             youTubeTracks = getYouTubeTracksFromPage url
             tracks.concat youTubeTracks if youTubeTracks
           end
