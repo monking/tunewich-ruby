@@ -175,8 +175,8 @@ module Tunewich
 				playerOutput = play track, chapterIndex
 
 				if playerOutput
-					if (@playthroughThreshold && playerOutput[:playtime] > @playthroughThreshold)
-						puts "Played more than #{@playthroughThreshold}s, saving to library."
+					if (@writeAfterSecondsPlayed && playerOutput[:playtime] > @writeAfterSecondsPlayed)
+						puts "Played more than #{@writeAfterSecondsPlayed}s, saving to library."
 						loadLibrary
 						track = matchExistingLibraryTrack track
 						track['played'] = Time.now.to_i
@@ -185,7 +185,7 @@ module Tunewich
 						changesToWrite = true
 					end
 
-					if !track['unattached'] && @ratingsPromptDuration
+					if @ratingsPromptDuration
 						input = timedTextPrompt @ratingsPromptDuration, "rating/tags (#{track['rating']}): "
 
 						if input && input.length
@@ -202,10 +202,10 @@ module Tunewich
 							if new_rating
 								track['rating'] = new_rating
 								@tracks[@trackIndex] = track # FIXME: set up @tracks to reference @library
-								changesToWrite = true
+								changesToWrite = true if !track['unattached'] || new_rating > 0
 							end
 
-							if tags.length
+							if tags.length > 0
 								addTrackToTags track, tags
 								changesToWrite = true
 							end
@@ -213,7 +213,7 @@ module Tunewich
 					end
 				end
 
-				writeLibraryToFile if changesToWrite # uncomment
+				writeLibraryToFile if changesToWrite
 
 				filterTracksOnDeck
 
@@ -687,7 +687,10 @@ module Tunewich
 			end
 		end
 
-		def writeLibraryToFile
+		def writeLibraryToFile forceWritable = nil
+			if !forceWritable && !@writeEnabled
+				return if forceWritable == false || !confirm("Write changes to library?")
+			end
 			libraryJSON = JSON.pretty_generate(@library)
 			libraryOnFile = processLibraryJSON File.read(@libraryFilePath)
 			if @libraryHash == libraryOnFile[:hash] || confirm("Library file has changed since last load. Overwrite?")
@@ -859,7 +862,7 @@ module Tunewich
 
 			confirmMsg = "Choose a command, or \"y\" to write changes to file"
 			if confirm confirmMsg, commands
-				writeLibraryToFile
+				writeLibraryToFile true
 			else
 				puts "No changes saved."
 			end
@@ -1160,7 +1163,8 @@ module Tunewich
 			end
 
 			parser.on("-w", "--write [SECONDS]", "Save changes to the library. If SECONDS are given, only tracks played that many seconds will be written.", " ") do |seconds|
-				@playthroughThreshold = seconds ? seconds.to_f : 0.0
+				@writeEnabled = true
+				@writeAfterSecondsPlayed = seconds ? seconds.to_f : 0.0
 			end
 
 			parser.on("-x", "--exclude-filter RULES", "Excludes tracks matching the rules. See --filter", " ") do |rules|
@@ -1185,7 +1189,7 @@ module Tunewich
 			output
 		end
 
-		def doOptionSecondaryActions options
+		def doOptionSecondaryActions optionsOutput
 
 			if not @fileDirectory
 				puts "please specify an input directory with -i"
@@ -1197,19 +1201,19 @@ module Tunewich
 				useTracks searchYouTube @youtubeSearch
 			end
 
-			if options.has_key? :interactiveCleanup
+			if optionsOutput.has_key? :interactiveCleanup
 				interactiveCleanup
 				exit
 			end
 
-			if options.has_key? :playlistQuery
-				if options[:playlistQuery]
-					match = firstFuzzyMatch options[:playlistQuery], @library['playlists'].keys
+			if optionsOutput.has_key? :playlistQuery
+				if optionsOutput[:playlistQuery]
+					match = firstFuzzyMatch optionsOutput[:playlistQuery], @library['playlists'].keys
 
 					if match && match[:score] > 1 # FIXME: what's a good baseline score for a playlist match?
 						playlistName = match[:value]
-					elsif confirm("Create new playlist #{options[:playlistQuery]}?")
-						playlistName = options[:playlistQuery]
+					elsif confirm("Create new playlist #{optionsOutput[:playlistQuery]}?")
+						playlistName = optionsOutput[:playlistQuery]
 					end
 				elsif @youtubeSearch
 					playlistName = @youtubeSearch
@@ -1226,12 +1230,15 @@ module Tunewich
 				end
 			end
 
-			if options.has_key? :newTracks
-				options[:newTracks].each { |newTrack|
-					trackReference = addTrackToLibrary newTrack
-					addTrackReferenceToPlaylist trackReference, @playlistName if @playlistName
+			if optionsOutput.has_key? :newTracks
+				optionsOutput[:newTracks].each { |newTrack|
+					if 0 == @writeAfterSecondsPlayed
+						trackReference = addTrackToLibrary newTrack
+						addTrackReferenceToPlaylist trackReference, @playlistName if @playlistName
+					end
+					@tracks << newTrack
 				}
-				writeLibraryToFile
+				writeLibraryToFile false
 			end
 		end
 
