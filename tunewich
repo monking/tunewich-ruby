@@ -88,8 +88,9 @@ module Tunewich
 			@tempFiles = {}
 			@loop = false
 			@loopLimit = 0
-			@lastLoop = [nil, 0] # [name, count}
 			@breakLoop = false
+
+			resetLastLoop
 
 			getConfigFiles
 
@@ -785,16 +786,7 @@ module Tunewich
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1] && inputParts[1].length > 0
-								trackIndexOffset = getOffsetFromInputString inputParts[1]
-								newTrackIndex = @trackIndex
-								if trackIndexOffset
-									newTrackIndex += trackIndexOffset
-								elsif inputParts[1].to_i == 0
-									newTrackIndex = findTrackIndex inputParts[1]
-								else
-									newTrackIndex = inputParts[1].to_i - 1 % @tracks.length
-								end
-								@trackIndex = newTrackIndex if newTrackIndex
+								@trackIndex = findTrackIndex inputParts[1]
 							end
 							{:chainedInput => inputParts[2]}
 						},
@@ -831,16 +823,7 @@ module Tunewich
 							track = nil
 							trackIndex = nil
 							if inputParts[1] && inputParts[1].length > 0
-								trackIndexOffset = getOffsetFromInputString inputParts[1]
-								if trackIndexOffset
-									whisper("trackIndexOffset: #{trackIndexOffset}", 3)
-									whisper("@trackIndex: #{@trackIndex}", 3)
-									trackIndex = @trackIndex + trackIndexOffset - 1 # @trackIndex is the _next_ track; subtract 1 from the offset so that '>' -> 0
-								elsif inputParts[1].to_i == 0
-									trackIndex = findTrackIndex(inputParts[1])
-								else
-									trackIndex = inputParts[1].to_i - 1
-								end
+								trackIndex = findTrackIndex(inputParts[1])
 								track = @tracks[trackIndex] if trackIndex
 							else
 								# the user may have altered the track list, so that it no longer includes the currently playing track
@@ -925,7 +908,8 @@ module Tunewich
 							end
 
 							{:chainedInput => inputParts[2]}
-						}
+						},
+						'tabComplete' => trackTabComplete
 					},
 					'search' => {
 						'description' => "<query> Search YouTube. (not chainable)",
@@ -981,16 +965,8 @@ module Tunewich
 								when 'get'
 									shouldEchoCommand = true
 								else
-									if option.to_i == 0
-										trackIndex = findTrackIndex option
-										if trackIndex
-											track = @tracks[trackIndex]
-										else
-											putsRealtime "could not find track '#{option}'"
-										end
-									elsif option.to_i > 0
-										track = @tracks[inputParts[1].to_i - 1 % @tracks.length]
-									end
+									trackIndex = findTrackIndex option
+									track = @tracks[trackIndex] if trackIndex
 								end
 							}
 
@@ -1100,6 +1076,7 @@ module Tunewich
 							if chapterIndex && chapterIndex >= 0 && chapterIndex < @currentTrack['chapters'].length
 								whisper("Done with chapter selection. Resulting chapter index: #{chapterIndex}", 3)
 								chapter = @currentTrack['chapters'][chapterIndex]
+								resetLastLoop
 								seekSeconds = getSecondsFromDurationString chapter['time']
 								seekOffset = inputParts[1].to_f
 								seekSeconds += seekOffset if seekOffset
@@ -1613,7 +1590,8 @@ module Tunewich
 						}
 					},
 					'fade' => {
-						'description' => 'Fade volume (/fade VOLUME [DURATION])',
+						'description' => '/fade VOLUME [DURATION]; VOLUME can be "out" or "in", which will fade from or to the last explicit volume set.',
+						'args' => ['out', 'in'],
 						'action' => Proc.new { |input|
 							output = nil
 							fadeCommandMatch = /^(out|in|[0-9.]+x?)( [0-9.]+)?[^\/]*(.*)$/.match input
@@ -1734,15 +1712,15 @@ module Tunewich
 						'args' => ['off', 'on'],
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							loopLimit = inputParts[1].to_i
-							if loopLimit > 1 || inputParts[1].chomp == '0'
+							if inputParts[1].match(/^[0-9]+$/)
+								loopLimit = inputParts[1].to_i
 								@loop = true
 								@loopLimit = loopLimit
 							else
 								@loop = getToggledValueByInput.call(@loop, inputParts[1])
 							end
 
-							putsRealtime "loop: #{@loop ? 'on' : 'off'}"
+							putsRealtime "loop: #{@loop ? 'on' : 'off'} (#{@loopLimit == 0 ? "indefinite" : "#{@loopLimit} times"})"
 
 							{:chainedInput => inputParts[2]}
 						}
@@ -2325,8 +2303,8 @@ module Tunewich
 			end
 
 			if !streamName
-				@lastLoop = [nil, 0]
-				playerStartupOptions << "-loop #{@loopLimit}" if @loop && !trackHasLoopingChapters?(@currentTrack)
+				resetLastLoop
+				playerStartupOptions << "-loop #{@loopLimit}" if @loop && !doesTrackHaveLoopingChapters?(@currentTrack)
 			end
 
 			@speed = 1 if @speed < 0.01
@@ -2418,7 +2396,7 @@ module Tunewich
 						else
 							@lastLoop = [@currentTrack['chapters'][@currentChapterIndex]['loop_target'], 1];
 						end
-						whisper("\nLoop ##{@lastLoop[1]}/#{@loopLimit}", 1)
+						whisper("\nLoop ##{@lastLoop[1]}/#{@loopLimit > 0 ? @loopLimit : "∞"}", 1)
 						fadeInterval = 0.0
 						seekToChapter targetChapterIndex, fadeInterval, fadeInterval
 					end
@@ -2689,7 +2667,7 @@ module Tunewich
 			tags
 		end
 
-		def trackHasLoopingChapters? track
+		def doesTrackHaveLoopingChapters? track
 			hasLoopingChapters = false
 
 			if track && track.has_key?('chapters')
@@ -2704,6 +2682,10 @@ module Tunewich
 			hasLoopingChapters
 		end
 
+		def resetLastLoop
+			@lastLoop = [nil, 0]
+		end
+
 		def doesTrackHaveTag(track, *tagNames)
 			tagNames.each { |tagName|
 				@library['tags'].has_key?(tagName) &&
@@ -2716,8 +2698,21 @@ module Tunewich
 			tracks.map{|t| t['title']}
 		end
 
-		def findTrackIndex(query)
-			@tracks.index(query) || firstFuzzyMatchIndex(query, getTrackTitles(@tracks))
+		def findTrackIndex(query, referenceTrackIndex = nil)
+			referenceTrackIndex ||= @trackIndex
+			newTrackIndex = referenceTrackIndex
+
+			trackIndexOffset = getOffsetFromInputString query
+
+			if trackIndexOffset
+				newTrackIndex += trackIndexOffset
+			elsif query.to_i == 0
+				newTrackIndex = @tracks.index(query) || firstFuzzyMatchIndex(query, getTrackTitles(@tracks))
+			else
+				newTrackIndex = (query.to_i - 1) % @tracks.length
+			end
+
+			newTrackIndex
 		end
 
 		def findPlaylistName(query)
@@ -2737,7 +2732,7 @@ module Tunewich
 						:index => index,
 						:value => value,
 						:matchLength => matchedPortion[0].length,
-						:starts => value.start_with?(query)
+						:starts => value.downcase.start_with?(query.downcase)
 					};
 					match[:density] = query.length.to_f / match[:matchLength].to_f
 					match[:breadth] = match[:matchLength].to_f / match[:value].length.to_f
@@ -2751,7 +2746,7 @@ module Tunewich
 			if matches.length > 1
 				matches.sort! { |a,b|
 					if a[:starts] != b[:starts]
-						b[:starts] ? 1 : 0 <=> a[:starts] ? 1 : 0 # starts first
+						(b[:starts] ? 1 : 0) <=> (a[:starts] ? 1 : 0) # starts first
 					elsif a[:starts] # && b[:starts] (^ implied)
 						a[:value].length <=> b[:value].length # shorter first
 					else
@@ -3732,9 +3727,9 @@ module Tunewich
 				exit
 			end
 
-			parser.on("-l [COUNT]", "--loop [COUNT]", "Loop tracks COUNT times (indefinitely if COUNT is 0 or missing. COUNT of 1 is the same as no loop). A track may contain chapters which loop, in which case each loop will be repeated COUNT times.", " ") do |count = 0|
+			parser.on("-l [COUNT]", "--loop [COUNT]", "Loop tracks COUNT times (indefinitely if COUNT is 0 or missing). A track may contain chapters which loop, in which case each loop will be repeated COUNT times.", " ") do |count = 0|
 				@loopLimit = count.to_i
-				@loop = @loopLimit != 1
+				@loop = true
 			end
 
 			parser.on("-L FILE", "--log FILE", "Log most verbose output to FILE. This includes events and crosstalk between the script and player", " ") do |logFile|
