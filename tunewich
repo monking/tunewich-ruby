@@ -300,12 +300,9 @@ module Tunewich
 							duration = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].to_f : 0.3
 							output[:chainedInput] = rampCommandMatch[4] && rampCommandMatch[4].length > 0 ? rampCommandMatch[4].strip : nil
 							speed = getCurrentMplayerSpeed
-							# min- and maxSpeed really depend on the system, and seems limitless when using `-af scaletempo[=speed=tempo]`
-							minSpeed = 0.125
-							maxSpeed = 4
-							requestingSpeed = determineRelativeSpeed rampCommandMatch[1], @tracks[@trackIndex]
-							if requestingSpeed
-								targetRampSpeed = [[requestingSpeed, minSpeed].max, maxSpeed].min
+							whisper 'without -af scaletempo[=speed=tempo], min and max limited by the system (~1/8 and ~4.5 on my Mac Mini)'
+							targetRampSpeed = determineRelativeSpeed rampCommandMatch[1], @tracks[@trackIndex]
+							if targetRampSpeed
 								if targetRampSpeed == 'out'
 									targetRampSpeed = 0
 									speedBeforeRampingOut = speed
