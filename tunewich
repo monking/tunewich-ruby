@@ -371,11 +371,21 @@ module Tunewich
 				'turn' => {
 					'info' => "Use all this track's tags to populate the track list.",
 					'action' => Proc.new { |input|
-						@trackFilters ||= {}
-						@trackFilters['tag'] = "+#{getTrackTags(@tracks[@trackIndex]).join ' +'}"
-						useEntireLibrary
-						@trackIndex = 1 # next track (current track will almost certainly be at index 0)
-						commandRequiresNext = true
+						trackTags = getTrackTags @tracks[@trackIndex]
+						if trackTags.length > 0
+							puts "Playing tracks with similar tags: #{trackTags.join ', '}"
+							@trackFilters ||= {}
+							@trackFilters['tag'] = "+#{trackTags.join ' +'}"
+							useEntireLibrary
+							@trackIndex = 1 # next track (current track will almost certainly be at index 0)
+							if @shuffle
+								@shuffle = false
+								puts "shuffle: off"
+							end
+							commandRequiresNext = true
+						else
+							puts "Add some tags to this track to find similar tracks."
+						end
 						{:chainedInput => input}
 					}
 				},
@@ -409,23 +419,30 @@ module Tunewich
 							:description => @tracks[index].has_key?('description'),
 							:bpm => @tracks[index].has_key?('bpm')
 						}
-						puts "title: #{@tracks[index]['title']}" if alreadyHas[:title]
-						puts "duration: #{@tracks[index]['duration']}" if alreadyHas[:duration]
-						puts "bpm: #{@tracks[index]['bpm']}" if alreadyHas[:bpm]
+						tagNames = getTrackTags @tracks[index]
+
+						puts "------------------------------"
+						puts "   title : #{@tracks[index]['title']}" if alreadyHas[:title]
+						puts "duration : #{@tracks[index]['duration']}" if alreadyHas[:duration]
+						puts "    tags : #{tagNames.join ', '}" if tagNames.length > 0
+						puts "  rating : #{@tracks[index]['rating']}" if @tracks[index]['rating']
+						puts "     bpm : #{@tracks[index]['bpm']}" if alreadyHas[:bpm]
 						puts "==============================\n#{@tracks[index]['description']}" if alreadyHas[:description]
 
 						if !alreadyHas[:title] || !alreadyHas[:duration]
 							info = getTrackInfo @tracks[index]['src']
 							updateTrackInfo @tracks[index], info
 
-							puts "title: #{@tracks[index]['title']}" if !alreadyHas[:title]
-							puts "duration: #{@tracks[index]['duration']}" if !alreadyHas[:duration]
+							puts "   title : #{@tracks[index]['title']}" if !alreadyHas[:title]
+							puts "duration : #{@tracks[index]['duration']}" if !alreadyHas[:duration]
 							puts "==============================\n#{@tracks[index]['description']}" if !alreadyHas[:description] && @tracks[index]['description']
 						else
 							info = {'url' => "http://youtu.be/#{@tracks[index]['src']}"}
 						end
 
-						puts "url: #{info['url']}"
+						puts "     url : #{info['url']}"
+						puts "------------------------------"
+
 						{:chainedInput => chunks.join(' ')}
 					}
 				},
