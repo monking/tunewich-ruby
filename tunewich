@@ -337,27 +337,32 @@ module Tunewich
 				},
 				'info' => {
 					'info' => "Show track info",
-					'action' => Proc.new { |query|
+					'action' => Proc.new { |index|
+						if index && index.length > 0
+							index = index.to_i - 1
+						else
+							index = @trackIndex
+						end
 						alreadyHas = {
-							:title => @tracks[@trackIndex].has_key?('title'),
-							:duration => @tracks[@trackIndex].has_key?('duration'),
-							:description => @tracks[@trackIndex].has_key?('description'),
-							:bpm => @tracks[@trackIndex].has_key?('bpm')
+							:title => @tracks[index].has_key?('title'),
+							:duration => @tracks[index].has_key?('duration'),
+							:description => @tracks[index].has_key?('description'),
+							:bpm => @tracks[index].has_key?('bpm')
 						}
-						puts "title: #{@tracks[@trackIndex]['title']}" if alreadyHas[:title]
-						puts "duration: #{@tracks[@trackIndex]['duration']}" if alreadyHas[:duration]
-						puts "bpm: #{@tracks[@trackIndex]['bpm']}" if alreadyHas[:bpm]
-						puts "==============================\n#{@tracks[@trackIndex]['description']}" if alreadyHas[:description]
+						puts "title: #{@tracks[index]['title']}" if alreadyHas[:title]
+						puts "duration: #{@tracks[index]['duration']}" if alreadyHas[:duration]
+						puts "bpm: #{@tracks[index]['bpm']}" if alreadyHas[:bpm]
+						puts "==============================\n#{@tracks[index]['description']}" if alreadyHas[:description]
 
 						if !alreadyHas[:title] || !alreadyHas[:duration]
-							info = getTrackInfo @tracks[@trackIndex]['src']
-							updateTrackInfo @tracks[@trackIndex], info
+							info = getTrackInfo @tracks[index]['src']
+							updateTrackInfo @tracks[index], info
 
-							puts "title: #{@tracks[@trackIndex]['title']}" if !alreadyHas[:title]
-							puts "duration: #{@tracks[@trackIndex]['duration']}" if !alreadyHas[:duration]
-							puts "==============================\n#{@tracks[@trackIndex]['description']}" if !alreadyHas[:description] && @tracks[@trackIndex]['description']
+							puts "title: #{@tracks[index]['title']}" if !alreadyHas[:title]
+							puts "duration: #{@tracks[index]['duration']}" if !alreadyHas[:duration]
+							puts "==============================\n#{@tracks[index]['description']}" if !alreadyHas[:description] && @tracks[index]['description']
 						else
-							info = {'url' => "http://youtu.be/#{@tracks[@trackIndex]['src']}"}
+							info = {'url' => "http://youtu.be/#{@tracks[index]['src']}"}
 						end
 
 						puts "url: #{info['url']}"
