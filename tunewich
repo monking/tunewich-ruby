@@ -65,7 +65,7 @@ module Tunewich
 			@playlistName = nil
 			@volume = 25 # volume stored as state (the "intended" volume)
 			@actualVolume = 25 # actual volume heard (change during fading, or changing track loudness)
-			@volumeMultipliers = []
+			@volumeMultipliers = {}
 			@bpmGlideDuration = 0
 			@bpmGlideDelay = 0
 			@enableDownload = false
