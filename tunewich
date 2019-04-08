@@ -254,7 +254,7 @@ module Tunewich
 		end
 
 		def findBPMRatio firstTrack, secondTrack
-			# TODO: 1pnp8VG9YA4
+			# TODO: 1gG4Ve
 			ratio = 1
 			if not firstTrack.has_key? 'bpm'
 				whisper("The first track being compared doesn't have BPM set.", 2)
@@ -301,7 +301,7 @@ module Tunewich
 		end
 
 		def getInteractiveCommands modes = [], bindingGroupName
-			# TODO: 1pnpJF2KIY4
+			# TODO: 1gG4fU
 			interactiveCommands = {
 				'base' => {
 					'wait' => {
@@ -482,7 +482,7 @@ module Tunewich
 					'list' => {
 						'description' => "Load a playlist. (not chainable)",
 						'action' => Proc.new { |input|
-							# TODO: 1pnpKMgOD2m
+							# TODO: 1gG4gW
 							whisper("playlistQuery: #{input}", 4)
 							playlistNames = @library['playlists'].keys
 							if input && input.length > 0
@@ -703,7 +703,6 @@ module Tunewich
 					'download' => {
 						'description' => "Download the current track for faster play in the future. Optional 'get' parameter prints the download shell command instead.",
 						'action' => Proc.new { |input|
-							# TODO: 1pnpL0cTQwS
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
 							if inputParts[1] == 'get'
@@ -832,20 +831,18 @@ module Tunewich
 						}
 					},
 					'mkchapter' => {
-						'description' => "Make a chapter at the current player time. Input: name.",
+						'description' => "Make a chapter, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing). Input: name.",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							newChapter = {
 								'time' => '0:00',
-								'name' => inputParts[1]
+								'name' => getDurationStringFromSeconds(@commandinputStartPlayerTime)
 							}
-							if @currentTrack['chapters'] && @currentTrack['chapters'].length > 0
-								currentPlayerTime = @currentPlayerTime
-								newChapter['time'] = getDurationStringFromSeconds(currentPlayerTime)
-							else
-								whisper("Adding the first chapter", 2)
+
+							if not @currentTrack['chapters']
 								@currentTrack['chapters'] = []
 							end
+
 							if !newChapter['name'] || newChapter['name'].length == 0
 								newChapter = editChapter newChapter
 							end
@@ -885,7 +882,7 @@ module Tunewich
 									chapter = @currentTrack['chapters'][chapterIndex]
 									whisper("About to edit chapter #{chapter}", 3)
 									chapter = editChapter chapter
-									# TODO: 1pnpL3Do9W4
+									# TODO: 1gG4h9
 									@currentTrack['chapters'][chapterIndex] = chapter
 									@currentTrack['chapters'] = sortChapters @currentTrack['chapters']
 									writeLibraryToFile
@@ -894,7 +891,7 @@ module Tunewich
 									putsRealtime "Unable to find the chapter you want to edit."
 								end
 							else
-								putsRealtime "No chapters to edit. Use /mkchapter to create chapters." # TODO: 1pnpL5bWrGa
+								putsRealtime "No chapters to edit. Use /mkchapter to create chapters." # TODO: 1gG4hB
 							end
 
 							{:chainedInput => inputParts[2]}
@@ -1089,7 +1086,6 @@ module Tunewich
 						}
 					},
 					'note' => {
-						# FIXME: 1gSmhx
 						'description' => "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing).",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
@@ -1098,6 +1094,7 @@ module Tunewich
 							loadLibrary
 							@currentTrack = matchExistingLibraryTrack @currentTrack
 
+              # TODO 1gor9z: when typing `/note` and there are no existing notes, begin creating a note
 							if !inputParts[1] || inputParts[1].length < 1
 								if @currentTrack.has_key? 'notes'
 									notesList = @currentTrack['notes'].map { |note| "#{note['time']} - #{note['text']}" }
@@ -1146,7 +1143,7 @@ module Tunewich
 
 							if notesChanged
 								if @currentTrack.has_key?('notes')
-									@currentTrack['notes'].sort! { |a, b| getSecondsFromDurationString(a['time']) <=> getSecondsFromDurationString(b['time']) } # TODO: 1pnpLF55sNk
+									@currentTrack['notes'].sort! { |a, b| getSecondsFromDurationString(a['time']) <=> getSecondsFromDurationString(b['time']) } # TODO: 1gG4hJ
 								end
 								addTrackToLibrary @currentTrack if @currentTrack['unattached']
 								writeLibraryToFile
@@ -1329,7 +1326,7 @@ module Tunewich
 						}
 					},
 					'turn' => {
-						# TODO: 1pnpLRdDbCi
+						# TODO: 1gG4hV
 						'description' => "Use all this track's tags to populate the track list.",
 						'action' => Proc.new { |input|
 							trackTags = getTrackTags @currentTrack
@@ -1384,7 +1381,7 @@ module Tunewich
 									end
 								else
 									whisper("Failed to get seconds from input '#{seekInput}'")
-									# TODO: 1pnpLuPzN72
+									# TODO: 1gG4hv
 								end
 
 								if seekTimeInSeconds
@@ -1464,7 +1461,7 @@ module Tunewich
 						}
 					},
 					'fixbpm' => {
-						'description' => "TODO: [Toggle ON/off] Change next track's playback speed to BPM of a current track. If either track does not have BPM metadata, then the curent playback speed is maintained.", #1pnpMNOiSmO
+						'description' => "TODO: [Toggle ON/off] Change next track's playback speed to BPM of a current track. If either track does not have BPM metadata, then the curent playback speed is maintained.", #1gG4iM
 						'action' => Proc.new { |input|
 							@fixbpm = !@fixbpm
 							putsRealtime "TODO: fixbpm #{@fixbpm ? "on" : "off"}"
@@ -1487,7 +1484,7 @@ module Tunewich
 							if !@trackIndex
 								useTracks [@currentTrack]
 								@trackIndex = @tracks.length - 1
-								# TODO: 1pnpN3wDVqi
+								# TODO: 1gG4iz
 							end
 							{:chainedInput => input}
 						}
@@ -1541,7 +1538,7 @@ module Tunewich
 			@externalCommandThread = Thread.new {
 				externalCommand = tailTempFile @externalCommandStream
 				if externalCommand
-					whisper("externalCommand: '#{externalCommand}'") # TODO: 1pxQxMENEem
+					whisper("externalCommand: '#{externalCommand}'") # TODO: 1gOsMN
 				end
 				sleep 1
 			}
@@ -1558,7 +1555,7 @@ module Tunewich
 				useEntireLibrary
 			end
 
-			# TODO: 1pnpN6rMo7U
+			# TODO: 1gG4j1
 			playerOutput = nil
 
 			interactiveCommands = getInteractiveCommands [@userMode], bindingGroupName
@@ -1923,7 +1920,7 @@ module Tunewich
 		end
 
 		def play(track, interactiveCommands)
-			fileAlreadyExists = !@forceStreaming && trackFileExists?(track) # TODO: 1pnpNACYZQO
+			fileAlreadyExists = !@forceStreaming && trackFileExists?(track) # TODO: 1gG4j4
 			liveStreaming = doesTrackHaveTag(track, 'live-radio') # TODO: 1gSke5
 			streaming = @forceStreaming || (!fileAlreadyExists && !@enableDownload)
 
@@ -1999,7 +1996,7 @@ module Tunewich
 						streamName = 'youtube-stream'
 						deleteStream streamName
 						streamPath = mediaFilePath = makeStream streamName
-						if not downloadTrack track, streamPath
+						if not downloadTrack(track, streamPath)
 							whisper("could not download/stream track", 1)
 							mediaFilePath = nil
 						end
@@ -2009,7 +2006,7 @@ module Tunewich
 						# mplayer 4.2.1 on Mac OS Sierra unable to stream HTTPS
 						if /^https:\/\//.match track['src']
 							streamPath = mediaFilePath = makeStream streamName
-							if not downloadTrack track, streamPath
+							if not downloadTrack(track, streamPath)
 								whisper("could not download/stream track", 1)
 								mediaFilePath = nil
 							end
@@ -2098,7 +2095,7 @@ module Tunewich
 					if nextNonSkippingChapter
 						seekToChapter nextNonSkippingChapter, 0.25, 0.25
 					else
-						# TODO: 1pnpNCgNj0y
+						# TODO: 1gG4j7
 					end
 					@currentlySkippingChapter = nil
 				end
@@ -2201,11 +2198,11 @@ module Tunewich
 
 		def getMplayerProperty property, pattern = nil, responseDelay = nil
 			output = nil
-			if @isPlayerPlaying # TODO: 1pnpNEtDDLE
+			if @isPlayerPlaying # TODO: 1gG4j9
 				pattern ||= /^()(.*)$/
 				command = "#{property}\n"
 				command = "get_property #{command}" if not property.match(/^get_/)
-				# TODO: 1pnpNHGx9JY
+				# TODO: 1gG4jB
 				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", command
 				sleep responseDelay if responseDelay
 				lastPlayerOutput = tailTempFile "#{Player::MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
@@ -2686,7 +2683,7 @@ module Tunewich
 			end
 		end
 
-		# TODO: 1pnpNSNN0Hw
+		# TODO: 1gG4jL
 		def writeLibraryToFile shouldPrompt = false
 			if shouldPrompt && !@writeEnabled
 				return if !confirm("Write changes to library?")
@@ -2826,7 +2823,7 @@ module Tunewich
 
 			if filters.has_key? 'tag'
 				if filters['tag']
-					# TODO: 1pnpNUIDYRc
+					# TODO: 1gG4jN
 					selectedTags = []
 					unionTagTracks = []
 					filterTags = filters['tag'].split(' ')
@@ -2860,7 +2857,7 @@ module Tunewich
 
 					whisper("filtering for tags: #{selectedTags}", 4)
 					if selectedTags.length > 0
-						# TODO: 1pnpNWljGG8
+						# TODO: 1gG4jP
 						selectedTags.each { |tagInfo|
 							tracks.send(action) { |t| tagInfo[:tag]['tracks'] && tagInfo[:tag]['tracks'].index(t['id']) || unionTagTracks.index(t['id']) }
 						}
@@ -3000,7 +2997,7 @@ module Tunewich
 				newTrack['src'] = looksLikeAYouTubeID?(url) ? url : getYoutubeIdFromUrl(url)
 				newTrack['id'] = newTrack['src']
 			elsif type == 'ocremix'
-				newTrack['src'] = url # TODO: 1pnpNaBZyEi
+				newTrack['src'] = url # TODO: 1gG4jS
 				newTrack['id'] = getIDFromOCRemixURL url
 			else
 				newTrack['src'] = url
@@ -3352,7 +3349,7 @@ module Tunewich
 			end
 
 			parser.on("-o OPTIONS", "--player-opts OPTIONS", "Set player options. Set interactively with the /player command. You can also add mplayer options in #{$serviceConfigDir}/mplayer.options (You can find a starting copy in the 'config' directory that came with tunewich). --player-opts will override those options.", " ") do |options|
-				# TODO: 1pnpNcT25tY
+				# TODO: 1gG4jU
 				isFirstElement = true
 				@playerOverrideCommands += options.split(' -').map { |option|
 					if isFirstElement
@@ -3376,7 +3373,7 @@ module Tunewich
 				@ratingsPromptDuration = seconds ? seconds.to_i : 5
 			end
 
-			parser.on("-R [SERVER_TYPE]", "--radio [SERVER_TYPE]", "TODO: stream to a network radio service (SERVER_TYPE: default 'homebrew' or 'Nicecast'", " ") do |streamingServerType = 'homebrew'| #1pnpNkTKjoO
+			parser.on("-R [SERVER_TYPE]", "--radio [SERVER_TYPE]", "TODO: stream to a network radio service (SERVER_TYPE: default 'homebrew' or 'Nicecast'", " ") do |streamingServerType = 'homebrew'| #1gG4jc
 				if !streamingServerType || streamingServerType.length == 0
 					streamingServerType = 'homebrew'
 				end
@@ -3606,7 +3603,7 @@ module Tunewich
 						urlCanBeScraped = false
 						soundcloudTracks = loadSoundcloud url
 						tracks += soundcloudTracks if soundcloudTracks
-					elsif urlContentType && ['text/xml', 'application/rss+xml'].include?(urlContentType) # TODO: 1pnpOj709xo
+					elsif urlContentType && ['text/xml', 'application/rss+xml'].include?(urlContentType) # TODO: 1gG4kV
 						whisper("WIP: try to load podcast feed")
 						urlCanBeScraped = false
 						podcastTracks = loadPodcast url
@@ -3731,7 +3728,7 @@ module Tunewich
 
 		def parseOptionParameters serialized
 			hash = {}
-			# TODO: 1pnpOluGteS
+			# TODO: 1gG4kY
 
 			serialized.split(',').each { |clump|
 				pair = clump.split '='
@@ -3867,7 +3864,7 @@ module Tunewich
 					end
 				elsif inputCharacter == "" # stop job
 					Process.kill("STOP", Process.pid)
-					# TODO: 1pnpP3BJJnE
+					# TODO: 1gG4ko
 				elsif inputCharacter == "" # clear line
 					if input
 						@commandInputTyped = nil
