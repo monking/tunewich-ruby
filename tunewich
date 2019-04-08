@@ -284,7 +284,7 @@ module Tunewich
 								absoluteVolumeSmap = volumeSpan.abs
 								setLogarithmicVolumeByStep = Proc.new { |stepIndex|
 									whisper ">stepIndex: #{stepIndex}"
-									volume = 10**(Math.log10(volumeSpan.abs) / volumeFadeStepCount * stepIndex) + lowerVolume
+									volume = 10**(Math.log10(volumeSpan.abs + 1) / volumeFadeStepCount * stepIndex) + lowerVolume - 1
 									whisper ">volume: #{volume}"
 									whisper volume
 									printRepeat "fading: #{volume.round()}"
