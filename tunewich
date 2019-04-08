@@ -140,6 +140,7 @@ module Tunewich
 				'list' => {
 					'info' => "Load a playlist.",
 					'action' => Proc.new { |playlistQuery|
+						# TODO: generalized function to list playlists, their track count, and the average rating among rated tracks
 						puts "playlistQuery: #{playlistQuery}" # XXX
 						playlistNames = @library['playlists'].keys
 						if playlistQuery && playlistQuery.length > 0
