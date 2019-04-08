@@ -1184,95 +1184,117 @@ module Tunewich
           },
           'info' => {
             'description' => "Show track info. Track is: without input = currently playing track; with '>' = the track that will play next; with numeric input = the track at that position in the track list; any other input = the track with the title that best matches that input",
+            'args' => ['all'],
             'action' => Proc.new { |input, command|
-              inputParts = getCommandInputParts(input)
-              track = nil
-              trackIndex = nil
-              if inputParts[:query] && inputParts[:query].length > 0
-                trackIndex = findTrackIndex(inputParts[:query])
-                track = @tracks[trackIndex] if trackIndex
+              inputParts = getCommandInputParts(input, /^((?<arg>all)( +|$))?(?<query>.*?)( (?<remainder>\/.*))?$/)
+              tracks = []
+              shouldUseInnerTrackIndex = false
+              trackIndexes = {}
+              if inputParts[:arg] && inputParts[:arg] == 'all'
+                shouldUseInnerTrackIndex = true
+                tracks += @tracks
+              elsif inputParts[:query] && inputParts[:query].length > 0
+                if inputParts[:query] && inputParts[:query].length > 0
+                  trackIndex = findTrackIndex(inputParts[:query])
+                  if trackIndex
+                    tracks << @tracks[trackIndex]
+                    trackIndexes[@tracks[trackIndex]['id']] = trackIndex
+                  else
+                    whisper("TODO: search all tracks for term, and confirm with user to use it", 1)
+                  end
+                end
               else
-                # the user may have altered the track list, so that it no longer includes the currently playing track
-                trackIndex = @trackIndex if @tracks[@trackIndex] === @currentTrack
-                track = @currentTrack
+                tracks << @currentTrack
+                trackIndexes[@currentTrack] = @trackIndex if @tracks[@trackIndex] === @currentTrack
+                # ^ the user may have altered the track list, so that it no longer includes the currently playing track
               end
 
-              if track
-                alreadyHas = {
-                  :title => track.has_key?('title') && track['title'].strip.length > 0,
-                  :duration => track.has_key?('duration'),
-                  :description => track.has_key?('description') && track['description'].strip.length > 0,
-                  :bpm => track.has_key?('bpm')
-                }
-                tagNames = getTrackTags track
-
-                outputMessageLines = []
-                info = {}
-                if !alreadyHas[:title] || !alreadyHas[:duration]
-                  if track['type'] === 'youtube'
-                    info = getYouTubeTrackInfo track['src']
-                  elsif track['type'] === 'soundcloud'
-                    info = getSoundcloudTrackInfo track['src']
-                  end
-                  updateTrackInfo track, info
-                end
-                outputMessageLines << "     title : #{track['title']}" if track.has_key? 'title'
-                outputMessageLines << "      tags : #{tagNames.join ', '}" if tagNames.length > 0
-                outputMessageLines << "sourceTags : #{info['sourceTags']}" if info && info.has_key?('sourceTags')
-                outputMessageLines << "    rating : #{track['rating']}" if track['rating']
-                outputMessageLines << "       bpm : #{track['bpm']}" if alreadyHas[:bpm]
-
-                if track == @currentTrack
-                  timeMessage = ""
-                  timeMessage += "			time : #{getDurationStringFromSeconds @currentPlayerTime}" if @currentPlayerTime
-                  if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
-                    durationResponseFromPlayer = getMplayerProperty('get_time_length', /^(ANS_LENGTH=)(.*?)(\?)?$/, 0.1)
-                    whisper("Got duration from player: '#{durationResponseFromPlayer}'", 2)
-                    if durationResponseFromPlayer
-                      track['duration'] = getDurationStringFromSeconds durationResponseFromPlayer.to_f
-                    end
-                  end
-                  timeMessage += " / #{track['duration']}"
-                  timeMessage += " (#{@speed}x)" if @speed != 1
-                  if @currentPlayerTime && @currentTrack.has_key?('chapters')
-                    chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
-                    if chapterIndex > -1
-                      timeMessage += "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
-                    end
-                  end
-                  outputMessageLines << "#{timeMessage}"
+              tracks.each { |track, index|
+                if shouldUseInnerTrackIndex
+                  trackIndex = index
+                elsif trackIndexes.has_key?(track['id'])
+                  trackIndex = trackIndexes[track['id']]
                 else
-                  outputMessageLines << "	duration : #{track['duration']}" if alreadyHas[:duration]
+                  trackIndex = nil
                 end
 
-                outputMessageLines << "downloaded : #{trackFileExists? track}"
-                outputMessageLines << "#{track['description']}" if track.has_key?('description')
-                if !info.has_key? 'link'
-                  info['link'] = track['link'] || track['src']
-                  if track['type'] === 'youtube'
-                    info['link'] = "http://youtu.be/#{track['src']}"
-                  end
-                end
-                outputMessageLines << "      link : #{info['link']}" if info
-
-                outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
-                outputMessageLines << "    volume : #{@currentVolume}/100" if track == @currentTrack
-
-                if @configuredVerbosity > 1 && tagNames.length > 0
-                  whisper("about to loop through tagNames", 4)
-                  tagNames.each { |tagName|
-                    whisper("digging up ancestors of #{tagName}", 4)
-                    ancestorTags = getAncestorTagNames tagName
-                    whisper("ancestors of tag '#{tagName}': #{ancestorTags}", 1) if ancestorTags.length > 0
+                if track
+                  alreadyHas = {
+                    :title => track.has_key?('title') && track['title'].strip.length > 0,
+                    :duration => track.has_key?('duration'),
+                    :description => track.has_key?('description') && track['description'].strip.length > 0,
+                    :bpm => track.has_key?('bpm')
                   }
-                end
+                  tagNames = getTrackTags track
 
-                outputMessageLines << "------------------------------"
-                putsRealtime outputMessageLines.join "\n"
-                notify outputMessageLines.join "\n"
-              else
-                putsRealtime "Cannot show info. No track found."
-              end
+                  outputMessageLines = []
+                  info = {}
+                  if !alreadyHas[:title] || !alreadyHas[:duration]
+                    if track['type'] === 'youtube'
+                      info = getYouTubeTrackInfo track['src']
+                    elsif track['type'] === 'soundcloud'
+                      info = getSoundcloudTrackInfo track['src']
+                    end
+                    updateTrackInfo track, info
+                  end
+                  outputMessageLines << "     title : #{track['title']}" if track.has_key? 'title'
+                  outputMessageLines << "      tags : #{tagNames.join ', '}" if tagNames.length > 0
+                  outputMessageLines << "sourceTags : #{info['sourceTags']}" if info && info.has_key?('sourceTags')
+                  outputMessageLines << "    rating : #{track['rating']}" if track['rating']
+                  outputMessageLines << "       bpm : #{track['bpm']}" if alreadyHas[:bpm]
+
+                  if track == @currentTrack
+                    timeMessage = ""
+                    timeMessage += "			time : #{getDurationStringFromSeconds @currentPlayerTime}" if @currentPlayerTime
+                    if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
+                      durationResponseFromPlayer = getMplayerProperty('get_time_length', /^(ANS_LENGTH=)(.*?)(\?)?$/, 0.1)
+                      whisper("Got duration from player: '#{durationResponseFromPlayer}'", 2)
+                      if durationResponseFromPlayer
+                        track['duration'] = getDurationStringFromSeconds durationResponseFromPlayer.to_f
+                      end
+                    end
+                    timeMessage += " / #{track['duration']}"
+                    timeMessage += " (#{@speed}x)" if @speed != 1
+                    if @currentPlayerTime && @currentTrack.has_key?('chapters')
+                      chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
+                      if chapterIndex > -1
+                        timeMessage += "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
+                      end
+                    end
+                    outputMessageLines << "#{timeMessage}"
+                  else
+                    outputMessageLines << "	duration : #{track['duration']}" if alreadyHas[:duration]
+                  end
+
+                  outputMessageLines << "downloaded : #{trackFileExists? track}"
+                  outputMessageLines << "#{track['description']}" if track.has_key?('description')
+                  if !info.has_key? 'link'
+                    info['link'] = track['link'] || track['src']
+                    if track['type'] === 'youtube'
+                      info['link'] = "http://youtu.be/#{track['src']}"
+                    end
+                  end
+                  outputMessageLines << "      link : #{info['link']}" if info
+
+                  outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
+                  outputMessageLines << "    volume : #{@currentVolume}/100" if track == @currentTrack
+
+                  if @configuredVerbosity > 1 && tagNames.length > 0
+                    whisper("about to loop through tagNames", 4)
+                    tagNames.each { |tagName|
+                      whisper("digging up ancestors of #{tagName}", 4)
+                      ancestorTags = getAncestorTagNames tagName
+                      whisper("ancestors of tag '#{tagName}': #{ancestorTags}", 1) if ancestorTags.length > 0
+                    }
+                  end
+
+                  outputMessageLines << "------------------------------"
+                  putsRealtime outputMessageLines.join "\n"
+                  notify outputMessageLines.join "\n"
+                else
+                  putsRealtime "Cannot show info. No track found."
+                end
+              }
 
               {:chainedInput => inputParts[:remainder]}
             },
