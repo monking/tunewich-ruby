@@ -1159,7 +1159,8 @@ module Tunewich
             'tabComplete' => trackTabComplete
           },
           'more' => {
-            'description' => "Play all tracks on this video's page.",
+            'description' => "Play all tracks linked from this media's source page (e.g. recommended videos on YouTube.com).",
+            # 'args' => ['creator'], # TODO: enable jumping off from other related pages/lists
             'action' => Proc.new { |input, command|
               if @currentTrack['type'] == 'youtube'
                 disablePlaybackInfo
@@ -3584,14 +3585,18 @@ module Tunewich
         @playlistName = name
         anyUnrecognizedTracks = false
         @library['playlists'][@playlistName]['tracks'].each do |trackReference|
-          track = @library['tracks'][trackReference]
-          if not track && looksLikeAYouTubeID?(trackReference)
-            track = createTrack trackReference, 'youtube'
-          else
-            whisper("Track not in library, and ID is not recognized: '#{trackReference}'", 2)
+          if trackReference && trackReference.kind_of?(String)
+            if @library['tracks'].has_key?(trackReference)
+              track = @library['tracks'][trackReference]
+            elsif looksLikeAYouTubeID?(trackReference)
+              track = createTrack trackReference, 'youtube'
+            else
+              whisper("Track not in library, and ID is not recognized: '#{trackReference}'", 2)
+            end
+            tracks << track if track
           end
-          tracks << track if track
         end
+
         if anyUnrecognizedTracks
           message = [
             "Note: for non-YouTube tracks, the ID is an md5 hash of the media URL.",
@@ -4155,16 +4160,18 @@ module Tunewich
       printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
 
       queryResultIds.each_with_index do |id, index|
-        track = matchExistingLibraryTrack createTrack(id, 'youtube')
-        resultTracks << track
-        whisper("starting a new thread to get track info for #{track['id']}", 4)
-        threads << Thread.new {
-          if not updateTrackInfo track
-            resultTracks.delete track
-          end
-          receivedCount += 1
-          printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
-        }
+        if id && id.kind_of?(String)
+          track = matchExistingLibraryTrack createTrack(id, 'youtube')
+          resultTracks << track
+          whisper("starting a new thread to get track info for #{track['id']}", 4)
+          threads << Thread.new {
+            if not updateTrackInfo track
+              resultTracks.delete track
+            end
+            receivedCount += 1
+            printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
+          }
+        end
       end
 
       whisper("joining 'update info' threads", 4)
