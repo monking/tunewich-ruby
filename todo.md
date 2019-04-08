@@ -6,8 +6,6 @@
 	- [x] bindingGroupName
 - [ ] 1gG4gW: generalized function to list playlists, their track count, and the average rating among rated tracks
 - [ ] 1gG4h6: getDownloadCommand, bind `download_complete`, etc.
-- [ ] 1gG4h9: check if editChapter was successful
-- [ ] 1gG4hB: it would be nice to make the chapter, if the intent is clear.
 - [ ] 1gG4hJ: sorting notes in the same way as sortChapters, combine?
 - [ ] 1gG4hV: use the 'turn' command to only sort tracks by their
 	similarity to the filter, rather than removing those that don't
@@ -25,7 +23,6 @@
 - [ ] 1gG4iz: add @currentTrack to queue
 - [ ] 1gG4j1: catch SIGINT (ctrl+c) & prompt for playlist again
 - [ ] 1gG4j4: I shouldn't need to check twice
-- [ ] 1gG4j7: fade out and skip to next track (i.e. quit player)
 - [ ] 1gG4j9: get time position without unpausing
 - [ ] 1gG4jB: maybe this needs pausing_keep (http://www.mplayerhq.hu/DOCS/tech/slave.txt). doesn't quite work in my testing
 - [ ] 1gG4jL: find places where stuff is not being saved, and do matchExistingLibraryTrack first

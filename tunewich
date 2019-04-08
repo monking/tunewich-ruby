@@ -8,6 +8,7 @@ require "digest" # Digest
 require "rexml/document" # REXML::Document
 require "rexml/xpath" # REXML::XPath
 
+$logFilePath = nil
 $clearLineCharacter = "\033[0K"
 $disableWrapCharacter = "\033[?7l"
 $enableWrapCharacter = "\033[?7h"
@@ -74,7 +75,6 @@ module Tunewich
 			@streamingServerType = nil
 			@youtubeDLTrackTypes = ['youtube', 'soundcloud']
 			@isPlayerPlaying = false
-			@logFile = nil
 			@tempFiles = {}
 
 			getConfigFiles
@@ -296,17 +296,30 @@ module Tunewich
 			return char
 		end
 
+		def putsRealtime message
+			if @shouldShowPlaybackInfo
+				print "\n#{message}\n"
+			else
+				puts message
+			end
+		end
+
 		def whisper message, verbosity = 1
+			# 0: basically like puts, with the benefit of optional logging
 			# 1: verbose user output
 			# 2: very verbose user output
 			# 3: errors
 			# 4: debug
 			formattedMessage = "	#{"-" * verbosity} #{message}"
 			if @configuredVerbosity >= verbosity
-				STDERR.puts formattedMessage
+				if @shouldShowPlaybackInfo
+					STDERR.print "#{formattedMessage}\n"
+				else
+					STDERR.puts formattedMessage
+				end
 			end
-			if @logFile
-				open(@logFile, 'a') { |f|
+			if $logFilePath
+				open($logFilePath, 'a') { |f|
 					f.puts formattedMessage
 				}
 			end
@@ -328,7 +341,7 @@ module Tunewich
 			if ENV.key? 'TUNEWICH_DIR'
 				setLibraryPath ENV['TUNEWICH_DIR']
 			else
-				puts "Please add `export TUNEWICH_DIR=\"<path/to/your/music/directory>\"` to your ~/.profile or similar file."
+				whisper("Please add `export TUNEWICH_DIR=\"<path/to/your/music/directory>\"` to your ~/.profile or similar file.", 0)
 			end
 
 			# assume volume is not logarithmic for player on Mac
@@ -353,27 +366,27 @@ module Tunewich
 			ratio
 		end
 
-		def editChapter chapter
-			editableChapterInfo = chapter # want to pass this by value, not by reference
-			editableChapterInfo['name'] = '<empty>' if !editableChapterInfo.has_key? 'name'
-			editableChapterInfo['skip'] = 'false' if !editableChapterInfo.has_key? 'skip'
-			editedChapterInfo = editHashInVim editableChapterInfo
-			if editedChapterInfo
-				if editedChapterInfo.has_key?('skip')
-					if editedChapterInfo['skip'] == 'true'
-						editedChapterInfo['skip'] = true # string to boolean
-					else
-						editedChapterInfo.delete 'skip' # don't allow any values besides 'true'
-					end
+		def editChapters chapters
+			formattedChapters = chapters.map { |c|
+				"#{c.has_key?('skip') && c['skip'] ? 'skip' : '    '}" +
+					"#{" " * (9-c['time'].length)}#{c['time']}" +
+					" #{c['name']}"
+			}
+			editedFormattedChapters = editListInVim formattedChapters
+			editedChapters = editedFormattedChapters.map { |l|
+				bits = l.match(/^\s*(skip)?\s*([0-9.:]+)\s+(.*)$/)
+				#              /    1         2            3    /
+				if bits
+					chapter = {'time' => bits[2], 'name' => bits[3]}
+					chapter['skip'] = true if bits[1] == 'skip'
+					chapter
+				else
+					false
 				end
-
-				chapter.replace editedChapterInfo
-
-				whisper("Accepted chapter edits: #{chapter}", 3)
-			else
-				putsRealtime "There must be exactly two lines of chapter info (name & time). Discarding the edit."
-			end
-			chapter
+			}
+			editedChapters.keep_if { |c| c }
+			whisper("from:\n#{JSON.pretty_generate(chapters)}\nto:\n#{JSON.pretty_generate(editedChapters)}", 3)
+			editedChapters
 		end
 
 		def sortChapters chapters
@@ -789,7 +802,7 @@ module Tunewich
 
 							if inputParts[1] == 'get'
 								if trackFileExists? @currentTrack
-									puts findTrackFiles(@currentTrack)[0]
+									whisper(findTrackFiles(@currentTrack)[0], 0)
 								else
 									putsRealtime getDownloadCommand @currentTrack
 								end
@@ -819,7 +832,7 @@ module Tunewich
 						}
 					},
 					'add' => {
-						'description' => 'Add a new track to the play queue. Input: <urls> [<tags>] -- urls: comma-separated URLs or YouTube IDs (Some URLs will add multiple tracks, like a bandcamp album); tags: comma-separated tags to add to the tracks.',
+						'description' => 'Add a new track to the play queue. Input: <URL>[,<URL>,...] [<TAG>[,<TAG>,...]] -- URLs: comma-separated URLs or YouTube IDs (Some URLs will add multiple tracks, like a bandcamp album (or TODO: YouTube playliist); tags: comma-separated tags to add to the tracks.',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^ ]*?)( .*?)?( \/.*)?$/)
 							urls = inputParts[1].split ',' if inputParts[1]
@@ -924,10 +937,9 @@ module Tunewich
 								@currentTrack['chapters'] = []
 							end
 
-							if !newChapter['name'] || newChapter['name'].length == 0
-								newChapter = editChapter newChapter
-							end
 							@currentTrack['chapters'] << newChapter
+							@currentTrack['chapters'] = sortChapters @currentTrack['chapters']
+							@currentTrack['chapters'] = editChapters @currentTrack['chapters']
 							@currentTrack['chapters'] = sortChapters @currentTrack['chapters']
 							writeLibraryToFile
 							whisper("New chapter written to library file", 3)
@@ -948,32 +960,20 @@ module Tunewich
 							{:chainedInput => inputParts[2]}
 						}
 					},
-					'editchapter' => {
-						'description' => "Edit a chapter's name and/or time, or set it to be skipped. Input: the chapter name or number to be edited (defaults to current chapter)",
+					'editchapters' => {
+						'description' => "Edit all the chapters for the current track (using vim).",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							if @currentTrack['chapters']
-								if inputParts[1].length > 0
-									chapterIndex = getChapterIndexByQuery inputParts[1]
-								else
-									chapterIndex = getChapterIndexAtTime @currentTrack, @currentPlayerTime
-									whisper("Current chapter is at index #{chapterIndex}", 3)
+							chapters = editChapters(@currentTrack['chapters'] || [])
+							if chapters && chapters.length > 0
+								@currentTrack['chapters'] = sortChapters chapters
+							elsif @currentTrack['chapters'] && @currentTrack['chapters'].length > 0
+								if confirm("Do you want to clear chapters from this track?")
+									@currentTrack.delete 'chapters'
 								end
-								if chapterIndex
-									chapter = @currentTrack['chapters'][chapterIndex]
-									whisper("About to edit chapter #{chapter}", 3)
-									chapter = editChapter chapter
-									# TODO: 1gG4h9
-									@currentTrack['chapters'][chapterIndex] = chapter
-									@currentTrack['chapters'] = sortChapters @currentTrack['chapters']
-									writeLibraryToFile
-									whisper("Chapter changes written to library file", 3)
-								else
-									putsRealtime "Unable to find the chapter you want to edit."
-								end
-							else
-								putsRealtime "No chapters to edit. Use /mkchapter to create chapters." # TODO: 1gG4hB
 							end
+							writeLibraryToFile
+							whisper("Chapter changes written to library file", 3)
 
 							{:chainedInput => inputParts[2]}
 						}
@@ -1442,35 +1442,8 @@ module Tunewich
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
 							seekInput = inputParts[1].strip
-							whisper("seek input: #{seekInput}")
-							if seekInput && seekInput.length > 0
-								if seekInput == 'mark' && @currentTrack.has_key?('mark')
-									seekInput = @currentTrack['mark']
-								end
-
-								relativeDirection = nil
-								relativeDirectionMatch = seekInput.match(/^[+-]/)
-								if relativeDirectionMatch
-									seekInput.sub!(/^[+-]/, '')
-									relativeDirection = relativeDirectionMatch[0] == '-' ? -1 : 1
-								end
-
-								seekTimeInSeconds = getSecondsFromDurationString seekInput
-								if seekTimeInSeconds
-									if relativeDirection
-										seekTimeInSeconds = @currentPlayerTime + relativeDirection * seekTimeInSeconds
-									end
-								else
-									whisper("Failed to get seconds from input '#{seekInput}'")
-									# TODO: 1gG4hv
-								end
-
-								if seekTimeInSeconds
-									putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "seek #{seekTimeInSeconds} 2\n"
-								end
-							else
-								whisper("seek input is empty: '#{seekInput}'")
-							end
+							seekTimeInSeconds = parseRelativeTime seekInput
+							seek seekTimeInSeconds, 0.1, 0.1
 							{:chainedInput => inputParts[2]}
 						}
 					},
@@ -1672,23 +1645,58 @@ module Tunewich
 
 			chapterIndex
 		end
-		
-		def seekToChapter chapterIndex, fadeOutPeriod = 1.0, fadeInPeriod = 0.1
-			currentPlaybackSeconds = @currentPlayerTime
-			whisper("currentPlaybackSeconds: #{currentPlaybackSeconds}", 3)
-			chapterTime = @currentTrack['chapters'][chapterIndex]['time']
-			chapterSeconds = getSecondsFromDurationString chapterTime
-			whisper("chapterSeconds: #{chapterSeconds}", 3)
-			isAbleToSeek = trackFileExists?(@currentTrack) || chapterSeconds > currentPlaybackSeconds
-			whisper("isAbleToSeek: #{isAbleToSeek}", 3)
+
+		def parseRelativeTime seekInput
+			whisper("seek input: #{seekInput}")
+			if seekInput && seekInput.length > 0
+				if seekInput == 'mark' && @currentTrack.has_key?('mark')
+					seekInput = @currentTrack['mark']
+				end
+
+				relativeDirection = nil
+				relativeDirectionMatch = seekInput.match(/^[+-]/)
+				if relativeDirectionMatch
+					seekInput.sub!(/^[+-]/, '')
+					relativeDirection = relativeDirectionMatch[0] == '-' ? -1 : 1
+				end
+
+				seekTimeInSeconds = getSecondsFromDurationString seekInput
+				if seekTimeInSeconds
+					if relativeDirection
+						seekTimeInSeconds = @currentPlayerTime + relativeDirection * seekTimeInSeconds
+					end
+				else
+					whisper("Failed to get seconds from input '#{seekInput}'")
+					# TODO: 1gG4hv
+				end
+			else
+				whisper("seek input is empty: '#{seekInput}'")
+			end
+
+			seekTimeInSeconds
+		end
+
+		def seek seekTimeInSeconds, fadeOutPeriod = 0.0, fadeInPeriod = 0.0
+			isAbleToSeek = trackFileExists?(@currentTrack) || seekTimeInSeconds > @currentPlayerTime
 			if isAbleToSeek
 				fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
+
 				playerInputStreamName = "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
-				putInTempFile playerInputStreamName, "seek #{chapterSeconds} 2\n"
+				putInTempFile playerInputStreamName, "seek #{seekTimeInSeconds} 2\n"
+
 				fadeVolume 'in', fadeInPeriod, @currentPlayerIndex if fadeInPeriod > 0
 			else
 				putsRealtime "Download the file to be able to seek backwards."
 			end
+		end
+		
+		def seekToChapter chapterIndex, fadeOutPeriod = 1.0, fadeInPeriod = 0.1
+			whisper("seeking to chapter #{chapterIndex} (fade #{fadeOutPeriod}/#{fadeInPeriod}", 3)
+			chapterTime = @currentTrack['chapters'][chapterIndex]['time']
+			chapterSeconds = getSecondsFromDurationString chapterTime
+			whisper("seeking to chapter at #{chapterSeconds} seconds", 3)
+
+			seek chapterSeconds, fadeOutPeriod, fadeInPeriod
 		end
 
 		def getUserInputBPM
@@ -1919,7 +1927,7 @@ module Tunewich
 			streaming = @forceStreaming || (!fileAlreadyExists && !@enableDownload)
 
 			if @noNetwork && !fileAlreadyExists
-				puts "No local file to play: #{track['title']}"
+				whisper("No local file to play: #{track['title']}", 0)
 				return response
 			end
 
@@ -1955,7 +1963,7 @@ module Tunewich
 			}
 
 			if track['mark'] && !liveStreaming
-				puts "Starting from mark at #{track['mark']}."
+				puts("Starting from mark at #{track['mark']}.", 0)
 				offsetSeconds = getSecondsFromDurationString track['mark']
 				playerStartupOptions << "-ss #{offsetSeconds}"
 				loadLibrary
@@ -2012,7 +2020,7 @@ module Tunewich
 			end
 
 			if not mediaFilePath
-				puts "File not found for #{track['title']}."
+				puts("File not found for #{track['title']}.", 0)
 				return response
 			end
 
@@ -2090,7 +2098,7 @@ module Tunewich
 					if nextNonSkippingChapter
 						seekToChapter nextNonSkippingChapter, 0.25, 0.25
 					else
-						# TODO: 1gG4j7
+						# TODO:fade out and skip to next track (i.e. quit player)
 					end
 					@currentlySkippingChapter = nil
 				end
@@ -2180,14 +2188,6 @@ module Tunewich
 				if @shouldShowPlaybackInfo && @configuredVerbosity > -1 && @configuredVerbosity < 5
 					printRepeat(playbackInfo.join(' '), true)
 				end
-			end
-		end
-
-		def putsRealtime message
-			if @shouldShowPlaybackInfo
-				print "\n#{message}\n"
-			else
-				puts message
 			end
 		end
 
@@ -2301,7 +2301,7 @@ module Tunewich
 		def setLibraryPath libraryPath
 			@tunewichDirectory = libraryPath
 			if not Dir.exist? @tunewichDirectory
-				puts "Please create the directory '#{@tunewichDirectory}'."
+				whisper("Please create the directory '#{@tunewichDirectory}'.", 0)
 				exit
 			end
 
@@ -2315,9 +2315,9 @@ module Tunewich
 
 			loadLibrary
 
-      if not @library
-        raise "Unable to load library from path #{@libraryFilePath}."
-      end
+			if not @library
+				raise "Unable to load library from path #{@libraryFilePath}."
+			end
 		end
 
 		def extendHash sourceTrack, overrideTrack
@@ -2472,7 +2472,7 @@ module Tunewich
 		# @returns integer PID of download process, or nil if download failed
 		def downloadTrack(track, streamPath = nil)
 			if @noNetwork
-				puts "not downloading --no-network"
+				whisper("not downloading --no-network", 0)
 				return
 			end
 
@@ -2662,14 +2662,14 @@ module Tunewich
 				:data => nil
 			}
 
-      begin
-        libraryData[:data] = JSON.parse(json)
-      rescue
-        whisper("Invalid JSON.", 0)
-      end
+			begin
+				libraryData[:data] = JSON.parse(json)
+			rescue
+				whisper("Invalid JSON.", 0)
+			end
 
 
-      libraryData
+			libraryData
 		end
 
 		def addMarkToTrack track, time
@@ -2748,10 +2748,10 @@ module Tunewich
 			if confirm confirmMsg, commands
 				writeLibraryToFile
 			else
-				puts "No changes saved."
+				whisper("No changes saved.", 0)
 			end
 
-			puts "Cleanup finished."
+			whisper("Cleanup finished.", 0)
 		end
 
 		def determineRelativeSpeed input, track, shouldSetPlayingBPM = false
@@ -2793,7 +2793,7 @@ module Tunewich
 			@library['tags'].each { |tagName, tag|
 				if tag.has_key?('parents') && tag['parents'].include?(ancestorTagName)
 					allDescendantTags << tagName
-					whisper("#{ancestorTagName} #{">" * (depth + 1)} #{tagName}", 2)
+					whisper("#{ancestorTagName} #{">" * (depth + 1)} #{tagName}", 4)
 					allDescendantTags += getDescendantTagNames tagName, (depth + 1)
 				end
 			}
@@ -2811,7 +2811,7 @@ module Tunewich
 					thisTag['parents'].each { |tagName|
 						whisper("tagName: #{tagName}", 5)
 						allAncestorTags << tagName
-						whisper("#{descendantTagName} #{"<" * (depth + 1)} #{tagName}", 2)
+						whisper("#{descendantTagName} #{"<" * (depth + 1)} #{tagName}", 4)
 						allAncestorTags += getAncestorTagNames tagName, (depth + 1)
 					}
 				end
@@ -2823,10 +2823,10 @@ module Tunewich
 		end
 
 		def filterTracks tracks, filters, isExcludeFilter = false
-			whisper('filterTracks', 4)
 			action = isExcludeFilter ? 'delete_if' : 'keep_if'
 
 			if filters.has_key? 'local'
+				whisper("filtering to local files", 3)
 				tracks.send(action) { |t|
 					trackFileExists? t
 				}
@@ -2834,16 +2834,19 @@ module Tunewich
 
 			if filters.has_key? 'rating'
 				if filters['rating'] && filters['rating'].length > 0
+					whisper("filtering tracks with rating in range #{filtlers['rating']}", 3)
 					tracks.send(action) { |t|
 						matchPropertyWithRangeString filters['rating'], t, 'rating'
 					}
 				else
+					whisper("filtering tracks with any rating", 3)
 					tracks.send(action) { |t| t.has_key? 'rating' }
 				end
 			end
 
 			if filters.has_key? 'tag'
 				if filters['tag']
+					whisper("filtering tracks with the tag filter #{filters['tag']}", 3)
 					# TODO: 1gG4jN
 					selectedTags = []
 					unionTagTracks = []
@@ -2876,7 +2879,7 @@ module Tunewich
 						end
 					}
 
-					whisper("filtering for tags: #{selectedTags}", 4)
+					whisper("expanded filter tag list with descendants: #{selectedTags}", 4)
 					if selectedTags.length > 0
 						# TODO: 1gG4jP
 						selectedTags.each { |tagInfo|
@@ -2887,9 +2890,10 @@ module Tunewich
 							tracks.sort! { |a, b| unionTagTracks.count(b['id']) <=> unionTagTracks.count(a['id']) }
 						end
 					else
-						puts "No matches for \"#{filters['tag']}\". Available tags are: #{listAllTagsWithAliases.join ", "}"
+						whisper("No matches for \"#{filters['tag']}\". Available tags are: #{listAllTagsWithAliases.join ", "}", 0)
 					end
 				else
+					whisper("filtering tracks that have any tags", 3)
 					@library['tags'].each { |name, libraryTag|
 						tracks.send(action) { |t|
 							libraryTag['tracks'] && libraryTag['tracks'].index(t['id'])
@@ -2900,15 +2904,18 @@ module Tunewich
 
 			if filters.has_key? 'bpm'
 				if filters['bpm'] && filters['bpm'].length > 0
+					whisper("filtering tracks with bpm matching #{filters['bpm']}", 3)
 					tracks.send(action) { |t|
 						matchPropertyWithRangeString filters['bpm'], t, 'bpm'
 					}
 				else
+					whisper("filtering tracks with bpm data", 3)
 					tracks.send(action) { |t| t.has_key? 'bpm' }
 				end
 			end
 
 			if filters['title']
+				whisper("filtering tracks with title matching #{filters['title']}", 3)
 				matches = fuzzyStringSearchInList(filters['title'], getTrackTitles(tracks))
 				matches.sort! { |a,b| b[:density] <=> a[:density] }
 				matchedIds = []
@@ -2925,6 +2932,7 @@ module Tunewich
 			end
 
 			if filters['last']
+				whisper("filtering tracks with playtime within the last #{filters['last']}", 3)
 				now = Time.now.to_i
 				watershed = now - getSecondsFromDurationString(filters['last']).to_i
 				tracks.send(action) { |t|
@@ -2933,6 +2941,7 @@ module Tunewich
 			end
 
 			if filters['min-duration']
+				whisper("Filtering tracks with duration of at least #{filters['min-duration']}", 3)
 				minDuration = getSecondsFromDurationString filters['min-duration']
 				tracks.send(action) { |t|
 					t['duration'] ? getSecondsFromDurationString(t['duration']) > minDuration : false
@@ -2940,6 +2949,7 @@ module Tunewich
 			end
 
 			if filters.has_key? 'ab'
+				whisper("Filtering tracks with an A/B loop", 3)
 				tracks.send(action) { |track|
 					if track
 						track.has_key? 'loop'
@@ -2950,6 +2960,7 @@ module Tunewich
 			end
 
 			if filters.has_key? 'chapters'
+				whisper("Filtering tracks with chapters", 3)
 				tracks.send(action) { |track|
 					if track
 						track.has_key? 'chapters'
@@ -2959,7 +2970,7 @@ module Tunewich
 				}
 			end
 
-			puts "#{tracks.length} matches for filters"
+			putsRealtime "#{tracks.length} matches for filters"
 
 			tracks
 		end
@@ -3035,7 +3046,7 @@ module Tunewich
 				'id' => youtubeVideoID
 			}
 			if @noNetwork
-				puts "no getYouTubeTrackInfo --no-network"
+				whisper("no getYouTubeTrackInfo --no-network", 0)
 				return track
 			end
 			json = `youtube-dl -j -- #{youtubeVideoID} 2>/dev/null` # suppress errors
@@ -3060,7 +3071,7 @@ module Tunewich
 				'id' => Digest::MD5.hexdigest(soundcloudURL).to_s
 			}
 			if @noNetwork
-				puts "no getSoundcloudTrackInfo --no-network"
+				whisper("no getSoundcloudTrackInfo --no-network", 0)
 				return track
 			end
 			json = `youtube-dl -j -- #{soundcloudURL} 2>/dev/null` # suppress errors
@@ -3127,9 +3138,9 @@ module Tunewich
 			if !@library['playlists'][playlistName].has_key?('tracks') || !@library['playlists'][playlistName]['tracks'].include?(trackReference)
 				@library['playlists'][playlistName]['tracks'] ||= []
 				@library['playlists'][playlistName]['tracks'] << trackReference
-				puts "Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'"
+				whisper("Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'", 0)
 			else
-				puts "Track '#{track['title']}' (#{trackReference}) is already in playlist '#{playlistName}'"
+				whisper("Track '#{track['title']}' (#{trackReference}) is already in playlist '#{playlistName}'", 0)
 			end
 		end
 
@@ -3150,7 +3161,7 @@ module Tunewich
 
 		def searchYouTube query, offset = 0, count = 20
 			# FIXME 1gpaoG: sometimes the STDIN is not editable after this
-			puts "Searching YouTube for '#{query}'"
+			whisper("Searching YouTube for '#{query}'", 0)
 			resultsPerPage = 20
 			page = (offset.to_f / resultsPerPage.to_f).to_i + 1
 			queryParameter = URI::encode(query)
@@ -3164,7 +3175,7 @@ module Tunewich
 
 		def getYouTubeTracksFromPage url
 			if @noNetwork
-				puts "no getYouTubeTracksFromPage --no-network"
+				whisper("no getYouTubeTracksFromPage --no-network", 0)
 				return false
 			end
 			url = getValidYouTubeURI url
@@ -3209,7 +3220,7 @@ module Tunewich
 
 		def getSoundcloudRecommendations url
 			if @noNetwork
-				puts "no getSoundcloudRecommendations --no-network"
+				whisper("no getSoundcloudRecommendations --no-network", 0)
 				return false
 			end
 			url = "#{url}/recommended"
@@ -3255,7 +3266,7 @@ module Tunewich
 		def getOCRemixSource(url)
 			source = nil
 			if @noNetwork
-				puts "no getOCRemixSource --no-network"
+				whisper("no getOCRemixSource --no-network", 0)
 				return false
 			end
 
@@ -3356,7 +3367,7 @@ module Tunewich
 			end
 
 			parser.on("-L FILE", "--log FILE", "Log most verbose output to FILE. This includes events and crosstalk between the script and player", " ") do |logFile|
-				@logFile = logFile
+				$logFilePath = logFile
 			end
 
 			parser.on("-m MODE", "--mode MODE", "Choose a player mode: #{Player::MODES.keys.join ', '}", " ") do |modeName|
@@ -3407,7 +3418,7 @@ module Tunewich
 				isRadioConfigured = true
 				whisper("Preparing to start radio (#{streamingServerType}).", 0)
 				if streamingServerType == 'homebrew'
-					puts "About to prompt you for your password, so that the darkice server can be run as root."
+					whisper("About to prompt you for your password, so that the darkice server can be run as root.", 0)
 					`sudo ls &>/dev/null`
 				end
 				if UNAME == "Darwin"
@@ -3416,7 +3427,7 @@ module Tunewich
 						@playerOverrideCommands << "-ao coreaudio:device_id=#{audioDeviceID}"
 						jackAudioDeviceAndOptions = "coreaudio -d SoundflowerEngine:0"
 					else
-						puts "Please install Soundflower (https://github.com/mattingalls/Soundflower)"
+						whisper("Please install Soundflower (https://github.com/mattingalls/Soundflower)", 0)
 						isRadioConfigured = false
 					end
 				else
@@ -3437,10 +3448,10 @@ module Tunewich
 						darkiceConfigFile = "#{$serviceConfigDir}/darkice.cfg"
 
 						if not File.exist? icecastConfigFile
-							puts "Please create the icecast config file at #{icecastConfigFile}."
+							whisper("Please create the icecast config file at #{icecastConfigFile}.", 0)
 							isRadioConfigured = false
 						elsif not File.exist? darkiceConfigFile
-							puts "Please create the darkice config file at #{darkiceConfigFile}."
+							whisper("Please create the darkice config file at #{darkiceConfigFile}.", 0)
 							isRadioConfigured = false
 						end
 					else
@@ -3491,7 +3502,7 @@ module Tunewich
 						whisper("continue to Nicecast server", 2)
 					end
 				else
-					puts "Unable to configure radio server."
+					whisper("Unable to configure radio server.", 0)
 				end
 			end
 
@@ -3508,7 +3519,7 @@ module Tunewich
 					@trackIndex = trackQuery.to_i - 1
 				else
 					@trackIndex = findTrackIndex(trackQuery) || nil
-					puts "@trackIndex: #{@trackIndex}"
+					whisper("@trackIndex: #{@trackIndex}", 3)
 				end
 			end
 
@@ -3539,7 +3550,7 @@ module Tunewich
 		def doOptionSecondaryActions optionsOutput
 
 			if not @fileDirectory
-				puts "please specify an input directory with -i"
+				whisper("please specify an input directory with -i", 0)
 				exit
 			end
 
@@ -3564,7 +3575,7 @@ module Tunewich
 
 				if playlistName
 					if not @library['playlists'].has_key? playlistName
-						puts "Creating new playlist: #{playlistName}"
+						whisper("Creating new playlist: #{playlistName}", 0)
 						createPlaylist playlistName
 						writeLibraryToFile
 					end
@@ -3603,7 +3614,7 @@ module Tunewich
 				urlCanBeScraped = true # assuming this for now
 				if url.match(/ocremix\.org\/remix/)
 					tracks << matchExistingLibraryTrack(createTrack(url, 'ocremix'))
-					puts "This URL contains an OC Remix ID. Adding."
+					whisper("This URL contains an OC Remix ID. Adding.", 0)
 				elsif looksLikeAYouTubeID? url
 					youtubeId = url
 				else
@@ -3612,7 +3623,7 @@ module Tunewich
 
 				if youtubeId
 					tracks << updateTrackInfo(matchExistingLibraryTrack(createTrack(youtubeId, 'youtube')))
-					puts "This URL contains a YouTube ID. Adding."
+					whisper("This URL contains a YouTube ID. Adding.", 0)
 				else
 					urlHTTPHead = `curl -sL --head "#{url}"`
 					urlContentType = getHTTPHeaderByPattern urlHTTPHead, /^Content-Type: ([^;]*).*/i
@@ -3645,12 +3656,17 @@ module Tunewich
 					end
 				end
 
-				if urlCanBeScraped && confirm("Look for all tracks on this page?")
-					youTubeTracks = getYouTubeTracksFromPage url
-					tracks.concat youTubeTracks if youTubeTracks
+				begin
+					if urlCanBeScraped && confirm("Look for all tracks on this page?")
+						youTubeTracks = getYouTubeTracksFromPage url
+						tracks.concat youTubeTracks if youTubeTracks
+					end
+				rescue Exception => e
+					whisper("Trouble scraping this page: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 0) # TODO: well you give it some...Trouble.
 				end
 			}
 
+			whisper("Added these tracks: #{tracks.join(', ')}", 3)
 			tracks
 		end
 
@@ -3874,7 +3890,7 @@ module Tunewich
 			input = nil
 			commandHistoryIndex = nil
 
-			processCommandsWithInput = Proc.new { |commandLoopInput|
+			processCommandsWithInput = Proc.new { |commandLoopInput, leftoverAction|
 				while commandLoopInput && !commandLoopInput.empty? && commandLoopInput[0] == '/'
 					whisper("parsing commands, input: #{commandLoopInput}", 3)
 					commandParts = commandLoopInput.match(/^\/([^\s]*)\s*(.*)/)
@@ -3918,7 +3934,7 @@ module Tunewich
 						whisper("command info: #{commandInfo}", 3)
 						if commandInfo[:output] && commandInfo[:output][:action]
 							whisper("chained command calling action (#{commandInfo[:output][:action]})", 3)
-							action.call commandInfo[:output][:action]
+							leftoverAction.call commandInfo[:output][:action]
 						end
 						if commandInfo[:output] && commandInfo[:output][:chainedInput] && commandInfo[:output][:chainedInput].length > 0
 							whisper("chained commandLoopInput: #{commandInfo[:output][:chainedInput]}", 3)
@@ -3928,7 +3944,7 @@ module Tunewich
 								bindOnce commandInfo[:output][:bindChainToEvent], Proc.new {
 									whisper("running deferred chained commands", 1)
 									whisper("deferred commands: #{commandInfo[:output][:chainedInput]}", 2)
-									commandLoopInput = processCommandsWithInput.call commandInfo[:output][:chainedInput]
+									commandLoopInput = processCommandsWithInput.call(commandInfo[:output][:chainedInput], leftoverAction)
 								}, commandInfo[:output][:bindingGroupName]
 								break
 							else
@@ -3949,26 +3965,28 @@ module Tunewich
 				commandLoopInput
 			}
 
-			handleInputLine = Proc.new { |inputLine|
+			handleInputLine = Proc.new { |inputLine, leftoverAction|
 				whisper("received input: #{inputLine}", 3)
 				if commands
-					inputLine = processCommandsWithInput.call inputLine
+					inputLine = processCommandsWithInput.call(inputLine, leftoverAction)
 				end
 
-				handledActionResponse = nil
-				if action && inputLine && inputLine.length > 0
+				handledActionResponse = true
+				if leftoverAction && inputLine && inputLine.length > 0
 					whisper("input left over after commands: passing to action (#{inputLine})", 3)
-					handledActionResponse = action.call inputLine
+					handledActionResponse = leftoverAction.call inputLine
 				end
 
 				handledActionResponse
 			}
 
-			handleInputCharacter = Proc.new { |inputCharacter|
+			handleInputCharacter = Proc.new { |inputCharacter, leftoverAction|
+				result = true
+
 				if inputCharacter == "" # control-c character
 					whisper("interrupt character, is that you?", 3)
 					@shouldShowPlaybackInfo = true
-					break
+					result = false
 				elsif inputCharacter == "" # backspace
 					if input
 						input = input[0,input.length - 1]
@@ -3994,17 +4012,15 @@ module Tunewich
 					@shouldShowPlaybackInfo = true
 					response[:input] = input
 
-					actionResponse = handleInputLine.call input
+					actionResponse = handleInputLine.call(input, leftoverAction)
 
 					input = nil
 
-					if actionResponse == false
-						# 2019-02-01T13:58:56-0800 I don't remember what this is about
-						whisper("action returned false: breaking command loop", 3)
-						break
+					if actionResponse
+						prompt.call
+					else
+						result = false
 					end
-
-					prompt.call
 				else
 					if not input
 						input = ''
@@ -4053,14 +4069,20 @@ module Tunewich
 
 					printRepeat input
 				end
+
+				result
 			}
 
-			externalInputHandlerId = bind('external_input', handleInputCharacter);
-			externalCommandHandlerId = bind('external_command', handleInputLine);
+			externalInputHandlerId = bind('external_input', Proc.new { |extInputChar|
+				handleInputCharacter(extInputChar, action)
+			});
+			externalCommandHandlerId = bind('external_command', Proc.new { |extInput|
+				handleInputLine(extInput, action)
+			});
 
 			while directInputCharacter = readCharacter
-				handleInputCharacter.call directInputCharacter
-				break if shouldBreakCommandLoop
+				inputResult = handleInputCharacter.call(directInputCharacter, action)
+				break if shouldBreakCommandLoop || !inputResult
 			end
 
 			unbind(commandLoopExitBinding)
@@ -4087,7 +4109,7 @@ module Tunewich
 		end
 
 		def promptForPlaylist
-			puts "Please choose a playlist (leave blank to play all):\n	#{@library['playlists'].keys.join "\n	"}"
+			whisper("Please choose a playlist (leave blank to play all):\n	#{@library['playlists'].keys.join "\n	"}", 0)
 			selectedListName = nil
 			while !selectedListName do
 				playlistQuery = commandPrompt[:input]
@@ -4100,7 +4122,7 @@ module Tunewich
 				selectedListName = findPlaylistName playlistQuery
 
 				if not selectedListName
-					puts "No matches. Try again"
+					whisper("No matches. Try again", 0)
 				end
 
 			end
@@ -4128,7 +4150,7 @@ module Tunewich
 				if selectedChapterIndex
 					break
 				else
-					puts "No matches. Try again."
+					whisper("No matches. Try again.", 0)
 				end
 
 			end
@@ -4238,6 +4260,12 @@ begin
 
 	player.kill
 rescue Exception => e
-  puts e
+	message = "Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}"
+	puts message
+	if $logFilePath
+		open($logFilePath, 'a') { |f|
+			f.puts message
+		}
+	end
 	player && player.kill
 end
