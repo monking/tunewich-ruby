@@ -243,38 +243,44 @@ module Tunewich
 				'ramp' => {
 					'info' => 'Ramp speed (/ramp SPEED [DURATION] [NEXT ACTION])',
 					'action' => Proc.new { |properties|
-						rampCommandMatch = /^(out|in|[0-9.]+)( [0-9.]+)?( .+)?$/.match properties
+						rampCommandMatch = /^(out|in|[0-9.]+(bpm)?)( [0-9.]+)?( .+)?$/.match properties
+						#                    1              2      3          4
 						if rampCommandMatch
-							duration = rampCommandMatch[2] && rampCommandMatch[2].length > 0 ? rampCommandMatch[2].to_f : 0.3
-							followingCommand = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].strip : nil
+							duration = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].to_f : 0.3
+							followingCommand = rampCommandMatch[4] && rampCommandMatch[4].length > 0 ? rampCommandMatch[4].strip : nil
 							speed = getCurrentMplayerSpeed
 							# min- and maxSpeed really depend on the system, and seems limitless when using `-af scaletempo[=speed=tempo]`
 							minSpeed = 0.125
 							maxSpeed = 4
-							targetRampSpeed = [[rampCommandMatch[1].to_f, minSpeed].max, maxSpeed].min
-							if targetRampSpeed == 'out'
-								targetRampSpeed = 0
-								speedBeforeRampingOut = speed
-							elsif targetRampSpeed == 'in'
-								targetRampSpeed = speedBeforeRampingOut
+							requestingSpeed = determineRelativeSpeed rampCommandMatch[1], @tracks[@trackIndex]
+							if requestingSpeed
+								targetRampSpeed = [[requestingSpeed, minSpeed].max, maxSpeed].min
+								if targetRampSpeed == 'out'
+									targetRampSpeed = 0
+									speedBeforeRampingOut = speed
+								elsif targetRampSpeed == 'in'
+									targetRampSpeed = speedBeforeRampingOut
+								else
+									targetRampSpeed = targetRampSpeed.to_f
+								end
+								speedRampInterval = 0.02
+								speedRampStepCount = duration / speedRampInterval
+								speedStep = (targetRampSpeed - speed) / duration * speedRampInterval
+								whisper "about to ramp speed by #{speedStep} every #{speedRampInterval} seconds"
+								for stepIndex in 1..speedRampStepCount
+									speed += speedStep
+									printRepeat "ramping: #{(speed * 10.0).round.to_f / 10.0}"
+									putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "speed_set #{speed}\n"
+									sleep speedRampInterval
+								end
+								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "speed_set #{targetRampSpeed}\n"
+								if followingCommand
+									whisper "Waiting 1 second for buffered sound to play"
+									sleep 1.0
+									putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
+								end
 							else
-								targetRampSpeed = targetRampSpeed.to_f
-							end
-							speedRampInterval = 0.02
-							speedRampStepCount = duration / speedRampInterval
-							speedStep = (targetRampSpeed - speed) / duration * speedRampInterval
-							whisper "about to ramp speed by #{speedStep} every #{speedRampInterval} seconds"
-							for stepIndex in 1..speedRampStepCount
-								speed += speedStep
-								printRepeat "ramping: #{(speed * 10.0).round.to_f / 10.0}"
-								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "speed_set #{speed}\n"
-								sleep speedRampInterval
-							end
-							putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "speed_set #{targetRampSpeed}\n"
-							if followingCommand
-								whisper "Waiting 1 second for buffered sound to play"
-								sleep 1.0
-								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
+								puts "Bad speed format, or track has no bpm set."
 							end
 						end
 					}
@@ -1305,6 +1311,19 @@ module Tunewich
 			end
 
 			puts "Cleanup finished."
+		end
+
+		def determineRelativeSpeed input, track
+			relativeSpeed = input.to_f
+			if input.to_s.match /bpm$/
+				if track.has_key? 'bpm'
+					inputBPM = relativeSpeed
+					relativeSpeed = inputBPM / track['bpm']
+				else
+					relativeSpeed = nil
+				end
+			end
+			relativeSpeed
 		end
 
 		def matchPropertyWithRangeString rangeString, hash, property
