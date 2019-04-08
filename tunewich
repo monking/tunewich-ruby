@@ -1070,7 +1070,7 @@ module Tunewich
 						}
 					},
 					'note' => {
-            # FIXME: 1gSmhx
+						# FIXME: 1gSmhx
 						'description' => "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing).",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
@@ -1507,7 +1507,7 @@ module Tunewich
 				requestedCommandSet['?'] = {
 					'description' => 'Show interactive command info (like this). Not chainable.',
 					'action' => Proc.new {
-            showInteractiveCommandHelp requestedCommandSet
+						showInteractiveCommandHelp requestedCommandSet
 					}
 				}
 			end
@@ -1518,13 +1518,13 @@ module Tunewich
 		def interactivePlayback
 			bindingGroupName = 'interactivePlayback'
 
-      @externalCommandStream = makeStream 'tunewich-commmand-queue'
+			@externalCommandStream = makeStream 'tunewich-commmand-queue'
 			@externalCommandThread = Thread.new {
-        externalCommand = tailTempFile @externalCommandStream
-        if externalCommand
-          whisper("externalCommand: '#{externalCommand}'") # TODO: 1pxQxMENEem
-        end
-        sleep 1
+				externalCommand = tailTempFile @externalCommandStream
+				if externalCommand
+					whisper("externalCommand: '#{externalCommand}'") # TODO: 1pxQxMENEem
+				end
+				sleep 1
 			}
 
 			shouldExitPlayerLoop = false
@@ -2196,8 +2196,8 @@ module Tunewich
 					matches = lastPlayerOutput.match pattern
 					output = matches[2] if matches
 				end
-      else
-        # don't use 100% CPU while doing nothing
+			else
+				# don't use 100% CPU while doing nothing
 				sleep responseDelay if responseDelay
 			end
 			output
@@ -3311,9 +3311,9 @@ module Tunewich
 
 			parser.on("-h", "--help", "Show this help.", " ") do
 				puts parser.help()
-        puts "INTERACTIVE COMMANDS"
-        interactiveCommands = getInteractiveCommands(['playing'], 'help')
-        showInteractiveCommandHelp(interactiveCommands)
+				puts "INTERACTIVE COMMANDS"
+				interactiveCommands = getInteractiveCommands(['playing'], 'help')
+				showInteractiveCommandHelp(interactiveCommands)
 				exit
 			end
 
@@ -3462,9 +3462,9 @@ module Tunewich
 				@shuffle = true
 			end
 
-      parser.on("-S SESSION", "--session SESSION", "Load a session: a set of most options, like filters, track list. Pass no value in order to see a list of sessions available See INTERACTIVE COMMANDS for info on saving a session during playback.", " ") do
-				@shuffle = true
-			end
+			# parser.on("-S SESSION", "--session SESSION", "Load a session: a set of most options, like filters, track list. Pass no value in order to see a list of sessions available See INTERACTIVE COMMANDS for info on saving a session during playback.", " ") do
+			# 	# TODO 1gTpuh
+			# end
 
 			parser.on("-t", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).", " ") do |trackQuery|
 				if trackQuery.to_i != 0
@@ -3792,27 +3792,27 @@ module Tunewich
 			getTracksFromTitleList editedList, tracks
 		end
 
-    def showInteractiveCommandHelp commands = nil
-      commandInfo = []
-      maxCommandNameLength = 0
-      sortedCommandList = []
-      whisper("gathering command info", 3)
-      commands.each { |name, command|
-        sortedCommandList << {:name => name, :command => command}
-        maxCommandNameLength = name.length if name.length > maxCommandNameLength
-      }
-      sortedCommandList.sort! { |a,b| a[:name] <=> b[:name] }
-      sortedCommandList.each { |commandMeta|
-        info = "    /"
-        commandPaddingLength = info.length
-        info += commandMeta[:name]
-        info += " " * (maxCommandNameLength - info.length + commandPaddingLength)
-        info += " : #{commandMeta[:command]['description']}" if commandMeta[:command]['description']
-        commandInfo << info
-      }
-      putsRealtime(commandInfo.join("\n"))
-      nil
-    end
+		def showInteractiveCommandHelp commands = nil
+			commandInfo = []
+			maxCommandNameLength = 0
+			sortedCommandList = []
+			whisper("gathering command info", 3)
+			commands.each { |name, command|
+				sortedCommandList << {:name => name, :command => command}
+				maxCommandNameLength = name.length if name.length > maxCommandNameLength
+			}
+			sortedCommandList.sort! { |a,b| a[:name] <=> b[:name] }
+			sortedCommandList.each { |commandMeta|
+				info = "    /"
+				commandPaddingLength = info.length
+				info += commandMeta[:name]
+				info += " " * (maxCommandNameLength - info.length + commandPaddingLength)
+				info += " : #{commandMeta[:command]['description']}" if commandMeta[:command]['description']
+				commandInfo << info
+			}
+			putsRealtime(commandInfo.join("\n"))
+			nil
+		end
 
 		def commandPrompt message = nil, commands = nil, action = nil
 			shouldBreakCommandLoop = false
