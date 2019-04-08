@@ -2688,6 +2688,7 @@ module Tunewich
 						end
 					end
 				elsif @autoDownload
+					downloadOptions['sync'] = true
 					if downloadTrack(track, downloadOptions)
 						mediaFilePath = firstTrackFile track
 					else
@@ -3330,7 +3331,7 @@ module Tunewich
 				downloadPid = spawn(downloadCommand) # spawn: non-blocking
 			else
 				trigger 'download_begin', track
-				Thread.new {
+				runAndHandleDownloadCommand = Proc.new {
 					downloadPid = system(downloadCommand) # system: blocking
 					if trackFileExists? track
 						loadLibrary
@@ -3346,6 +3347,11 @@ module Tunewich
 					end
 					trigger 'download_end', track
 				}
+				if options['sync']
+					runAndHandleDownloadCommand
+				else
+					Thread.new { runAndHandleDownloadCommand }
+				end
 			end
 
 			deleteTempFile downloadFeedbackFileName
