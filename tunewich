@@ -61,7 +61,7 @@ module Tunewich
 			@shouldShowPlaybackInfo = true
 			@trackFilters = nil
 			@trackExcludeFilters = nil
-			@noNetwork = false
+			@networkEnabled = true
 			@playlistName = nil
 			@volume = 25
 			@currentVolume = 25
@@ -186,14 +186,14 @@ module Tunewich
 
 					nextTrack() # call nextTrack after @trackIndex is announced, but before play, so that the user can see which track will come next.
 
-					if @updateAllPlayedTrackInfo && !@noNetwork
+					if @updateAllPlayedTrackInfo && @networkEnabled
 						printRepeat "Getting latest track information..."
 						updateTrackInfo @currentTrack
 					end
 
 					fileExists = trackFileExists? @currentTrack
 
-					if !fileExists && @noNetwork
+					if !fileExists && !@networkEnabled
 						next
 					end
 
@@ -846,8 +846,12 @@ module Tunewich
 					'net' => {
 						'description' => 'Toggle "no-network".',
 						'action' => Proc.new { |input|
-							@noNetwork = !@noNetwork
-							putsRealtime "network: #{@noNetwork ? 'off' : 'on'}"
+							if inputParts[1] && inputParts[1].length > 0
+								@networkEnabled = !!(inputParts[1].match(/^(y(es)?|o(n|[^f]))/i))
+							else
+								@networkEnabled = !@networkEnabled
+							end
+							putsRealtime "network: #{@networkEnabled ? 'off' : 'on'}"
 							{:chainedInput => input}
 						}
 					},
@@ -924,7 +928,7 @@ module Tunewich
 
 									if match && match[:score] > 1
 										feed = @library['feeds'][match[:index]]
-										if @noNetwork
+										if !@networkEnabled
 											putsRealtime "Found feed \"#{feed['title']}\". Network is disabled, not fetching feed contents."
 										else
 											putsRealtime "Loading podcast: \"#{feed['title']}\"..."
@@ -2030,7 +2034,7 @@ module Tunewich
 			liveStreaming = doesTrackHaveTag(track, 'live-radio') # TODO: 1gSke5
 			streaming = @forceStreaming || (!fileAlreadyExists && !@enableDownload)
 
-			if @noNetwork && !fileAlreadyExists
+			if !@networkEnabled && !fileAlreadyExists
 				whisper("No local file to play: #{track['title']}", 0)
 				return response
 			end
@@ -2354,7 +2358,7 @@ module Tunewich
 
 				if @trackIndex > @tracks.length - 1
 
-					if @youtubeSearchPage && !@noNetwork
+					if @youtubeSearchPage && @networkEnabled
 						@youtubeSearchPage += 1
 						searchedTracks = searchYouTube(@youtubeSearch, (@youtubeSearchPage - 1) * 20)
 						useTracks(searchedTracks, true) if searchedTracks
@@ -2587,7 +2591,7 @@ module Tunewich
 		# @param string/nil streamPath (local file path); if the file already exists, copy it to the destination
 		# @returns integer PID of download process, or nil if download failed
 		def downloadTrack(track, streamPath = nil)
-			if @noNetwork
+			if !@networkEnabled
 				whisper("not downloading --no-network", 0)
 				return
 			end
@@ -3165,7 +3169,7 @@ module Tunewich
 				'src' => youtubeVideoID,
 				'id' => youtubeVideoID
 			}
-			if @noNetwork
+			if !@networkEnabled
 				whisper("no getYouTubeTrackInfo --no-network", 0)
 				return track
 			end
@@ -3190,7 +3194,7 @@ module Tunewich
 				'src' => soundcloudURL,
 				'id' => Digest::MD5.hexdigest(soundcloudURL).to_s
 			}
-			if @noNetwork
+			if !@networkEnabled
 				whisper("no getSoundcloudTrackInfo --no-network", 0)
 				return track
 			end
@@ -3294,7 +3298,7 @@ module Tunewich
 		end
 
 		def getYouTubeTracksFromPage url
-			if @noNetwork
+			if !@networkEnabled
 				whisper("no getYouTubeTracksFromPage --no-network", 0)
 				return false
 			end
@@ -3339,7 +3343,7 @@ module Tunewich
 		end
 
 		def getSoundcloudRecommendations url
-			if @noNetwork
+			if !@networkEnabled
 				whisper("no getSoundcloudRecommendations --no-network", 0)
 				return false
 			end
@@ -3385,7 +3389,7 @@ module Tunewich
 
 		def getOCRemixSource(url)
 			source = nil
-			if @noNetwork
+			if !@networkEnabled
 				whisper("no getOCRemixSource --no-network", 0)
 				return false
 			end
@@ -3504,7 +3508,7 @@ module Tunewich
 			end
 
 			parser.on("-N", "--no-network", "Don't fetch any information or media from the internet. Use only local files.", " ") do
-				@noNetwork = true
+				@networkEnabled = false
 				@trackFilters ||= {}
 				@trackFilters['local'] = ''
 			end
@@ -3679,7 +3683,7 @@ module Tunewich
 				exit
 			end
 
-			if @youtubeSearch && !@noNetwork
+			if @youtubeSearch && @networkEnabled
 				@youtubeSearchPage = 1
 				searchedTracks = searchYouTube @youtubeSearch
 				useTracks searchedTracks if searchedTracks
