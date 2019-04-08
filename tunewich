@@ -2715,10 +2715,19 @@ module Tunewich
 				newTrackIndex += trackIndexOffset
 				whisper("findTrackIndex() trackIndexOffset: #{trackIndexOffset}", 3)
 			elsif query.match(/^[0-9]/)
-				newTrackIndex = tracks.index(query) || firstFuzzyMatchIndex(query, getTrackTitles(tracks))
+        onDeckIds = tracks.map { |t| t['id'] }
+				newTrackIndex = onDeckIds.index(query)
+        # WIP: this is broken in this state
+        if newTrackIndex
+          whisper("findTrackIndex() found by ID: #{trackIndexOffset}", 3)
+        else
+          newTrackIndex = firstFuzzyMatchIndex(query, getTrackTitles(tracks))
+        end
 			else
 				newTrackIndex = (query.to_i - 1) % tracks.length
 			end
+
+      whisper("findTrackIndex() => #{newTrackIndex}", 3)
 
 			newTrackIndex
 		end
