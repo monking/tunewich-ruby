@@ -122,6 +122,41 @@ module Tunewich
 						end
 					}
 				},
+				'bpm' => {
+					'info' => "Interactively set the beats-per-minute of the track.",
+					'action' => Proc.new {
+						firstTimeInSeconds = nil
+						lastTimeInSeconds = nil
+						iterations = 0;
+						bpm = 0;
+						puts "Hit enter on the beat. Type \"k\" to accept, or anything else to cancel setting the BPM."
+						commitBPM = false
+						while true
+							input = STDIN.gets.chomp
+							if input.length > 0
+								commitBPM = input == 'k'
+								break
+							end
+
+							iterations += 1
+							now = Time.now.to_f
+							firstTimeInSeconds ||= now
+							lastTimeInSeconds = now
+							if lastTimeInSeconds != firstTimeInSeconds
+								bpm = ((iterations - 1).to_f / (lastTimeInSeconds - firstTimeInSeconds) * 60.0).round(1);
+								printRepeat "BPM: #{bpm} "
+							end
+						end
+						print "\n"
+						if commitBPM
+							puts "Setting track BPM to #{bpm}."
+							@tracks[@trackIndex]['bpm'] = bpm
+							writeLibraryToFile true
+						else
+							puts "Canceling: leaving track BPM alone."
+						end
+					}
+				},
 				'tag' => {
 					'info' => "Tag this track.",
 					'action' => Proc.new { |tags|
@@ -152,6 +187,12 @@ module Tunewich
 							@trackIndex = trackIndex.to_i - 1
 						end
 						commandRequiresNext = true
+					}
+				},
+				'clear' => {
+					'info' => 'Clear current tracklist',
+					'action' => Proc.new {
+						@clearTracks
 					}
 				},
 				'all' => {
@@ -346,21 +387,9 @@ module Tunewich
 					}
 				},
 				'add' => {
-					'info' => '<playlistName> add this to a playlist.',
-					'action' => Proc.new { |playlistQuery|
-						if playlistQuery && playlistQuery.length > 0
-							playlistName = findPlaylistName playlistQuery
-
-							if playlistName
-								addTrackReferenceToPlaylist @tracks[@trackIndex]['id'], playlistName
-							elsif confirm "no existing playlist matching '#{playlistQuery}'. create one?"
-								createPlaylist playlistQuery, [@tracks[@trackIndex]['id']]
-							else
-								playlistName = nil
-							end
-						else
-							puts "#{@library['playlists'].map { |name, p| name } .join "\n"}\n\nPlease specify a playlist name (new or existing)."
-						end
+					'info' => 'Add a track by id.',
+					'action' => Proc.new { |videoID|
+						@tracks << matchExistingLibraryTrack(createTrack(videoID, 'youtube'))
 					}
 				},
 				'again' => {
@@ -744,6 +773,7 @@ module Tunewich
 
 		def clearTracks
 			@tracks = []
+			@trackIndex = 0
 		end
 
 		def useTracks tracks, append = true
@@ -1277,68 +1307,83 @@ module Tunewich
 			puts "Cleanup finished."
 		end
 
+		def matchPropertyWithRangeString rangeString, hash, property
+			rangeParts = " #{rangeString} ".split('-')
+			isAMatch = false
+			if hash.has_key? property
+				if rangeParts.length == 2
+					lowerMatch = rangeParts[0] == " " || hash[property] >= rangeParts[0].to_i
+					upperMatch = rangeParts[1] == " " || hash[property] <= rangeParts[1].to_i
+					isAMatch = lowerMatch && upperMatch
+				else
+					isAMatch = rangeParts[0].to_i == hash[property].to_i
+				end
+			end
+			isAMatch
+		end
+
 		def filterTracks tracks, filters, isExcludeFilter = false
 			action = isExcludeFilter ? 'delete_if' : 'keep_if'
 
-			if filters['rating']
-				tracks.send(action) { |track| track['rating'] && track['rating'] == filters['rating'].to_i }
-			end
-
-			if filters['min-rating']
-				tracks.send(action) { |track|
-					track['rating'] && track['rating'] >= filters['min-rating'].to_i
-				}
-			end
-
-			if filters['max-rating']
-				tracks.send(action) { |track| !track['rating'] || track['rating'] <= filters['max-rating'].to_i }
-			end
-
-			if filters.has_key? 'no-rating'
-				tracks.send(action) { |track|
-					!track.has_key? 'rating'
-				}
-			end
-
-			if filters['tag']
-				# TODO: add a tag fuzzy factor: include tags of tracks that have the current tag (only 1 degree separation to start)
-				selectedTags = []
-				filters['tag'].split(' ').each { |tagName|
-					if @library['tags'][tagName]
-						selectedTags << {:name => tagName, :tag => @library['tags'][tagName]}
-					else
-						@library['tags'].each { |name, libraryTag|
-							if libraryTag['aliases']
-								libraryTag['aliases'].each { |tagAlias|
-									if tagAlias == tagName
-										selectedTags << {:name => name, :tag => libraryTag}
-									end
-								}
-							end
-						}
-					end
-				}
-
-				if selectedTags.length > 0
-					# TODO: make a list of IDs and filter tracks against it once, rather than filtering separately for each tag
-					selectedTags.each { |tagInfo|
-						foundTagName = "\"#{tagInfo[:name]}\""
-						if tagInfo[:tag]['aliases'] && tagInfo[:tag]['aliases'].length > 0
-							foundTagName = "#{foundTagName} (aliases \"#{tagInfo[:tag]['aliases'].join '", "'}\")"
-						end
-						tracks.send(action) { |t| tagInfo[:tag]['tracks'].index t['id'] }
+			if filters.has_key? 'rating'
+				if filters['rating']
+					tracks.send(action) { |t|
+						matchPropertyWithRangeString filters['rating'], t, 'rating'
 					}
 				else
-					puts "No matches for \"#{filters['tag']}\". Available tags are: #{listAllTagsWithAliases.join ", "}"
+					tracks.send(action) { |t| t.has_key? 'rating' }
 				end
 			end
 
-			if filters.has_key? 'no-tag'
-				@library['tags'].each { |name, libraryTag|
-					tracks.send(action) { |t|
-						!libraryTag['tracks'].index(t['id'])
+			if filters.has_key? 'tag'
+				if filters['tag']
+					# TODO: add a tag fuzzy factor: include tags of tracks that have the current tag (only 1 degree separation to start)
+					selectedTags = []
+					filters['tag'].split(' ').each { |tagName|
+						if @library['tags'][tagName]
+							selectedTags << {:name => tagName, :tag => @library['tags'][tagName]}
+						else
+							@library['tags'].each { |name, libraryTag|
+								if libraryTag['aliases']
+									libraryTag['aliases'].each { |tagAlias|
+										if tagAlias == tagName
+											selectedTags << {:name => name, :tag => libraryTag}
+										end
+									}
+								end
+							}
+						end
 					}
-				}
+
+					if selectedTags.length > 0
+						# TODO: make a list of IDs and filter tracks against it once, rather than filtering separately for each tag
+						selectedTags.each { |tagInfo|
+							foundTagName = "\"#{tagInfo[:name]}\""
+							if tagInfo[:tag]['aliases'] && tagInfo[:tag]['aliases'].length > 0
+								foundTagName = "#{foundTagName} (aliases \"#{tagInfo[:tag]['aliases'].join '", "'}\")"
+							end
+							tracks.send(action) { |t| tagInfo[:tag]['tracks'].index t['id'] }
+						}
+					else
+						puts "No matches for \"#{filters['tag']}\". Available tags are: #{listAllTagsWithAliases.join ", "}"
+					end
+				else
+					@library['tags'].each { |name, libraryTag|
+						tracks.send(action) { |t|
+							libraryTag['tracks'].index(t['id'])
+						}
+					}
+				end
+			end
+
+			if filters.has_key? 'bpm'
+				if filters['bpm']
+					tracks.send(action) { |t|
+						matchPropertyWithRangeString filters['bpm'], t, 'bpm'
+					}
+				else
+					tracks.send(action) { |t| t.has_key? 'bpm' }
+				end
 			end
 
 			if filters['title']
