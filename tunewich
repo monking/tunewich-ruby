@@ -3073,6 +3073,9 @@ module Tunewich
 			downloadFeedbackFileName = 'download-feedback'
 			options['feedbackFile'] ||= createTempFile downloadFeedbackFileName
 			downloadCommand = getDownloadCommand track, options
+			if !options['streamPath'] && @preferredFileFormat == 'bestaudio'
+				options['audioFormat'] ||= 'vorbis'
+			end
 
 			whisper(downloadCommand, 3)
 			if options['streamPath']
