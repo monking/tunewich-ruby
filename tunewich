@@ -543,11 +543,10 @@ module Tunewich
 		end
 
 		def getCommandInputParts(input, pattern = nil)
-			input.match(pattern || /^(?<query>[^\/]*)(?<remainder>.*)$/)
+			input.match(pattern || /^(?<query>.*?)( +(?<remainder>\/.*))?$/)
 		end
 
 		def getInteractiveCommands modes = [], bindingGroupName
-
 			trackTabComplete = Proc.new { |input|
 				begin
 					inputParts = getCommandInputParts(input)
@@ -731,7 +730,7 @@ module Tunewich
 						}
 					},
 					'wait' => {
-						'description' => 'Wait for an event, or some number of seconds, to execute following chained commands. Events: chapter_change, play_start, play_end, fade_start, fade_end, speed_ramp_start, speed_ramp_end, download_success. You may use fuzzy substrings of the event names, e.g. "ch" will match "chapter_change", and "ple" will match "play_end".',
+						'description' => '[EVENT | random [RANGE [ + MINIMUM]]] Wait for an event, or some number of seconds, to execute following chained commands. Random defaults are RANGE: 25, MINIMUM: 5. Events: chapter_change, play_start, play_end, fade_start, fade_end, speed_ramp_start, speed_ramp_end, download_success. You may use fuzzy substrings of the event names, e.g. "ch" will match "chapter_change", and "ple" will match "play_end". Yout can also wait a random',
 						'args' => [
 							'chapter_change',
 							'play_start',
@@ -741,7 +740,8 @@ module Tunewich
 							'speed_ramp_start',
 							'speed_ramp_end',
 							'download_success',
-							'transcode_complete'
+							'transcode_complete',
+							'random'
 						],
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
@@ -754,9 +754,19 @@ module Tunewich
 								waitEvent = nil
 								waitInput = inputParts[:query].chomp.strip
 								if waitInput.length > 0
-									if waitInput.match(/^[0-9:.]+\s*$/)
+									waitTime = nil
+
+									randomInput = waitInput.match(/^random( (?<range>[0-9.]+))?( *\+ *(?<minimum>[0-9.]+))?/)
+									if randomInput
+										minimum = getSecondsFromDurationString(randomInput[:minimum]) || 5
+										range = getSecondsFromDurationString(randomInput[:range]) || 25
+										waitTime = Random.rand(range) + minimum
+									elsif waitInput.match(/^[0-9:.]+\s*$/)
 										waitTime = getSecondsFromDurationString waitInput
-										whisper("sleeping for #{waitTime} seconds", 3)
+									end
+
+									if waitTime
+										whisper("Waiting for #{waitTime} seconds", 2)
 										waitEvent = "timed_wait_in_player_#{@currentPlayerIndex}"
 										Thread.new {
 											sleep waitTime
@@ -1265,12 +1275,15 @@ module Tunewich
 					},
 					'feed' => {
 						'description' => 'Load a feed that has been saved with /add (currently only podcasts).',
+						'inputOptions' => Proc.new { |command|
+							@library['feeds'].map { |libraryFeed| libraryFeed['title'] }
+						},
 						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input, /^(?<query>.*?)(?<remainder> \/.*)?$/)
+							inputParts = getCommandInputParts(input)
 
 							feed = nil
 
-							feedNames = @library['feeds'].map { |libraryFeed| libraryFeed['title'] }
+							feedNames = command['inputOptions'].call
 							availableFeedsMessage = "Available feeds:\n	#{feedNames.join "\n	"}"
 							if @library.has_key?('feeds') && @library['feeds'].length > 0
 								if inputParts[:query] && inputParts[:query].length > 0
@@ -1640,13 +1653,6 @@ module Tunewich
 							{:chainedInput => inputParts[:remainder]}
 						}
 					},
-					'commands' => {
-						'description' => "List #{Player::PLAYER_APPLICATION} commands.",
-						'action' => Proc.new { |input, command|
-							system "#{Player::PLAYER_APPLICATION} -input cmdlist"
-							{:chainedInput => input}
-						}
-					},
 					'mono' => {
 						'description' => 'Toggle downmixing to mono. If mono is enabled before the track starts, toggling will have no effect until the player starts again (e.g. `/again / q`).',
 						'showStatus' => Proc.new {
@@ -1722,6 +1728,9 @@ module Tunewich
 							end
 
 							output
+						},
+						'inputOptions' => Proc.new { |input, command|
+							`#{Player::PLAYER_APPLICATION} -input cmdlist`.split("\n")
 						}
 					},
 					'stop' => {
@@ -1837,7 +1846,7 @@ module Tunewich
 									writeLibraryToFile
 									is_success = true
 								else
-									chosenEQPreset = firstFuzzyMatchValue input, @library['player']['equalizer_presets'].keys
+									chosenEQPreset = firstFuzzyMatchValue input, command['inputOptions'].call
 									if chosenEQPreset
 										@eqPreset = chosenEQPreset
 										@eqSetting = @library['player']['equalizer_presets'][chosenEQPreset]
@@ -1911,22 +1920,10 @@ module Tunewich
 							end
 							{:chainedInput => inputParts[:remainder]}
 						},
-						'tabComplete' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
-							presetNames = @library['player']['equalizer_presets'].keys
-							options = command['args'] + presetNames
-
-							if inputParts[:query] && inputParts[:query].length > 0
-								presetGuess = firstFuzzyMatchValue(inputParts[:query], options)
-								if presetGuess && presetGuess.length > 0
-									input = input.sub!(inputParts[:query], presetGuess)
-								end
-							else
-								putsRealtime "\nEQ presets: #{presetNames.join(", ")}"
-							end
-
-							input
-						}
+						'inputOptions' => Proc.new { |command|
+							@library['player']['equalizer_presets'].keys
+						},
+						'inputOptionsLabel' => 'EQ presets'
 					},
 					'fade' => {
 						'description' => '/fade VOLUME [DURATION]; VOLUME can be "out" or "in", which will fade from or to the last explicit volume set.',
@@ -2260,7 +2257,6 @@ module Tunewich
 		end
 
 		def getUserInputBPM
-
 			disablePlaybackInfo
 			firstTimeInSeconds = nil
 			lastTimeInSeconds = nil
@@ -2850,7 +2846,7 @@ module Tunewich
 		end
 
 		def exitPlayerCommand
-			whisper "exiting mplayer", 3
+			whisper("exiting mplayer", 3)
 			sendPlayerCommand "q"
 		end
 
@@ -2920,6 +2916,7 @@ module Tunewich
 
 		def getMplayerProperty property, pattern = nil, responseDelay = nil
 			output = nil
+
 			if @isPlayerPlaying # TODO: 1gG4j9 get time position without unpausing
 				pattern ||= /^()(.*)$/
 				command = "#{property}"
@@ -2933,10 +2930,11 @@ module Tunewich
 					matches = lastPlayerOutput.match pattern
 					output = matches[2] if matches
 				end
-			else
+			elsif responseDelay
 				# don't use 100% CPU while doing nothing
-				sleep responseDelay if responseDelay
+				sleep responseDelay
 			end
+
 			output
 		end
 
@@ -4333,7 +4331,6 @@ module Tunewich
 		end
 
 		def doOptionSecondaryActions optionsOutput
-
 			if not @fileDirectory
 				whisper("please specify an input directory with -i", 0)
 				exit
@@ -4834,7 +4831,8 @@ module Tunewich
 							inputCommands = @commandUserInput.sub(/^\//, '').split(/ \//)
 							lastCommandIndex = inputCommands.length - 1
 							if lastCommandIndex > -1
-								commandParts = getCommandInputParts(inputCommands[lastCommandIndex], /^(?<command>\w+)( (?<input>.*))?/)
+								# NOTE: there is a command whose name is an empty string
+								commandParts = getCommandInputParts(inputCommands[lastCommandIndex], /^(?<command>\w*)( +(?<input>.*))?/)
 								if commandParts
 									commandKeys = commands.keys
 									commandName = commandParts[:command]
@@ -4874,6 +4872,34 @@ module Tunewich
 
 										if commands[commandName].has_key?('tabComplete')
 											modifiedCommandInput = commands[commandName]['tabComplete'].call(commandInput, commands[commandName])
+											commandInput = modifiedCommandInput if modifiedCommandInput
+										elsif commands[commandName].has_key?('inputOptions')
+											genericTabComplete = Proc.new { |input, command|
+												whisper("generic tab complete for command '#{commandName}'", 3)
+												inputParts = getCommandInputParts(input)
+												inputOptions = command['inputOptions'].call
+												options = []
+												options += command['args'] if command.has_key?('args')
+												options += inputOptions if inputOptions
+
+												if inputParts[:query] && inputParts[:query].length > 0
+													options = fuzzyStringSearchInListValues(inputParts[:query], options)
+													if options && options.length > 0
+														if options.length == 1
+															input = input.sub!(inputParts[:query], options[0])
+															options = [] # to hide suggestions
+														end
+													end
+												end
+
+												if options.length > 0
+													optionsLabel = command.has_key?('inputOptionsLabel') ? command['inputOptionsLabel'] : 'Options'
+													putsRealtime "\n#{optionsLabel}: #{options.join("\n")}"
+												end
+
+												input
+											}
+											modifiedCommandInput = genericTabComplete.call(commandInput, commands[commandName])
 											commandInput = modifiedCommandInput if modifiedCommandInput
 										end
 									end
