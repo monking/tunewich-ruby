@@ -1073,37 +1073,66 @@ module Tunewich
             'tabComplete' => tagTabComplete
           },
           'list' => {
-            'description' => "Load, save, or remove a playlist.",
-            'args' => ['save', 'rm'],
+            'description' => "Load, save, update, or remove a playlist.",
+            'args' => ['save', 'rm', 'update'],
             'inputOptions' => Proc.new { @library['playlists'].keys },
             'action' => Proc.new { |input, command|
-              inputParts = getCommandInputParts(input, /^((?<action>(save|rm)) *)?(?<name>.*?)?(?<remainder> \/.*)?$/)
+              inputParts = getCommandInputParts(input, /^((?<action>(save|rm|update)) *)?(?<name>.*?)?(?<remainder> \/.*)?$/)
 
-              if inputParts[:action] && inputParts[:action] == 'save'
-                loadLibrary
+              loadLibrary
+
+              playlistNames = command['inputOptions'].call
+              chosenName = firstFuzzyMatchValue(inputParts[:name], playlistNames) if inputParts[:name] && inputParts[:name].length > 0
+              shouldShowPlaylistNames = false
+
+              if inputParts[:action] && inputParts[:action] == 'update'
+                if !chosenName || !@library['playlists'].has_key?(chosenName)
+                  shouldShowPlaylistNames = true
+                  if !inputParts[:name]
+                    whisper("No list name given.", 0)
+                  else
+                    whisper("No list found by name '#{inputParts[:name]}'.", 0)
+                  end
+                elsif !@library['playlists'][chosenName]['src'] || @library['playlists'][chosenName]['src'].length == 0
+                  whisper("Unable to update list '#{inputParts[:name]}': no source URL.", 0)
+                else
+                  shouldGetAllTracks = true
+                  urls = [@library['playlists'][chosenName]['src']]
+                  newTracks = getTracksFromURLs(urls, shouldGetAllTracks)
+
+                  @library['playlists'][chosenName]['tracks'] ||= []
+                  initialListLength = @library['playlists'][chosenName]['tracks'].length
+                  @library['playlists'][chosenName]['tracks'] += newTracks.map { |t| t['id'] }
+                  @library['playlists'][chosenName]['tracks'].uniq!
+                  lengthDiff = @library['playlists'][chosenName]['tracks'].length - initialListLength
+                  whisper("Added #{lengthDiff} tracks to playlist '#{chosenName}'", 0)
+                  writeLibraryToFile
+                end
+              elsif inputParts[:action] && inputParts[:action] == 'save'
                 @library['playlists'] ||= {}
                 @library['playlists'][inputParts[:name]] = {
                   'tracks' => @tracks.map { |t| t['id'] }
                 }
                 writeLibraryToFile
               elsif inputParts[:action] && inputParts[:action] == 'rm'
-                loadLibrary
-                playlistNames = command['inputOptions'].call
-                chosenName = firstFuzzyMatchValue(inputParts[:name], playlistNames) if inputParts[:name] && inputParts[:name].length > 0
-                if chosenName && confirm("Delete the playlist '#{chosenName}'?")
-                  @library['playlists'].delete inputParts[:name]
-                  writeLibraryToFile
+                if chosenName
+                  if confirm("Delete the playlist '#{chosenName}'?")
+                    @library['playlists'].delete inputParts[:name]
+                    writeLibraryToFile
+                  end
+                else
+                  shouldShowPlaylistNames = true
                 end
               else
-                playlistNames = command['inputOptions'].call
-                chosenName = firstFuzzyMatchValue(inputParts[:name], playlistNames) if inputParts[:name] && inputParts[:name].length > 0
-
                 if chosenName
                   usePlaylist chosenName
                 else
-                  putsRealtime playlistNames.join "\n"
+                  shouldShowPlaylistNames = true
                 end
               end
+
+              putsRealtime playlistNames.join("\n") if shouldShowPlaylistNames
+
               {:chainedInput => inputParts[:remainder]}
             }
           },
