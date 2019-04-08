@@ -87,6 +87,7 @@ module Tunewich
 			@isPlayerPlaying = false
 			@tempFiles = {}
 			@loop = false
+			@loopHistory = {};
 			@loopLimit = 0
 			@breakLoop = false
 
@@ -2506,28 +2507,31 @@ module Tunewich
 				end
 				showPlaybackInfo
 			}, bindingGroupName)
+
+			@loopHistory = {};
 			bind('chapter_change', Proc.new {
 				# check if we need to skip this chapter
+				targetChapterName = @currentTrack['chapters'][@currentChapterIndex]['loop_target'] if @currentTrack['chapters'][@currentChapterIndex].has_key?('loop_target')
 				if (
 						@loop  &&
 						!@breakLoop  &&
 						!@currentlySkippingChapter &&
 						@currentTrack['chapters'][@currentChapterIndex] &&
-						@currentTrack['chapters'][@currentChapterIndex].has_key?('loop_target') &&
+						targetChapterName &&
 						(
-							@lastLoop[0] != @currentTrack['chapters'][@currentChapterIndex]['loop_target'] ||
-							(@loopLimit == 0 || @lastLoop[1] < @loopLimit)
+							!@loopHistory.has_key?(targetChapterName) ||
+							(@loopLimit == 0 || @loopHistory[targetChapterName] < @loopLimit)
 						)
 				)
 					whisper("jumping to target chapter '#{@currentTrack['chapters'][@currentChapterIndex]['loop_target']}'", 2)
 					@currentlySkippingChapter = @currentChapterIndex
 
-					targetChapterIndex = getChapterIndexByQuery @currentTrack['chapters'][@currentChapterIndex]['loop_target'], @currentTrack['chapters']
+					targetChapterIndex = getChapterIndexByQuery targetChapterName, @currentTrack['chapters']
 					if targetChapterIndex
-						if @lastLoop[0] == @currentTrack['chapters'][@currentChapterIndex]['loop_target']
-							@lastLoop[1] += 1
+						if @loopHistory.has_key?(targetChapterName)
+							@loopHistory[targetChapterName] += 1
 						else
-							@lastLoop = [@currentTrack['chapters'][@currentChapterIndex]['loop_target'], 1];
+							@loopHistory[targetChapterName] = 1;
 						end
 						whisper("\nLoop ##{@lastLoop[1]}/#{@loopLimit > 0 ? @loopLimit : "∞"}", 1)
 						fadeInterval = 0.0
