@@ -226,7 +226,7 @@ module Tunewich
 			# 3: errors
 			# 4: debug
 			if @configuredVerbosity >= verbosity
-				STDERR.puts "  #{"-" * verbosity} #{message}"
+				STDERR.puts "	#{"-" * verbosity} #{message}"
 			end
 		end
 
@@ -488,7 +488,7 @@ module Tunewich
 							if input && input.length > 0
 								match = firstFuzzyMatch input, playlistNames
 
-								if match && match[:score] > 1 # FIXME: what's a good baseline score for a playlist match?
+								if match && match[:score] > 1 # FIXME 1gpaoq: what's a good baseline score for a playlist match?
 									playlistName = match[:value]
 								end
 							end
@@ -589,12 +589,12 @@ module Tunewich
 								tagNames = getTrackTags track
 
 								outputMessageLines = []
-								outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
-								outputMessageLines << "    volume : #{@currentVolume}/100"
+								outputMessageLines << "		 index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
+								outputMessageLines << "		volume : #{@currentVolume}/100"
 								outputMessageLines << "------------------------------"
-								outputMessageLines << "     title : #{track['title']}" if alreadyHas[:title]
+								outputMessageLines << "		 title : #{track['title']}" if alreadyHas[:title]
 								if track == @currentTrack
-									timeMessage = "      time : #{getDurationStringFromSeconds @currentPlayerTime}"
+									timeMessage = "			time : #{getDurationStringFromSeconds @currentPlayerTime}"
 									if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
 										durationResponseFromPlayer = getMplayerProperty('get_time_length', /^(ANS_LENGTH=)(.*?)(\?)?$/, 0.1)
 										if durationResponseFromPlayer
@@ -605,15 +605,15 @@ module Tunewich
 									timeMessage += " (#{@speed}x)" if @speed != 1
 									if @currentTrack.has_key? 'chapters'
 										chapterIndex = getChapterIndexAtTime @currentTrack, @currentPlayerTime
-										timeMessage += "\n   chapter : #{@currentTrack['chapters'][chapterIndex]['name']}"
+										timeMessage += "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['name']}"
 									end
 									outputMessageLines << "#{timeMessage}"
 								else
-									outputMessageLines << "  duration : #{track['duration']}" if alreadyHas[:duration]
+									outputMessageLines << "	duration : #{track['duration']}" if alreadyHas[:duration]
 								end
-								outputMessageLines << "      tags : #{tagNames.join ', '}" if tagNames.length > 0
-								outputMessageLines << "    rating : #{track['rating']}" if track['rating']
-								outputMessageLines << "       bpm : #{track['bpm']}" if alreadyHas[:bpm]
+								outputMessageLines << "			tags : #{tagNames.join ', '}" if tagNames.length > 0
+								outputMessageLines << "		rating : #{track['rating']}" if track['rating']
+								outputMessageLines << "			 bpm : #{track['bpm']}" if alreadyHas[:bpm]
 								outputMessageLines << "downloaded : #{trackFileExists? track}"
 								outputMessageLines << "==============================\n#{track['description']}" if alreadyHas[:description]
 								putsRealtime outputMessageLines.join "\n"
@@ -628,8 +628,8 @@ module Tunewich
 									end
 									updateTrackInfo track, info
 
-									outputMessageLines << "     title : #{track['title']}" if !alreadyHas[:title]
-									outputMessageLines << "  duration : #{track['duration']}" if !alreadyHas[:duration]
+									outputMessageLines << "		 title : #{track['title']}" if !alreadyHas[:title]
+									outputMessageLines << "	duration : #{track['duration']}" if !alreadyHas[:duration]
 									outputMessageLines << "sourceTags : #{info['sourceTags']}" if info && info.has_key?('sourceTags')
 									outputMessageLines << "==============================\n#{track['description']}" if !alreadyHas[:description] && track['description']
 								end
@@ -640,7 +640,7 @@ module Tunewich
 									end
 								end
 
-								outputMessageLines << "      link : #{info['link']}" if info
+								outputMessageLines << "			link : #{info['link']}" if info
 
 								if @configuredVerbosity > 0 && tagNames.length > 0
 									whisper("about to loop through tagNames", 4)
@@ -767,7 +767,7 @@ module Tunewich
 							feed = nil
 
 							feedNames = @library['feeds'].map { |libraryFeed| libraryFeed['title'] }
-							availableFeedsMessage = "Available feeds:\n  #{feedNames.join "\n  "}"
+							availableFeedsMessage = "Available feeds:\n	#{feedNames.join "\n	"}"
 							if @library.has_key?('feeds') && @library['feeds'].length > 0
 								if inputParts[1] && inputParts[1].length > 0
 									match = firstFuzzyMatch inputParts[1], feedNames
@@ -912,7 +912,7 @@ module Tunewich
 								filterInstructions << Player::FILTER_HELP_2
 								filterInstructions << Player::FILTER_HELP_3
 								filterInstructions << '' # empty line
-								filterInstructions << "Available tags: \n  #{listAllTagsWithCountsAndAliases.join "\n  "}"
+								filterInstructions << "Available tags: \n	#{listAllTagsWithCountsAndAliases.join "\n	"}"
 								filterInstructions << "For music without words: -tag=verbal acapella visual live noise delete missing-source"
 								instructions = filterInstructions.join "\n"
 								filters = parseOptionParameters editListInVim(filtersList, instructions).join ','
@@ -1007,7 +1007,7 @@ module Tunewich
 								end
 							end
 
-							putsRealtime "Tags: \n  #{@library['tags'].keys.sort.join(", ")}" if not success
+							putsRealtime "Tags: \n	#{@library['tags'].keys.sort.join(", ")}" if not success
 							{:chainedInput => inputParts[2]}
 						}
 					},
@@ -1094,7 +1094,7 @@ module Tunewich
 							loadLibrary
 							@currentTrack = matchExistingLibraryTrack @currentTrack
 
-              # TODO 1gor9z: when typing `/note` and there are no existing notes, begin creating a note
+							# TODO 1gor9z: when typing `/note` and there are no existing notes, begin creating a note
 							if !inputParts[1] || inputParts[1].length < 1
 								if @currentTrack.has_key? 'notes'
 									notesList = @currentTrack['notes'].map { |note| "#{note['time']} - #{note['text']}" }
@@ -1179,7 +1179,7 @@ module Tunewich
 										@eqPreset = chosenEQPreset
 										@eqSetting = @library['player']['equalizer_presets'][chosenEQPreset]
 										is_success = true
-										# FIXME: can I target `af_clr` at _just_ `equalizer`? I don't want to also remove scaletempo, for instance
+										# FIXME 1gpapK: can I target `af_clr` at _just_ `equalizer`? I don't want to also remove scaletempo, for instance
 										putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "af_clr\naf_add equalizer=#{@eqSetting}\n"
 									else
 										putsRealtime "Unknown preset '#{input}'."
@@ -1195,7 +1195,7 @@ module Tunewich
 								putsRealtime "#{chosenPresetMessage}Presets: #{@library['player']['equalizer_presets'].keys.join ", "}"
 
 								def showInteractiveEQ bands, selectedIndex
-									printRepeat "#{bands.join(':')}\r  #{selectedIndex > 0 ? bands.slice(0, selectedIndex).join(':') + ":" : ''}"
+									printRepeat "#{bands.join(':')}\r	#{selectedIndex > 0 ? bands.slice(0, selectedIndex).join(':') + ":" : ''}"
 								end
 
 								@eqSetting ||= @library['player']['equalizer_presets']['flat']
@@ -1278,7 +1278,7 @@ module Tunewich
 						'action' => Proc.new { |input|
 							output = nil
 							rampCommandMatch = /^(out|in|[0-9.]*(bpm)?)( [0-9.]+)?[^\/]*(.*)$/.match input
-							#                    1              2      3          4
+							#										1							2			3					4
 							if rampCommandMatch
 								output = {:chainedInput => rampCommandMatch[4]}
 								duration = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].to_f : 0.3
@@ -1469,7 +1469,7 @@ module Tunewich
 						}
 					},
 					'defvolume' => {
-						'description' => "FIXME: save current volume relative to default in library.",
+						'description' => "FIXME 1gpapS: save current volume relative to default in library.",
 						'action' => Proc.new { |input|
 							loadLibrary
 							@currentTrack['loudness'] = getMplayerConfigNumericProperty('volume') / @currentVolume
@@ -2110,7 +2110,7 @@ module Tunewich
 			end
 			# @playerApplicationThreads[@currentPlayerIndex].join
 			whisper("killing user input thread (again)", 4)
-			@inputThread.kill if @inputThread # FIXME: overkill?
+			@inputThread.kill if @inputThread # FIXME 1gpapl: overkill?
 
 			response[:endTime] = Time.now.to_f
 
@@ -2153,7 +2153,7 @@ module Tunewich
 				playbackInfo << "#{unicodeChars[:speaker]} #{volumeIndication}"
 
 				# show playback position
-				timeMessage = "#{unicodeChars[:timer]}  #{getDurationStringFromSeconds @currentPlayerTime}"
+				timeMessage = "#{unicodeChars[:timer]}	#{getDurationStringFromSeconds @currentPlayerTime}"
 				timeMessage += "/#{@currentTrack['duration']}" if @currentTrack.has_key?('duration')
 				timeMessage += "(#{(@currentSpeed * 10).round / 10.0}x)" if @currentSpeed != 1
 				playbackInfo << timeMessage
@@ -2169,7 +2169,7 @@ module Tunewich
 				# show current chapter name
 				if @currentTrack.has_key?('chapters')
 					if @currentChapterIndex
-						playbackInfo << "#{unicodeChars[:openBook]}  #{@currentTrack['chapters'][@currentChapterIndex]['name']}" # undefined method `[]' for nil:NilClass (NoMethodError)
+						playbackInfo << "#{unicodeChars[:openBook]}	#{@currentTrack['chapters'][@currentChapterIndex]['name']}" # undefined method `[]' for nil:NilClass (NoMethodError)
 					end
 				else
 					@currentChapterIndex = nil
@@ -2178,7 +2178,7 @@ module Tunewich
 				# show tags on this track
 				currentTags = getTrackTags @currentTrack
 				if currentTags && currentTags.length > 0
-					playbackInfo << "#{unicodeChars[:label]}  #{currentTags.join ', '}"
+					playbackInfo << "#{unicodeChars[:label]}	#{currentTags.join ', '}"
 				end
 
 				# check again if realtime output has been disabled while were doing all this stuff
@@ -2235,7 +2235,7 @@ module Tunewich
 		def nextTrack
 			whisper("next track", 2)
 			if @shuffle
-				# FIXME: this should happen regardles of @shuffle, but it would mess with @trackIndex. With @shuffle == true, it doesn't matter.
+				# FIXME 1gpalq: filterTracksOnDeck should run regardles of @shuffle, but it would mess with @trackIndex. With @shuffle == true, it doesn't matter.
 				filterTracksOnDeck()
 				shuffleIndex()
 			else
@@ -2447,6 +2447,7 @@ module Tunewich
 		def getDownloadCommand(track, downloadFeedbackFile = '/dev/null', streamPath = nil)
 			downloadCommand = ''
 
+			# TODO 1gparD: output youtube-dl error messages to user
 			if @youtubeDLTrackTypes.include? track['type']
 				youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} -q"
 				# youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} --no-part --no-cache-dir --no-continue"
@@ -2460,7 +2461,7 @@ module Tunewich
 				if streamPath
 					downloadCommand = "curl -sL \"#{track['src']}\" > #{streamPath}"
 				else
-					downloadCommand = "curl -sL \"#{track['src']}\" > #{getTrackFilePrefix track}.mp3" #FIXME: don't assume mp3 file extension
+					downloadCommand = "curl -sL \"#{track['src']}\" > #{getTrackFilePrefix track}.mp3" #FIXME 1gpanQ: don't assume mp3 file extension
 				end
 			end
 
@@ -2507,8 +2508,10 @@ module Tunewich
 				if UNAME == 'Linux'
 						`notify-send --expire-time=3000 --urgency=low tunewich "#{message}"`
 				elsif UNAME == 'Darwin'
-					clean_message = message.gsub(/"/, '\\"')
-					system "osascript -e 'display notification \"#{clean_message}\" with title \"tunewich\"' &>/dev/null"
+					clean_message = message.gsub(/"/, '\\"').gsub(/'/, "'\"'\"'"); # what a mess: escaped double-quoted string in applescript, as single-quoted arg to osascript, as double-quoted string in ruby
+					notifyCommand = "osascript -e 'display notification \"#{clean_message}\" with title \"tunewich\"' &>/dev/null"
+					whisper(notifyCommand, 3);
+					system notifyCommand
 				end
 			end
 		end
@@ -2516,7 +2519,7 @@ module Tunewich
 		def titleBlock(message, fill = '=')
 			width = `tput cols`.chomp.to_i
 			blockRow = fill * width
-			padding = '  '
+			padding = '	'
 			marginSize = (width - message.length) / 2 - padding.length
 			marginLeft = marginSize > 1 ? fill * marginSize : ''
 			marginRight = marginLeft
@@ -2556,9 +2559,9 @@ module Tunewich
 
 		def putInTempFile(name, value, shouldIncludeSessionID = true)
 			path = getTempFilePath(name, shouldIncludeSessionID)
-			# FIXME: why does this stall when writing to a FIFO before something is reading from it?
+			# FIXME 1gpani: why does this stall when writing to a FIFO before something is reading from it?
 			Thread.new {
-				# FIXME: trying to put it in a new thread...maybe won't fix the problem, but it will unblock the main thread.
+				# FIXME 1gpani: trying to put it in a new thread...maybe won't fix the problem, but it will unblock the main thread.
 				writeResult = File.write(path, value)
 				whisper("#{name} << '#{value.chomp}' (#{writeResult})", 5)
 			}
@@ -2661,7 +2664,7 @@ module Tunewich
 		end
 
 		def removeMarkFromTrack track
-			# FIXME: this deletion _is_ saved, but for some reason, playing the track again immediately starts again from the mark.
+			# FIXME 1gpao6: this deletion _is_ saved, but for some reason, playing the track again immediately starts again from the mark.
 			loadLibrary
 			editingTrack = matchExistingLibraryTrack track
 			if editingTrack.has_key? 'mark'
@@ -3075,7 +3078,7 @@ module Tunewich
 
 				track['duration'] = trackInfo['duration'] if trackInfo['duration']
 				track['link'] = trackInfo['url'] if trackInfo['url']
-				track['type'] = trackInfo['type'] if  trackInfo['type']
+				track['type'] = trackInfo['type'] if	trackInfo['type']
 			end
 
 			track
@@ -3128,7 +3131,7 @@ module Tunewich
 		end
 
 		def searchYouTube query, offset = 0, count = 20
-			# FIXME: sometimes the STDIN is not editable after this
+			# FIXME 1gpaoG: sometimes the STDIN is not editable after this
 			puts "Searching YouTube for '#{query}'"
 			resultsPerPage = 20
 			page = (offset.to_f / resultsPerPage.to_f).to_i + 1
@@ -3204,7 +3207,7 @@ module Tunewich
 				queryResultURLs.uniq!
 			end
 
-			# FIXME: seems to be skipping the first recommended track
+			# FIXME 1gpaoS: seems to be skipping the first recommended track
 
 			threads = []
 			resultTracks = []
@@ -3310,7 +3313,7 @@ module Tunewich
 			end
 
 			parser.on("-D DIR", "--input-dir DIR", "Directory from which to read the playlist and files.\nNOTE: when used, this must be the first option. Recommended to define TUNEWICH_DIR instead.", " ") do |inputDir|
-				# FIXME: always process this option first, even if it's provided last
+				# FIXME 1gpaoe: always process this option first, even if it's provided last
 				setLibraryPath inputDir
 			end
 
@@ -3528,7 +3531,7 @@ module Tunewich
 				if optionsOutput[:playlistQuery]
 					match = firstFuzzyMatch optionsOutput[:playlistQuery], @library['playlists'].keys
 
-					if match && match[:score] > 1 # FIXME: what's a good baseline score for a playlist match?
+					if match && match[:score] > 1 # FIXME 1gpaoq: what's a good baseline score for a playlist match?
 						playlistName = match[:value]
 					elsif confirm("Create new playlist #{optionsOutput[:playlistQuery]}?")
 						playlistName = optionsOutput[:playlistQuery]
@@ -3740,7 +3743,7 @@ module Tunewich
 
 		def printRepeat message, shouldReturnCursorToBeginning = false
 			message = message.to_s if message.respond_to? 'to_s'
-			outputMessage = "  #{message}"
+			outputMessage = "	#{message}"
 			print "\r#{$clearLineCharacter}#{$disableWrapCharacter}#{outputMessage}#{$enableWrapCharacter}"
 			print "\r" if shouldReturnCursorToBeginning
 		end
@@ -3793,7 +3796,7 @@ module Tunewich
 			outputHash = {}
 			editedOutput.each { |line|
 				parts = line.match(/^([^:]+): (.*)/)
-				whisper("edited map line: name='#{parts[1]}',  value='#{parts[2]}'", 3)
+				whisper("edited map line: name='#{parts[1]}',	value='#{parts[2]}'", 3)
 				outputHash[parts[1]] = parts[2]
 			}
 			outputHash
@@ -3815,7 +3818,7 @@ module Tunewich
 			}
 			sortedCommandList.sort! { |a,b| a[:name] <=> b[:name] }
 			sortedCommandList.each { |commandMeta|
-				info = "    /"
+				info = "		/"
 				commandPaddingLength = info.length
 				info += commandMeta[:name]
 				info += " " * (maxCommandNameLength - info.length + commandPaddingLength)
@@ -4040,7 +4043,7 @@ module Tunewich
 		end
 
 		def promptForPlaylist
-			puts "Please choose a playlist (leave blank to play all):\n  #{@library['playlists'].keys.join "\n  "}"
+			puts "Please choose a playlist (leave blank to play all):\n	#{@library['playlists'].keys.join "\n	"}"
 			selectedListName = nil
 			while !selectedListName do
 				playlistQuery = commandPrompt[:input]
@@ -4066,7 +4069,7 @@ module Tunewich
 			selectedChapterIndex = nil
 
 			chapterList = chapters.map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
-			prePromptMessage = "  #{chapterList.join "\n  "}"
+			prePromptMessage = "	#{chapterList.join "\n	"}"
 			prePromptMessage += "\n#{message}" if message
 			promptMessage = "Please choose a chapter (leave blank to play first):"
 
@@ -4125,7 +4128,7 @@ module Tunewich
 
 		def cloneTracks inputTracks
 			tracks = []
-			inputTracks.each { |id, t| tracks <<  t }
+			inputTracks.each { |id, t| tracks <<	t }
 			tracks
 		end
 

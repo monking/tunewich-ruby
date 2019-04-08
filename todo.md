@@ -53,6 +53,20 @@
 		- e.g. `-S nonet,work,cheer`, which would load those 3 sessions, overwriting each other in reverse of that order, so that the `nonet` session would have no parameters overwritten.
 - [ ] 1gnyIc: fix missing input characters while paused
 	- perhaps the solution is to put mplayer in the background to avoid it affecting STDIN at all; I would have thought that `-slave -input file="..."` was enough.
+- [ ] 1gpaYC: wouldn't this title always be wrong when shuffling, since @shuffleIndex (in @nextTrack) is called after it's announced?
+- [ ] FIXME 1gpalq: avoiding calling filterTracksOnDeck because of fragile trackIndex?
+- [ ] FIXME 1gpanQ: don't assume mp3 file extension
+- [ ] FIXME 1gpani: why does this stall when writing to a FIFO before something is reading from it?
+- [ ] FIXME 1gpao6: this deletion _is_ saved, but for some reason, playing the track again immediately starts again from the mark.
+- [ ] FIXME 1gpaoG: sometimes the STDIN is not editable after this
+- [ ] FIXME 1gpaoS: seems to be skipping the first recommended track
+- [ ] FIXME 1gpaoe: always process this option first, even if it's provided last
+- [ ] FIXME 1gpaoq: what's a good baseline score for a playlist match?
+- [ ] FIXME 1gpapK: can I target `af_clr` at _just_ `equalizer`? I don't want to also remove scaletempo, for instance
+- [ ] FIXME 1gpapS: save current volume relative to default in library.
+- [ ] 1gpapl: killing the @inputThread if it's truthy. overkill?
+- [ ] TODO 1gparD: output youtube-dl error messages to user
+	- e.g. `ERROR: requested format not available`
 
 ## notes
 
