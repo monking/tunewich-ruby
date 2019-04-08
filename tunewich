@@ -4235,6 +4235,7 @@ begin
 	end
 
 	player.kill
-rescue Exception
-	player.kill
+rescue Exception => e
+  puts e
+	player && player.kill
 end
