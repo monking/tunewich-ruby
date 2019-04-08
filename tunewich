@@ -898,7 +898,7 @@ module Tunewich
 								filterInstructions << Player::FILTER_HELP_2
 								filterInstructions << Player::FILTER_HELP_3
 								filterInstructions << '' # empty line
-								filterInstructions << "Available tags: #{listAllTagsWithAliases.join ', '}"
+								filterInstructions << "Available tags: \n  #{listAllTagsWithCountsAndAliases.join "\n  "}"
 								filterInstructions << "For music without words: -tag=verbal acapella visual live noise delete missing-source"
 								instructions = filterInstructions.join "\n"
 								filters = parseOptionParameters editListInVim(filtersList, instructions).join ','
@@ -2870,6 +2870,28 @@ module Tunewich
 			puts "#{tracks.length} matches for filters"
 
 			tracks
+		end
+
+		def listAllTagsWithCountsAndAliases
+			allTagNames = []
+
+			@library['tags'].each { |name, libraryTag|
+				# ignore tracks that have no tracks assigned
+				if libraryTag['tracks'] && libraryTag['tracks'].length > 0
+					entryParts = [name]
+
+					if libraryTag['aliases'] && libraryTag['aliases'].length > 0
+						entryParts << "[#{libraryTag['aliases'].join(', ')}]"
+					end
+
+					entryParts << "(#{libraryTag["tracks"].length})"
+
+					allTagNames << entryParts.join('')
+				end
+			}
+
+			# sort in descending order of # of tracks with that tag
+			allTagNames.sort { |a,b| b.sub(/.*\((\d+)\).*/, '\1').to_i <=> a.sub(/.*\((\d+)\).*/, '\1').to_i }
 		end
 
 		def listAllTagsWithAliases
