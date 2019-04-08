@@ -330,21 +330,23 @@ module Tunewich
 			mplayerInputFile = makeStream 'mplayer-input'
 			mplayerStartupOptions << "-slave -input file=#{mplayerInputFile}"
 			mplayerThread = nil
+			inputThread = nil
 			mplayerStatus = nil
 			mplayerAction = Proc.new { |command|
-				if 'fade' == command
-					count = 15
+				if 'f' == command || 'fq' == command
+					count = 7
 					while count > 0
 						printRepeat count
 						putInTempFile 'mplayer-input', "volume -2\n"
 						sleep 0.1
 						count -= 1
 					end
+					if 'fq' == command
+						putInTempFile 'mplayer-input', "quit\n"
+					end
 				else
 					putInTempFile 'mplayer-input', "#{command}\n"
 				end
-				sleep 0.1
-				mplayerThread.alive?
 			}
 			fileAlreadyExists = trackFileExists? track
 			streaming = !fileAlreadyExists && !@enableDownload && !chapterIndex
@@ -432,11 +434,15 @@ module Tunewich
 
 			mplayerOutputFile = getTempFilePath 'mplayer-output'
 
+			inputThread = Thread.new {
+				commandPrompt "commands: ", interactiveCommands, mplayerAction
+			}
 			mplayerThread = Thread.new {
 				mplayerStatus = system "mplayer \"#{mediaFilePath}\" #{mplayerStartupOptions.join ' '} > #{mplayerOutputFile}"
+				inputThread.kill if inputThread
 			}
-			commandPrompt "commands: ", interactiveCommands, mplayerAction
 			mplayerThread.join
+			inputThread.kill if inputThread # FIXME: overkill?
 
 			mplayerEndTime = Time.now.to_f
 
@@ -1463,10 +1469,7 @@ module Tunewich
 
 					prompt.call
 				elsif action
-					actionResult = action.call input
-					if not actionResult
-						break
-					end
+					break if not action.call input
 				else
 					break
 				end
