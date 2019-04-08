@@ -71,7 +71,12 @@ module Tunewich
 			@volume = 25 # volume stored as state (the "intended" volume)
 			@currentVolume = 25 # actual volume heard (change during fading, or changing track loudness)
 			@currentSpeed = 1
-			@currentBrightness = 0
+			@currentVisualEffects = {
+				'brightness' => 0,
+				'contrast' => 0,
+				'saturation' => 0,
+				'hue' => 0
+			}
 			@volumeMultipliers = {}
 			@bpmGlideDuration = 0
 			@bpmGlideDelay = 0
@@ -747,6 +752,42 @@ module Tunewich
 				end
 
 				input
+			}
+
+			generateVisualCommand = Proc.new { |property|
+				{
+					'description' => "#{property.upcase} [DURATION] - Blend to #{property}",
+					'args' => ['out', 'in'],
+					'action' => Proc.new { |input, command|
+						inputParts = getCommandInputParts input, /^(?<target>out|in|[0-9.-]+)( (?<duration>[0-9.]+))?[^\/]*(?<remainder>.*)$/
+						if inputParts[:target]
+							targetValue = @currentValue
+							case inputParts[:target]
+							when 'out'
+								targetValue = -100
+							when 'in'
+								targetValue = 0 # normal Value
+							else
+								targetValue = inputParts[:target].to_f
+								whisper("turning '#{inputParts[:target]}' to  '#{targetValue}'", 3)
+							end
+						end
+
+						duration = inputParts[:duration] && inputParts[:duration].length > 0 && getSecondsFromDurationString(inputParts[:duration]) || 1
+
+						tween(
+							@currentVisualEffects[property],
+							targetValue,
+							duration,
+							Proc.new { |x|
+								sendPlayerCommand "#{property} #{x} 1"
+								@currentVisualEffects[property] = x
+							}
+						)
+
+						{:chainedInput => inputParts[:remainder]}
+					}
+				}
 			}
 
 			# TODO: 1gG4fU @refactor
@@ -2011,39 +2052,10 @@ module Tunewich
 							output
 						}
 					},
-					'brightness' => {
-						'description' => 'BRIGHTNESS [DURATION] - Blend to brightness',
-						'args' => ['out', 'in'],
-						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts input, /^(?<target>out|in|[0-9.-]+)( (?<duration>[0-9.]+))?[^\/]*(?<remainder>.*)$/
-							if inputParts[:target]
-								targetBrightness = @currentBrightness
-								case inputParts[:target]
-								when 'out'
-									targetBrightness = -100
-								when 'in'
-									targetBrightness = 0 # normal brightness
-								else
-									targetBrightness = inputParts[:target].to_f
-									whisper("turning '#{inputParts[:target]}' to  '#{targetBrightness}'", 3)
-								end
-							end
-
-							duration = inputParts[:duration] && inputParts[:duration].length > 0 && getSecondsFromDurationString(inputParts[:duration]) || 1
-
-							tween(
-								@currentBrightness,
-								targetBrightness,
-								duration,
-								Proc.new { |x|
-									sendPlayerCommand "brightness #{x} 1"
-									@currentBrightness = x
-								}
-							)
-
-							{:chainedInput => inputParts[:remainder]}
-						}
-					},
+					'brightness' => generateVisualCommand.call('brightness'),
+					'contrast' => generateVisualCommand.call('contrast'),
+					'saturation' => generateVisualCommand.call('saturation'),
+					'hue' => generateVisualCommand.call('hue'),
 					'glide' => {
 						'description' => '/glide DURATION [DELAY] - Set BPM "glide" period. Default 0 (i.e. off). If changing between two tracks with tempo information, the second track will begin playing to match the tempo of the first, and then "glide" for DURATION (after DELAY) back to the configured global speed.',
 						'action' => Proc.new { |input, command|
@@ -2735,6 +2747,9 @@ module Tunewich
 			playerStartupOptions << "-volume #{@volume}"
 			playerStartupOptions << "-speed #{speed}"
 			playerStartupOptions << "-af pan=1:0.5:0.5" if @downmixMono # @experimental Does this wipe out any previous -af, or add to it?
+			@currentVisualEffects.each { |property, value|
+				playerStartupOptions << "-#{property} #{value.to_i}"
+			}
 
 			response[:startTime] = Time.now.to_f
 
