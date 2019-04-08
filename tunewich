@@ -1,374 +1,394 @@
-#!/usr/bin/env bash
+#!/usr/bin/env ruby
 
-i=0
+# TODO: catch C-t, or something like it, to pass interactive commands to the script
 
-while getopts 'f:i:ds' flag; do
-	case $flag in
-		f) i=$OPTARG;;
-		i) inputdir="$OPTARG";;
-		d) enable_download=true;;
-		s) shuffle=true;;
-	esac
-done; shift $(($OPTIND-1))
+require "open-uri"
+require "optparse"
+require "json"
 
-echo "$(basename $0) -i <input dir> [ -f <start from> -ds ]
--d enable download
--s shuffle"
+module Tunewich
+	class Player
+		def initialize
+			@sessionID = Random.rand(1024)
+			@scriptDir = File.dirname(__FILE__)
+			@playlistName = nil
+			@trackIndex = nil
+			@tracks = []
+			@libraryFilePath = "#{@scriptDir}/../library.json"
+			@library = JSON.parse(File.read(@libraryFilePath))
 
-if [[ -z "$inputdir" || ! -d "$inputdir" ]]; then
-	echo "must define -i input udirectory"
-	exit 1
-fi
+			parseOptions
 
-mplayer_override_commands="$@"
+			if not @fileDirectory
+				puts "please specify an input directory with -i"
+				exit
+			end
 
-cd "$inputdir"
+			if @tracks.length === 0
+				if not @playlistName
+					promptForPlaylist
+				end
 
-list=( \
-"8xV9fHSJLmE 0.00 420.00" \
-"X75bh7QtX0I 5.95 60.80" \
-"DPlMGujSzQk 66.18 127.65" \
-"rUWtG9Q4UZ8 88.1 146.6" \
-"lbRJ733xiF4 56.1 111.9" \
-"h7nP8c2aNSU 2.0 38.2" \
-"pfNrmksswDY" \
-"h9xEKIY0B1s 25.1 53.8" \
-"71J2K6rNFr8 11.05 66.50" \
-"8WjMytgvcus 52.5 104" \
-"QH7ixuGrYK4" \
-"GBPbJyxqHV0" \
-"tbQmQomvGw0 0 181" \
-"5saLwD37NVM 2 119" \
-"CGpQBUOYaNo" \
-"9Ca-T716PJI" \
-"mh-NTMyO42M 833.4 917.65" \
-"kDssUvBiHFk" \
-"l2prV0pLxv4 16.2 224" \
-"PjZCIsPyRGc" \
-"8h-V2mKKqUA 15.0 57.5" \
-"o78T9-I4OGA" \
-"0Kcnmba7v9Q" \
-"BqaxcQVnLo4" \
-"2dQAKTbf_Ww 4.3 68.87" \
-"lYCo08TfYlQ 0.45 79.60" \
-"p6kAruRfZH0 0.34 82.96" \
-"fvCT-MzPm1A" \
-"Ggrluc5hsHA 32.0 120.4" \
-"-5J8ULTc9Mk" \
-"QtK_hUAqMIs" \
-"QXY1LmEzHlg" \
-"WKnVaDwUg5s" \
-"dl-l03pzFVA" \
-"8dDy9clkDf8" \
-"pSqR1O1PDJU" \
-"8D3PUVKS5TE" \
-"x0RCU-GUSXw" \
-"wFIHSaUeP3c" \
-"F02VnUUUnks" \
-"zzoW1afkGKk 102.2 248.0" \
-"jskIptPFX_0 17.6 69.9" \
-)
+				usePlaylist @playlistName
+				titleBlock "Playlist: #{@playlistName} (#{@tracks.length})", '#'
+			else
+				titleBlock "Playing #{@tracks.length} tracks", '#'
+			end
 
-while [[ $i -le ${#list[@]} ]]; do
-	line=(${list[$(($i-1))]})
-	url=${line[0]}
-	file="$(ls -1 *$url*)"
-	if [[ ! -f "$file" &&  $enable_download = true ]]; then
-		echo "downloading file"
-		youtube-dl -f bestaudio $url
-		if [[ $? != 0 ]]; then
-			echo 'interrupting download, and playlist'
-			break
-		fi
-	fi
+			if @trackIndex == nil
+				if @shuffle
+					shuffleIndex()
+				else
+					@trackIndex = 0
+				end
+			elsif @trackIndex.to_i === 0
+				@trackIndex = findTrackIndex @trackIndex
+			else
+				@trackIndex = @trackIndex.to_i - 1
+			end
 
-	file="$(ls -1 *$url*)"
-	mplayer_commands=()
+			# TODO: catch SIGINT (ctrl+c) & prompt for playlist again
+			playbackSuccessful = true
+			while playbackSuccessful do
+				playbackSuccessful = play @tracks[@trackIndex]
+				nextTrack()
+			end
+		end
 
-	# if A/B loop is present
-	if [[ ${#line[@]} -gt 1 ]]; then
-		begin=${line[1]}
-		end=${line[2]}
-		end=$(php -r "echo $end-$begin;");
+		private
 
-		# start from 0
-		mplayer_input_file=/tmp/tunewich-mplayer-input
-		echo 'seek -999:00:00' > $mplayer_input_file # this is a silly way to do it. -100% doesn'tn work. Still, there's a moment of the audio heard before this command is run.
-		mplayer_commands+=(-input file=$mplayer_input_file)
+		def parseOptions
+			parser = OptionParser.new
 
-		# loop back from B to A
-		mplayer_commands+=(-ss $begin)
-		mplayer_commands+=(-endpos $end)
-	fi
-	mplayer_commands+=(-novideo)
-	mplayer_commands+=(-loop 0)
-	mplayer_commands+=($mplayer_override_commands)
+			parser.on("-t", "--track INDEX/QUERY", "If a number is given, seek to that track. If a string, the title of the track is searched for.") do |trackQuery|
+				if trackQuery.to_i != 0
+					@trackIndex = trackQuery.to_i - 1
+				else
+					@trackIndex = trackQuery
+				end
+			end
+			parser.on("-a", "--all", "Play entire library.") do
+				useEntireLibrary
+			end
+			parser.on("-p", "--playlist QUERY", "Partial or full name of a playlist.") do |playlistQuery|
+				@playlistName = findPlaylistName playlistQuery
+			end
+			parser.on("-i", "--input-dir DIR", "Directory from which to read the playlist files.") do |inputDir|
+				@fileDirectory = inputDir
+			end
+			parser.on("-r", "--rating MIN_RATING", "Only play tracks rated at least the minimum given.") do |rating|
+				filterTracksByRating rating.to_i
+			end
+			parser.on("-d", "--enable-download", "Enable downloading files when encountering a playlist file without a cached file already download.") do
+				@enableDownload = true
+			end
+			parser.on("-s", "--shuffle", "Enable shuffle.") do
+				@shuffle = true
+			end
+			parser.on("-l", "--loop", "Loop, even if a track doesn't have an A/B loop defined.") do
+				@loop = true
+			end
+			parser.on("-n", "--new-track YOUTUBE_ID", "Add a track to the playlist and save.") do |id|
+				promptForPlaylist if not @playlistName
+				getIdFromYoutubeUrl! id
+				newTrack = createTrack id
+				addTrackToPlaylist newTrack, @playlistName
+				writeLibraryToFile
+				exit
+			end
+			parser.on("-q", "--query QUERY", "Search YouTube for a video.") do |query|
+				@tracks = searchYouTube query
+			end
+			parser.on("-h", "--help", "Show this help.") do
+				puts parser.help()
+				exit
+			end
 
-	echo -e "=======================\n========  $i  =========\n======================="
+			@mplayerOverrideCommands = parser.parse(ARGV)
+		end
 
-	# echo "# $i - $file" >> $(basename $0)
-	# continue # XXX
-	mplayer "$file" ${mplayer_commands[@]}
-	if [[ $? != 0 ]]; then
-		echo 'interrupting playlist'
-		break
-	fi
+		def promptForPlaylist
+			puts "Please choose a playlist:\n  #{@library['playlists'].keys.join "\n  "}"
+			selectedListName = nil
+			while !selectedListName do
+				selectedListName = findPlaylistName STDIN.gets.chomp
+				if !selectedListName
+					puts "No matches. Try again"
+				end
+			end
 
-	if [[ $shuffle = true ]]; then
-		i=$(( RANDOM % ${#list[@]} ))
-	else
-		i=$(($i+1))
-	fi
-done
+			@playlistName = selectedListName
+		end
 
-if [[ -n $mplayer_input_file && -f $mplayer_input_file ]]; then
-	rm $mplayer_input_file
-fi
+		def findTrackIndex(query)
+			trackTitles = @tracks.map{|t| t['title']}
+			findInList(query, trackTitles)[:index]
+		end
 
-#   1 - Gaia's Navel-8xV9fHSJLmE
-#   2 - Shop Theme Acapella - Zelda Ocarina of Time-X75bh7QtX0I
-#   3 - Pokemon Ruby_Sapphire_Emerald - Mt. Pyre Peak Acapella-DPlMGujSzQk
-#   4 - This Town Needs Guns - I'll Take the Minute Snake-rUWtG9Q4UZ8
-#   5 - Beware the Forest's Mushrooms - Super Mario RPG-lbRJ733xiF4
-#   6 - Super Mario RPG Soundtrack - Here's Some Weapons-h7nP8c2aNSU
-#   7 - Super Mario RPG Soundtrack - Hello Happy Kingdom-pfNrmksswDY
-#   8 - Super Mario RPG Soundtrack - From Inside the Earthen Pipe-h9xEKIY0B1s
-#   9 - Super Mario RPG Soundtrack - Fight Against a Somewhat Stronger Monster-71J2K6rNFr8
-#  10 - Fight Against an Armed Boss - Super Mario RPG-8WjMytgvcus
-#  11 - Super Mario RPG - Battle Music Medley-QH7ixuGrYK4
-#  12 - Dire, Dire Docks - Super Mario 64-GBPbJyxqHV0
-#  13 - Super Mario 64 Soundtrack - Credits theme-tbQmQomvGw0
-#  14 - Super Mario 64 Soundtrack - Castle Theme-5saLwD37NVM
-#  15 - Dire, Dire Docks (Super Mario 64) - Mario Series for Guitar-CGpQBUOYaNo
-#  16 - Are you awake-9Ca-T716PJI
-#  17 - Paper Mario - The Thousand Year Door Music Extended - Main Menu-mh-NTMyO42M
-#  18 - Best VGM 13 - Yoshi's Island - Overworld Stage (Touch Fuzzy, Get Dizzy)-kDssUvBiHFk
-#  19 - Beyond Good & Evil - Hyllian Suite-l2prV0pLxv4
-#  20 - Beyond Good and Evil Soundtrack- 'Mammago's'-PjZCIsPyRGc
-#  21 - Beyond Good and Evil Soundtrack- 'Shauni'-8h-V2mKKqUA
-#  22 - Title Theme - The Legend of Zelda - The Wind Waker-o78T9-I4OGA
-#  23 - File Select - The Legend of Zelda - The Wind Waker-0Kcnmba7v9Q
-#  24 - File Select - The Legend of Zelda - The Wind Waker HD-BqaxcQVnLo4
-#  25 - Beedle's Shop - The Legend of Zelda - The Wind Waker-2dQAKTbf_Ww
-#  26 - Pirates - The Legend of Zelda - The Wind Waker-lYCo08TfYlQ
-#  27 - Inside the Pirate Ship - The Legend of Zelda - The Wind Waker-p6kAruRfZH0
-#  28 - ??? - fvCT-MzPm1A
-#  29 - Dusty Dune Galaxy - Super Mario Galaxy-Ggrluc5hsHA
-#  30 - ??? - -5J8ULTc9Mk
-#  31 - Momix & Low. P - Merry Christmas Mr. Lawrence-QtK_hUAqMIs
-#  32 - 'Through the Veil' by Jamshied Sharifi & Hassan Hakmoun-QXY1LmEzHlg
-#  33 - Cowboy Bebop OST 1 - Space Lion-WKnVaDwUg5s
-#  34 - Afro Celt Sound System - Big Cat [HD]-dl-l03pzFVA
-#  35 - afro celt sound system  - north-8dDy9clkDf8
-#  36 - Afro Celt Sound System - Éireann-pSqR1O1PDJU
-#  37 - Ground Theme (Super Mario Bros.) - Mario Series for Guitar-8D3PUVKS5TE
-#  38 - Mario Series for Guitar - Athletic Theme (Yoshi's Island)-x0RCU-GUSXw
-#  39 - Mario Series for Guitar - Underwater (Super Mario Bros.)-wFIHSaUeP3c
-#  40 - Overworld (New Super Mario Bros. Wii) - Mario Series for Guitar-F02VnUUUnks
-#  41 - Benjamin Briggs - fight against an armed boss (remix)-zzoW1afkGKk
-#  42 - mplayer -novideo -ss 17.6 -endpos 52.3 Legend of Zelda+Fight Against An Armed Boss-jskIptPFX_0.mp4 -loop 0
-#  43 -
-#  44 -
-#  45 -
-#  46 -
-#  47 -
-#  48 -
-#  49 -
-#  50 -
-#  51 -
-#  52 -
-#  53 -
-#  54 -
-#  55 -
-#  56 -
-#  57 -
-#  58 -
-#  59 -
-#  60 -
-#  61 -
-#  62 -
-#  63 -
-#  64 -
-#  65 -
-#  66 -
-#  67 -
-#  68 -
-#  69 -
-#  70 -
-#  71 -
-#  72 -
-#  73 -
-#  74 -
-#  75 -
-#  76 -
-#  77 -
-#  78 -
-#  79 -
-#  80 -
-#  81 -
-#  82 -
-#  83 -
-#  84 -
-#  85 -
-#  86 -
-#  87 -
-#  88 -
-#  89 -
-#  90 -
-#  91 -
-#  92 -
-#  93 -
-#  94 -
-#  95 -
-#  96 -
-#  97 -
-#  98 -
-#  99 -
+		def findPlaylistName(query)
+			findInList(query, @library['playlists'].keys)[:value]
+		end
 
+		def findInList(query, list)
+			queryPattern = Regexp.new(query + '|' + query.gsub(/\s+/, '').split('').join('.*'), Regexp::IGNORECASE)
+			matches = []
+			list.each_with_index do |value, index|
+				matchedPortion = queryPattern.match(value)
+				if matchedPortion
+					match = {
+						:index => index,
+						:value => value,
+						:matchLength => matchedPortion[0].length
+					};
+					match[:density] = query.length.to_f / match[:matchLength].to_f
+					match[:breadth] = match[:matchLength].to_f / match[:value].length.to_f
+					match[:score] = (match[:breadth] + match[:density]) / 2
+					matches.push(match)
+				end
+			end
 
-##
-# RETIRED
-##
+			if matches.length === 0
+				return false
+			end
 
-# 037 - Midnight (Normal)-fyMM5ZMIMH8
-# 038 - 1 AM (Normal)-qDUevjay8Rc
-# 039 - 2 AM (Normal)-5Pd5K-TQ1gY
-# 047 - 10 AM (Normal)-bc-YhiwcA_E
-# 057 - 8 PM (Normal)-UJG3UdgKOwE
-# 058 - 9 PM (Normal)-HIaSN8OHfV8
-# 059 - 10 PM (Normal)-LEhlv7okIoA
-# 060 - 11 PM (Normal)-vzcH0HFWWiE
-# Aerith's Theme - Final Fantasy VII -KA8kz0cEk3g
-# Animal Crossing - 043 - 6 AM (Normal) - Fqptn0peqLE
-# Animal Crossing - 048 - 11 AM (Normal) - 4tcZAm84h_w
-# Animal Crossing - 051 - 2 PM (Normal) - t3fjGXA2dWo
-# Animal Crossing - 1 A.M. (Extended)-8qnkNjDAd4k
-# Animal Crossing - 10 P.M. (Extended)-KYjFqcTNzM0
-# Animal Crossing - 11 P.M. (Extended)-qw8FTCaAFSM
-# Animal Crossing - 12 A.M. (Extended)-As6_i8RoKP0
-# Animal Crossing - 2 A.M. (Extended)-QdrjrVPAMvQ
-# Animal Crossing - 3 A.M. (Extended)-nOROAUpqrGU
-# Animal Crossing - 4 A.M. (Extended)-xTXgAy1TJt8
-# Animal Crossing - 5 A.M. (Extended)-nXRK1OmRUq4
-# Animal Crossing - 8 P.M. (Extended)-NOA89fdYmqw
-# Animal Crossing - ??? - -GgytCQr5o4
-# Animal Crossing - ??? - 3SaT4Yp0FaA
-# Animal Crossing - ??? - 8gJomk45kFw
-# Animal Crossing - ??? - IT7vypPRA-Y
-# Animal Crossing - ??? - RKPjKC8bs14
-# Animal Crossing - ??? - Tf5TX0TSGps
-# Animal Crossing - ??? - XGgT_6tYYGg
-# Animal Crossing - ??? - catR8Ul2n_k
-# Animal Crossing - ??? - exK1ee3RR48
-# Animal Crossing - ??? - h2XCGASo6r4
-# Animal Crossing - ??? - ikjVV_ZcVwE
-# Animal Crossing - ??? - uDmjN8kgqmE
-# Animal Crossing - ??? - ugHzq90-h08
-# Animal Crossing - ??? - x1zDj6AgWjI
-# Belleville - Django Reinhardt-nS2ylPAUxzA
-# Blues Clair - Django Reinhardt-RMZHm4KB7Ps
-# Cello Amigos 'Merry Christmas Mr. Lawrence'-TxksWLS_7lM
-# Chocobo Theme - Final Fantasy series - FF-zOOEPwvGl8Q
-# Chrono Trigger Theme - Chrono Trigger -bOSVcBRV0Qc
-# Clash on the Big Bridge - Final Fantasy V - FF5-4C44ftapDdc
-# Corridors of Time - Chrono Trigger -p636Rw_L3XU
-# Django Reinhardt - Beyond The Sea-YwkOZbW1k1I
-# Django Reinhardt - Blues (1940)-0QOd7urjwTQ
-# Django Reinhardt - Sweet georgia brown-mpO5xIltlyU
-# Django Reinhardt - The Sheik of Araby-o6jwvS0mHwo
-# Dragon Quest iii Medley (Dragon Warrior 3) -LoumpAdFtS8
-# Fisherman's Horizon - Final Fantasy VIII - FF8-wMkMn-bDkqQ
-# Guardia Millenial Fair - Chrono Trigger -bA0za1SUK4U
-# HAKIMONU - Cadence 1 - Mincing Walk-5iahRrpKkzI
-# J-E-N-O-V-A - Final Fantasy VII -XzdF4zj_V1M
-# Libertango -wkVzqRmU-gY
-# Medley of Battle Theme songs - Chrono Trigger -EuUNeoAX8PU
-# Minor Swing - Django Reinhardt & Stéphane Grappelli-VpmOTGungnA
-# Ryuichi Sakamoto - Merry Christmas Mr. Lawrence - Trio Sakamoto-a1RSE-fciXY
-# Super Mario Bros. 3 Medley -SIak9tw_XMw
-# Swing 42 - Django Reinhardt-VFMkR_Jlejs
-# Tortoise - Magnet Pulls Through-DqSNqs5racE
-# Yoko Kanno - Fiddler's Green (Sailor's Pub)-zQ-2mO1JiEo
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-# Animal Crossing:
-# "voceB48hemo" \ # Animal Crossing ???
-# "l5285eKta-c" \ # Animal Crossing ???
-# "w0uOCxFYq2U" \ # Animal Crossing ???
-# "wxd56GLRxa0" \ # Animal Crossing ???
-# "Wdvh7PLW0G0" \ # Animal Crossing ???
-# "X0FFrjTeWr0" \ # Animal Crossing ???
-# "_1YpXECC7MY" \ # Animal Crossing ???
-# "OvhAeNNG-RQ" \ # Animal Crossing ???
-# "uuduck3SJo8" \ # Animal Crossing ???
-# "aGUzuX6cJvc" \ # Animal Crossing ???
-# "uOsads28JTg" \ # Animal Crossing ???
-# "Wqu5UfBFUW8" \ # Animal Crossing ???
-# "FtPwnwHmS9I" \ # Animal Crossing ???
-# "6c7Kgf0d2qk" \ # Animal Crossing ???
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
-#
+			matches.sort_by { |match| 1 - match[:score] } if matches.length > 1
+
+			{:index => matches[0][:index], :value => matches[0][:value]}
+		end
+
+		def usePlaylist(name)
+			@playlist = @library['playlists'][name]
+			@tracks = []
+			@playlist['tracks'].each do |trackReference|
+				@tracks.push @library['library'][trackReference['id']]
+			end
+		end
+
+		def useEntireLibrary
+			@tracks = []
+			@library['library'].keys.each do |trackKey|
+				@tracks.push @library['library'][trackKey]
+			end
+		end
+
+		def nextTrack
+			if @shuffle
+				shuffleIndex()
+			else
+				@trackIndex += 1
+				@trackIndex %= @tracks.length
+			end
+		end
+
+		def shuffleIndex
+			@trackIndex = Random.rand(@tracks.length - 1)
+		end
+
+		def play(track)
+			titleBlock "[#{@trackIndex + 1}] - #{@tracks[@trackIndex]['title']}"
+
+			if not fileExistsFromID? track['src']
+				if not @enableDownload
+					streamName = 'youtube-stream'
+					streamPath = mediaFilePath = makeStream streamName
+				end
+
+				if not downloadFromYouTubeID track['src'], streamPath
+					return false
+				end
+			end
+
+			mediaFilePath ||= findFile track['src']
+
+			mplayerCommands = []
+
+			# TODO: clean up these tests for streaming
+			if track['loop'].kind_of?(Array)
+				if !streamName
+					duration = track['loop'][1] - track['loop'][0]
+
+					mplayerInputFile = putInTempFile 'mplayer-input', "seek -999:00:00\n" # this is a silly way to do it. -100% doesn't work. Still, there's a moment of the audio heard before this command is run.
+					mplayerCommands.push("-input file=#{mplayerInputFile}")
+
+					# loop back from B to A
+					mplayerCommands.push("-ss #{track['loop'][0]}")
+					mplayerCommands.push("-endpos #{duration}")
+				else
+					titleBlock "This track has an A/B loop, but looping is not supported while streaming. Add the -d option to enable downloading."
+				end
+			end
+
+			if !streamName
+				mplayerCommands.push("-loop 0") if track['loop'] or @loop
+			end
+
+			mplayerCommands.push("-novideo")
+			mplayerCommands += @mplayerOverrideCommands
+
+			mplayerStatus = system "mplayer \"#{mediaFilePath}\" #{mplayerCommands.join ' '}"
+
+			deleteStream streamName if streamName
+			deleteTempFile 'mplayer-input'
+
+			mplayerStatus
+		end
+
+		def findFile(id)
+			`ls -1 #{getFilePrefixFromId id}*`.strip
+		end
+
+		def fileExistsFromID?(id)
+			system "ls -1 #{getFilePrefixFromId id}*"
+		end
+
+		def getFilePrefixFromId(id)
+			"#{@fileDirectory}/tunewich-#{id}"
+		end
+
+		def downloadFromYouTubeID(id, streamPath = nil)
+			puts "Downloading file (#{id})"
+
+			youtubeDlCommandBegin = "youtube-dl -f bestaudio"
+			youtubeDlCommandEnd = "-- #{id}"
+
+			if streamPath
+				streamPid = spawn("#{youtubeDlCommandBegin} -o - #{youtubeDlCommandEnd} > \"#{streamPath}\"")
+				Process.detach(streamPid)
+				return true
+			else
+				result = system "#{youtubeDlCommandBegin} -o \"#{getFilePrefixFromId id}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd}"
+				if not result
+					puts "Download interrupted..."
+				end
+			end
+
+			result
+		end
+
+		def titleBlock(message, fill = '=', width = 80)
+			blockRow = fill * width
+			padding = '  '
+			marginSize = (width - message.length) / 2 - padding.length
+			marginLeft = marginSize > 1 ? fill * marginSize : ''
+			marginRight = marginLeft
+			if message.length % 2 == 1 then marginRight += fill end
+			puts "\n#{blockRow}"
+			puts "#{marginLeft}#{padding}#{message}#{padding}#{marginRight}"
+			puts blockRow
+		end
+
+		def getTempFilePath(name)
+			"/tmp/tunewich-#{@sessionID}-#{name}"
+		end
+
+		def putInTempFile(name, value)
+			path = getTempFilePath name
+			File.write(path, value)
+			path
+		end
+
+		def putInTempFile(name, value)
+			path = getTempFilePath name
+			File.write(path, value)
+			path
+		end
+
+		def deleteTempFile(name)
+			path = getTempFilePath name
+			if File.exists? path
+				File.delete path
+			end
+		end
+
+		def makeStream(name)
+			path = getTempFilePath name
+			if File.exists? path
+				raise "The temp file '#{name}' already exists. (#{path})"
+			end
+			if not system "mkfifo \"#{path}\""
+				raise "ERROR: Could not create the stream file (#{path})"
+			end
+			path
+		end
+
+		def getIdFromYoutubeUrl! url
+			url.sub!(/^.*v=/, '')
+		end
+
+		def filterTracksByRating rating
+			@tracks.keep_if { |track| track['rating'] && track['rating'] >= rating }
+		end
+
+		def createPlaylist name, tracks = [], description = ''
+			newPlaylist = {
+				'description' => description,
+				'public' => true,
+				'tracks' => tracks
+			}
+			@library['playlists'][name] = newPlaylist
+		end
+
+		def createTrack id, title = nil
+			if not title
+				puts "Fetching title for YouTube ID #{id}..."
+				title = `youtube-dl --get-title -- #{id}`.chomp
+
+				if title.empty?
+					title = 'Unknown'
+					puts "Video not found. Cannot get title."
+				end
+			end
+
+			{
+				'src' => id,
+				'title' => title
+			}
+		end
+
+		def addTrackToPlaylist track, playlistName
+			trackReference = {
+				'id' => track['src']
+			}
+
+			@library['library'][trackReference['id']] = track
+			@library['playlists'][playlistName]['tracks'].push trackReference
+
+			puts "Saved '#{track['title']}' (#{trackReference['id']}) to playlist '#{playlistName}'"
+		end
+
+		def writeLibraryToFile
+			libraryJSON = JSON.pretty_generate(@library)
+			File.write(@libraryFilePath, libraryJSON) if libraryJSON
+		end
+
+		def searchYouTube query, offset = 0, count = 20
+			puts "Searching YouTube for '#{query}'"
+			resultsPerPage = 20
+			page = (offset.to_f / resultsPerPage.to_f).to_i + 1
+			queryParameter = URI::encode(query)
+			queryUrl="https://www.youtube.com/results?search_query=#{queryParameter}&page=#{page}"
+
+			queryResultIds = []
+			open(queryUrl) do |handle|
+				html = []
+				handle.each_line { |line| html.push(line) }
+				queryResultIds = html.grep(/href="\/watch/).map! do |line|
+					line.sub!(/^.*watch\?v=([^\"&<]+).*\n/, '\1')
+				end
+				queryResultIds.uniq!
+			end
+
+			resultTracks = []
+			queryResultIds.slice(0, count).each_with_index do |id, index|
+				resultTracks.push createTrack id, "Search '#{query}': (#{id})"
+			end
+
+			resultTracks
+		end
+
+		alias deleteStream deleteTempFile
+
+	end
+end
+
+Tunewich::Player.new
