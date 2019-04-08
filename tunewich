@@ -9,10 +9,13 @@ require "json"
 module Tunewich
 	class Player
 		def initialize
+
 			@sessionID = Random.rand(1024)
-			@playlistName = nil
 			@trackIndex = nil
-			@tracks = []
+			@tracks = nil
+			@playlistName = nil
+			@playlist = nil
+
 			if ENV.key? 'TUNEWICH_DIR'
 				setLibraryPath ENV['TUNEWICH_DIR']
 			else
@@ -26,15 +29,11 @@ module Tunewich
 				exit
 			end
 
-			if @tracks.length === 0
-				if not @playlistName
-					promptForPlaylist
-				end
-
-				usePlaylist @playlistName
-				titleBlock "Playlist: #{@playlistName} (#{@tracks.length})", '#'
-			else
+			if @tracks
 				titleBlock "Playing #{@tracks.length} tracks", '#'
+			else
+				usePlaylist promptForPlaylist
+				titleBlock "Playlist: #{@playlistName} (#{@tracks.length})", '#'
 			end
 
 			if @trackIndex == nil
@@ -62,8 +61,8 @@ module Tunewich
 		def parseOptions
 			parser = OptionParser.new
 
-			parser.on("-i", "--input-dir DIR", "Directory from which to read the playlist and files. This option must come first. Recommended to define TUNEWICH_DIR instead.") do |inputDir|
-				# TODO: always process this option first, even if it's provided last
+			parser.on("-i", "--input-dir DIR", "Directory from which to read the playlist and files. NOTE: when used, this must be the first option. Recommended to define TUNEWICH_DIR instead.") do |inputDir|
+				# FIXME: always process this option first, even if it's provided last
 				setLibraryPath inputDir
 			end
 			parser.on("-t", "--track INDEX/QUERY", "If a number is given, seek to that track. If a string, the title of the track is searched for.") do |trackQuery|
@@ -73,16 +72,22 @@ module Tunewich
 					@trackIndex = trackQuery
 				end
 			end
-			parser.on("-a", "--add-track YOUTUBE_ID", "Add a track to the playlist and save.") do |id|
-				promptForPlaylist if not @playlistName
-				getIdFromYoutubeUrl! id
+			parser.on("-a", "--add-track YOUTUBE_URL", "Add a track to the playlist and save.") do |url|
+				# TODO: add multiple by accepting space-separated list of URLs
+				@playlistName = promptForPlaylist if not @playlistName
+				id = getYoutubeIdFromUrl url
 				newTrack = createTrack id
 				addTrackToPlaylist newTrack, @playlistName
 				writeLibraryToFile
 				exit
 			end
 			parser.on("-p", "--playlist QUERY", "Partial or full name of a playlist.") do |playlistQuery|
-				@playlistName = findPlaylistName playlistQuery
+				usePlaylist findPlaylistName playlistQuery
+			end
+			parser.on("-P", "--create-playlist NAME", "Create a new playlist. Implies -p of the same playlist.") do |playlistName|
+				createPlaylist playlistName
+				writeLibraryToFile
+				usePlaylist playlistName
 			end
 			parser.on("-r", "--rating MIN_RATING", "Only play tracks rated at least the minimum given.") do |rating|
 				filterTracksByRating rating.to_i
@@ -98,6 +103,9 @@ module Tunewich
 			end
 			parser.on("-q", "--query QUERY", "Search YouTube for a video.") do |query|
 				@tracks = searchYouTube query
+			end
+			parser.on("-w", "--write-after TIME", "Save tracks to the playlist (from -p or -P) when played for the given number of seconds. Use with -q.") do |time|
+				@playthroughThreshold = time.to_f
 			end
 			parser.on("-h", "--help", "Show this help.") do
 				puts parser.help()
@@ -140,7 +148,7 @@ module Tunewich
 				end
 			end
 
-			@playlistName = selectedListName
+			selectedListName
 		end
 
 		def findTrackIndex(query)
@@ -180,10 +188,11 @@ module Tunewich
 		end
 
 		def usePlaylist(name)
-			@playlist = @library['playlists'][name]
+			@playlistName = name
+			@playlist = @library['playlists'][@playlistName]
 			@tracks = []
 			@playlist['tracks'].each do |trackReference|
-				@tracks.push @library['library'][trackReference['id']]
+				@tracks.push @library['library'][trackReference]
 			end
 		end
 
@@ -248,7 +257,19 @@ module Tunewich
 			mplayerCommands.push("-novideo")
 			mplayerCommands += @mplayerOverrideCommands
 
+			mplayerStartTime = Time.now.to_f
+
 			mplayerStatus = system "mplayer \"#{mediaFilePath}\" #{mplayerCommands.join ' '}"
+
+			mplayerEndTime = Time.now.to_f
+
+			mplayerPlayTime = mplayerEndTime - mplayerStartTime
+			if (@playthroughThreshold && mplayerPlayTime > @playthroughThreshold)
+				puts "Played more than #{@playthroughThreshold}s, ading to playlist '#{@playlistName}'."
+				track['title'] = getTrackTitle track['src'] # FIXME: assuming this is from a search, and the title was not fetched yet
+				addTrackToPlaylist track, @playlistName if @playlistName
+				writeLibraryToFile
+			end
 
 			deleteStream streamName if streamName
 			deleteTempFile 'mplayer-input'
@@ -334,8 +355,8 @@ module Tunewich
 			path
 		end
 
-		def getIdFromYoutubeUrl! url
-			url.sub!(/^.*v=/, '')
+		def getYoutubeIdFromUrl url
+			url.sub(/^.*v=/, '')
 		end
 
 		def filterTracksByRating rating
@@ -351,32 +372,41 @@ module Tunewich
 			@library['playlists'][name] = newPlaylist
 		end
 
-		def createTrack id, title = nil
-			if not title
-				puts "Fetching title for YouTube ID #{id}..."
-				title = `youtube-dl --get-title -- #{id}`.chomp
+		def getTrackTitle id
+			puts "Fetching title for YouTube ID #{id}..."
+			title = `youtube-dl --get-title -- #{id}`.chomp
 
-				if title.empty?
-					title = 'Unknown'
-					puts "Video not found. Cannot get title."
-				end
+			if title.empty?
+				title = 'Unknown'
+				puts "Video not found. Cannot get title."
 			end
 
+			title
+		end
+
+		def createTrack id, title = nil
 			{
 				'src' => id,
-				'title' => title
+				'title' => title || getTrackTitle(id)
 			}
 		end
 
+		def addTrackToLibrary track
+			@library['library'][track['src']] ||= track
+			@library['library'][track['src']]
+		end
+
 		def addTrackToPlaylist track, playlistName
-			trackReference = {
-				'id' => track['src']
-			}
+			addTrackToLibrary track
 
-			@library['library'][trackReference['id']] = track
-			@library['playlists'][playlistName]['tracks'].push trackReference
-
-			puts "Saved '#{track['title']}' (#{trackReference['id']}) to playlist '#{playlistName}'"
+			trackReference = track['src']
+			tracks = @library['playlists'][playlistName]['tracks']
+			if tracks.index trackReference === nil
+				tracks.push trackReference
+				puts "Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'"
+			else
+				puts "Track '#{track['title']}' (#{trackReference}) is already in playlist '#{playlistName}'"
+			end
 		end
 
 		def writeLibraryToFile
