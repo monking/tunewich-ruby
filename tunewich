@@ -124,6 +124,7 @@ module Tunewich
 							puts "current tags: #{getTrackTags track}"
 						else
 							addTrackToTags track, tags.split(/[, ]+/)
+							addTrackToLibrary @tracks[@trackIndex] if @tracks[@trackIndex]['unattached']
 							writeLibraryToFile true
 						end
 					}
@@ -143,6 +144,75 @@ module Tunewich
 					'info' => "Load entire library.",
 					'action' => Proc.new {
 						useEntireLibrary
+					}
+				},
+				'fade' => {
+					'info' => 'Fade volume (/fade VOLUME [DURATION] [NEXT ACTION])',
+					'action' => Proc.new { |properties|
+						fadeCommandMatch = /^(out|in|\d+)( \d+)?( .+)?$/.match properties
+						if fadeCommandMatch
+							whisper "fade command"
+							duration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 2.0
+							followingCommand = fadeCommandMatch[3] && fadeCommandMatch[3].length > 0 ? fadeCommandMatch[3].strip : nil
+							volume = getCurrentMplayerVolume
+							targetFadeVolume = fadeCommandMatch[1]
+							if targetFadeVolume == 'out'
+								targetFadeVolume = 0
+								volumeBeforeFadingOut = volume
+							elsif targetFadeVolume == 'in'
+								targetFadeVolume = volumeBeforeFadingOut
+							else
+								targetFadeVolume = targetFadeVolume.to_f
+							end
+							volumeFadeInterval = 0.1
+							volumeStep = (targetFadeVolume - volume) / duration * volumeFadeInterval
+							whisper "about to fade volume"
+							while (volume - targetFadeVolume).abs > 0.1
+								volume += volumeStep
+								printRepeat "fading: #{volume.round()}"
+								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{volume} 1\n"
+								sleep volumeFadeInterval
+							end
+							if followingCommand
+								whisper "mplayerAction: second command > input"
+								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
+							end
+						end
+					}
+				},
+				'ramp' => {
+					'info' => 'Ramp speed (/ramp SPEED [DURATION] [NEXT ACTION])',
+					'action' => Proc.new { |properties|
+						rampCommandMatch = /^(out|in|[0-9.]+)( \d+)?( .+)?$/.match properties
+						if rampCommandMatch
+							whisper "ramp command"
+							duration = rampCommandMatch[2] && rampCommandMatch[2].length > 0 ? rampCommandMatch[2].to_f : 2.0
+							followingCommand = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].strip : nil
+							speed = getCurrentMplayerSpeed
+							targetRampSpeed = rampCommandMatch[1]
+							if targetRampSpeed == 'out'
+								targetRampSpeed = 0
+								speedBeforeRampingOut = speed
+							elsif targetRampSpeed == 'in'
+								targetRampSpeed = speedBeforeRampingOut
+							else
+								targetRampSpeed = targetRampSpeed.to_f
+							end
+							speedRampInterval = 0.1
+							speedStep = (targetRampSpeed - speed) / duration * speedRampInterval
+							whisper "about to ramp speed by #{speedStep} every #{speedRampInterval} seconds"
+							while (speed - targetRampSpeed).abs > 0.1
+								speed += speedStep
+								printRepeat "ramping: #{(speed * 10.0).round.to_f / 10.0}"
+								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "speed_set #{speed}\n"
+								sleep speedRampInterval
+							end
+							putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "speed_set #{targetRampSpeed}\n"
+							if followingCommand
+								whisper "mplayerAction: second command > input"
+								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
+							end
+						end
 					}
 				},
 				'list' => {
@@ -264,7 +334,7 @@ module Tunewich
 					'action' => Proc.new { |query|
 						filtersList = @trackFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackFilters
 						filtersList ||= []
-						instructions = "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}"
+						instructions = "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}\n\nAvailable tags: #{listAllTagsWithAliases.join ', '}"
 						@trackFilters = parseOptionParameters editListInVim(filtersList, instructions).join ','
 						useTracks @tracks, false
 					}
@@ -426,38 +496,7 @@ module Tunewich
 			volumeBeforeFadingOut = 10 # FIXME: better initial default
 			mplayerAction = Proc.new { |command|
 				whisper "mplayerAction: begin"
-				fadeCommandMatch = /^fade (out|in|\d+)( \d+)?( .+)?$/.match command
-				if fadeCommandMatch
-					whisper "mplayerAction: found a fade command"
-					duration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 2.0
-					followingCommand = fadeCommandMatch[3] && fadeCommandMatch[3].length > 0 ? fadeCommandMatch[3].strip : nil
-					volume = getCurrentMplayerVolume
-					targetFadeVolume = fadeCommandMatch[1]
-					if targetFadeVolume == 'out'
-						targetFadeVolume = 0
-						volumeBeforeFadingOut = volume
-					elsif targetFadeVolume == 'in'
-						targetFadeVolume = volumeBeforeFadingOut
-					else
-						targetFadeVolume = targetFadeVolume.to_f
-					end
-					volumeFadeInterval = 0.1
-					volumeStep = (targetFadeVolume - volume) / duration * volumeFadeInterval
-					whisper "mplayerAction: about to fade volume"
-					while (volume - targetFadeVolume).abs > 0.1
-						volume += volumeStep
-						printRepeat "fading: #{volume.round()}"
-						putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{volume} 1\n"
-						sleep volumeFadeInterval
-					end
-					if followingCommand
-						whisper "mplayerAction: second command > input"
-						putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
-					end
-				else
-					whisper "mplayerAction: normal command > input"
-					putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{command}\n"
-				end
+				putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{command}\n"
 				if /^vol/.match command
 					whisper "mplayerAction: found a volume command"
 					volume = getCurrentMplayerVolume
@@ -507,7 +546,7 @@ module Tunewich
 
 					# FIXME: this stalls when file is to be downloaded...
 					# whisper "putting a 'seek to the beginning' command in the player command input file" 
-					# mplayerAction.call 'seek -999:00:00' # this is a silly way to do it. -100% doesn't work. Still, there's a moment of the audio heard before this command is run.
+					# mplayerAction.call 'seek 0 1'
 
 					whisper "setting some player startup options" 
 					# loop back from B to A
@@ -598,6 +637,10 @@ module Tunewich
 
 		def getCurrentMplayerVolume
 			getMplayerProperty('volume', /^(ANS_volume=|.*Volume: )(.*?)(\?)?$/).to_f
+		end
+
+		def getCurrentMplayerSpeed
+			getMplayerProperty('speed', /^(ANS_speed=|.*Speed: )(.*?)(\?)?$/).to_f
 		end
 
 		def getMplayerConfigVolume
@@ -855,6 +898,7 @@ module Tunewich
 		def putInTempFile(name, value)
 			path = getTempFilePath name
 			whisper "#{path} << '#{value.chomp}'"
+			# FIXME: why does this stall when writing to a FIFO before something is reading from it?
 			writeResult = File.write(path, value)
 			whisper "#{path} [written: #{writeResult}]"
 			writeResult && path
@@ -1162,14 +1206,34 @@ module Tunewich
 			end
 
 			if filters['tag']
-				taggedPlaylistTrackIds = []
-				@library['playlists'].each { |name, p| taggedPlaylistTrackIds += p['tracks'] if p['tags'] && p['tags'].find_index(filters['tag']) }
-				tracks.send(action) { |t| taggedPlaylistTrackIds.find_index t['id'] }
+				filters['tag'] = filters['tag']
+				# TODO: add a tag fuzzy factor: include tags of tracks that have the current tag (only 1 degree separation to start)
+				tag = nil
+				if @library['tags'][filters['tag']]
+					foundTagName = filters['tag']
+					tag = @library['tags'][filters['tag']]
+				else
+					@library['tags'].each { |name, libraryTag|
+						# TODO: list aliases too
+						if libraryTag['aliases']
+							libraryTag['aliases'].each { |tagAlias|
+								if tagAlias == filters['tag']
+									foundTagName = name
+									tag = libraryTag
+								end
+							}
+						end
+					}
+				end
 
-				if tracks.length === 0 # list available tags if no matches
-					allTags = []
-					@library['playlists'].each { |name, p| allTags += p['tags'] if p['tags'] }
-					puts "No matches. Available tags are: #{allTags.uniq.sort.join ", "}"
+				if tag
+					foundTagName = "\"#{foundTagName}\""
+					if tag['aliases'] && tag['aliases'].length > 0
+						foundTagName = "#{foundTagName} (aliases \"#{tag['aliases'].join '", "'}\")"
+					end
+					tracks.send(action) { |t| tag['tracks'].index t['id'] }
+				else
+					puts "No matches for \"#{filters['tag']}\". Available tags are: #{listAllTagsWithAliases.join ", "}"
 				end
 			end
 
@@ -1207,7 +1271,22 @@ module Tunewich
 				}
 			end
 
+			puts "#{tracks.length} matches for filters"
+
 			tracks
+		end
+
+		def listAllTagsWithAliases
+			allTagNames = []
+
+			@library['tags'].each { |name, libraryTag|
+				allTagNames << name
+				if libraryTag['aliases']
+					libraryTag['aliases'].each { |tagAlias| allTagNames << tagAlias }
+				end
+			}
+
+			allTagNames.sort
 		end
 
 		def createPlaylist name, tracks = [], description = ''
@@ -1312,6 +1391,7 @@ module Tunewich
 		end
 
 		def searchYouTube query, offset = 0, count = 20
+			# FIXME: sometimes the STDIN is not editable after this
 			puts "Searching YouTube for '#{query}'"
 			resultsPerPage = 20
 			page = (offset.to_f / resultsPerPage.to_f).to_i + 1
@@ -1612,7 +1692,7 @@ module Tunewich
 
 			system "vim #{getTempFilePath editListName}"
 
-			list = readTempFile(editListName).lines
+			list = readTempFile(editListName).strip.lines
 			list.delete_if { |line| # remove empty and comment lines from the list
 				line.match(/^(#.*|\s*)$/)
 			}
