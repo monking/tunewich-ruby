@@ -94,13 +94,42 @@ module Tunewich
 			playerOutput = nil
 			commandRequiresBreak = false
 			commandRequiresNext = false
+			commandRequiresExit = false
 
 			interactiveCommands = {
-				'more' => {
+				'r' => {
+					'info' => "Rate this track.",
+					'action' => Proc.new { |new_rating|
+						if !new_rating || new_rating.length < 1
+							puts "current rating: #{@tracks[@trackIndex]['rating']}"
+						else
+							@tracks[@trackIndex]['rating'] = new_rating.to_i
+							if !@tracks[@trackIndex]['unattached'] || @tracks[@trackIndex]['rating'] > 0
+								addTrackToLibrary @tracks[@trackIndex] if @tracks[@trackIndex]['unattached']
+								writeLibraryToFile true
+							end
+						end
+					}
+				},
+				't' => {
+					'info' => "Tag this track.",
+					'action' => Proc.new { |tags|
+						track = @tracks[@trackIndex]
+						if !tags || tags.length < 1
+							puts "current tags: #{getTrackTags track}"
+						else
+							addTrackToTags track, tags.split(/[, ]+/)
+							writeLibraryToFile true
+						end
+					}
+				},
+				'm' => {
 					'info' => "Play all tracks on this video's page.",
 					'action' => Proc.new {
-						useTracks getYouTubeTracksFromPage(@tracks[@trackIndex]['src']), false
-						@trackIndex = 0
+						tracks = getYouTubeTracksFromPage(@tracks[@trackIndex]['src'])
+						tracks.unshift @tracks[@trackIndex]
+						useTracks tracks, false
+						@trackIndex = 1
 						commandRequiresNext = true
 					}
 				},
@@ -112,18 +141,8 @@ module Tunewich
 						commandRequiresNext = true
 					}
 				},
-				'filter' => {
-					'info' => 'Edit filters.',
-					'action' => Proc.new { |query|
-						filtersList = @trackFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackFilters
-						filtersList ||= []
-						instructions = "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}"
-						@trackFilters = parseOptionParameters editListInVim(filtersList, instructions).join ','
-						useTracks @tracks, false
-					}
-				},
-				'add' => {
-					'info' => '<playlistName> add selection to a playlist.',
+				'list' => {
+					'info' => '<playlistName> add this to a playlist.',
 					'action' => Proc.new { |playlistQuery|
 						if playlistQuery && playlistQuery.length > 0
 							playlistName = findPlaylistName playlistQuery
@@ -140,6 +159,22 @@ module Tunewich
 						end
 					}
 				},
+				'again' => {
+					'info' => "Play the last track again.",
+					'action' => Proc.new {
+						commandRequiresNext = true
+					}
+				},
+				'filter' => {
+					'info' => 'Edit filters.',
+					'action' => Proc.new { |query|
+						filtersList = @trackFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackFilters
+						filtersList ||= []
+						instructions = "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}"
+						@trackFilters = parseOptionParameters editListInVim(filtersList, instructions).join ','
+						useTracks @tracks, false
+					}
+				},
 				'loop' => {
 					'action' => Proc.new {
 						@loop = !@loop
@@ -151,6 +186,18 @@ module Tunewich
 					'action' => Proc.new {
 						@shuffle = !@shuffle
 						puts "shuffle: #{@shuffle ? 'on' : 'off'}"
+					}
+				},
+				'x' => {
+					'info' => 'Exit.',
+					'action' => Proc.new {
+						commandRequiresExit = true
+					}
+				},
+				'?' => {
+					'info' => 'List mplayer commands.',
+					'action' => Proc.new {
+						system 'mplayer -input cmdlist'
 					}
 				}
 			}
@@ -167,14 +214,9 @@ module Tunewich
 
 				titleBlock "[#{@trackIndex + 1}] - #{track['title']}"
 
-				trackShouldBeAddedToLibrary = false
-				trackShouldBeAddedToPlaylist = false
-				changesToWrite = false
-
 				if @updateAllPlayedTrackInfo && !@noNetwork
 					printRepeat "Getting latest track information..."
 					updateTrackInfo track
-					changesToWrite = true
 				end
 
 				fileExists = trackFileExists? track
@@ -210,66 +252,11 @@ module Tunewich
 				#  l: copy a link to share the source
 				#  x: remove from library
 				#  d: download
-				playerOutput = play track, chapterIndex
+				playerOutput = play track, chapterIndex, interactiveCommands
 
-				if playerOutput
-					loadLibrary
-
-					if (@writeAfterSecondsPlayed && playerOutput[:playtime] > @writeAfterSecondsPlayed)
-						puts "Played more than #{@writeAfterSecondsPlayed}s, saving to library."
-						loadLibrary
-						track = matchExistingLibraryTrack track
-						track['played'] = Time.now.to_i
-						trackShouldBeAddedToPlaylist = true
-					end
-
-					if @ratingsPromptDuration
-						# FIXME: disabling timed prompt in favor of commands for now
-						# input = timedTextPrompt @ratingsPromptDuration, "rating/tags (#{track['rating']}): "
-						response = commandPrompt "rating/tags (#{track['rating']}): ", interactiveCommands
-
-						next if commandRequiresNext
-						break if commandRequiresBreak
-
-						input = response[:input]
-
-						if input && input.length
-							tags = []
-							new_rating = nil
-							input.split(Player::TAG_INPUT_SPLIT).each { |chunk|
-								if chunk.match(/^\d+$/) # is numeric
-									new_rating = chunk.to_i
-								else
-									tags << chunk
-								end
-							}
-
-							if new_rating
-								track['rating'] = new_rating
-								@tracks[@trackIndex] = track # FIXME: set up @tracks to reference @library
-								if track['unattached'] && new_rating > 0
-									trackShouldBeAddedToLibrary = true
-								end
-							end
-
-							if tags.length > 0
-								trackShouldBeAddedToLibrary = true
-								addTrackToTags track, tags
-								changesToWrite = true
-							end
-						end
-					end
-
-					if trackShouldBeAddedToLibrary || trackShouldBeAddedToPlaylist
-						trackReference = addTrackToLibrary track
-						addTrackReferenceToPlaylist trackReference, @playlistName if trackShouldBeAddedToPlaylist && @playlistName
-						changesToWrite = true
-					end
-				end
-
-				writeLibraryToFile if changesToWrite
-
-				filterTracksOnDeck
+				next if commandRequiresNext
+				break if commandRequiresBreak
+				exit if commandRequiresExit
 
 				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
 			end
@@ -331,12 +318,30 @@ module Tunewich
 			@library['tags'].delete tagName if @library['tags'][tagName]
 		end
 
-		def play(track, chapterIndex)
+		def play(track, chapterIndex, interactiveCommands)
 			response = {
 				:exit => true,
 				:playtime => 0
 			}
-			mplayerCommands = []
+			mplayerStartupOptions = []
+			deleteStream 'mplayer-input'
+			mplayerInputFile = makeStream 'mplayer-input'
+			mplayerStartupOptions << "-slave -input file=#{mplayerInputFile}"
+			mplayerThread = nil
+			mplayerAction = Proc.new { |command|
+				if 'fade' == command
+					count = 15
+					while count > 0
+						printRepeat count
+						putInTempFile 'mplayer-input', "volume -2\n"
+						sleep 0.1
+						count -= 1
+					end
+				else
+					putInTempFile 'mplayer-input', "#{command}\n"
+				end
+				mplayerThread && mplayerThread.alive? ? true : false
+			}
 			fileAlreadyExists = trackFileExists? track
 			streaming = !fileAlreadyExists && !@enableDownload && !chapterIndex
 
@@ -352,11 +357,11 @@ module Tunewich
 					if not streaming
 						titleBlock "Chapter #{chapterIndex + 1}: #{track['chapters'][chapterIndex]['name']}"
 						offsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex]['time']
-						mplayerCommands << "-ss #{offsetSeconds}"
+						mplayerStartupOptions << "-ss #{offsetSeconds}"
 
 						if chapterIndex < track['chapters'].length - 1
 							nextTrackoffsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex + 1]['time']
-							mplayerCommands << "-endpos #{nextTrackoffsetSeconds - offsetSeconds}"
+							mplayerStartupOptions << "-endpos #{nextTrackoffsetSeconds - offsetSeconds}"
 						end
 
 					else
@@ -372,12 +377,11 @@ module Tunewich
 				if not streaming
 					duration = track['loop'][1] - track['loop'][0]
 
-					mplayerInputFile = putInTempFile 'mplayer-input', "seek -999:00:00\n" # this is a silly way to do it. -100% doesn't work. Still, there's a moment of the audio heard before this command is run.
-					mplayerCommands << "-input file=#{mplayerInputFile}"
+					mplayerAction.call 'seek -999:00:00' # this is a silly way to do it. -100% doesn't work. Still, there's a moment of the audio heard before this command is run.
 
 					# loop back from B to A
-					mplayerCommands << "-ss #{track['loop'][0]}"
-					mplayerCommands << "-endpos #{duration}"
+					mplayerStartupOptions << "-ss #{track['loop'][0]}"
+					mplayerStartupOptions << "-endpos #{duration}"
 				else
 					titleBlock "This track has an A/B loop, but looping is not supported while streaming. Add the -d option to enable downloading."
 				end
@@ -389,6 +393,7 @@ module Tunewich
       else
 				if streaming
 					streamName = 'youtube-stream'
+					deleteStream streamName
 					streamPath = mediaFilePath = makeStream streamName
 				end
 
@@ -403,27 +408,37 @@ module Tunewich
 			end
 
 			if !streamName
-				mplayerCommands << "-loop 0" if track['loop'] or @loop
+				mplayerStartupOptions << "-loop 0" if track['loop'] or @loop
 			end
 
-			mplayerCommands += [@mplayerDefaultOptions] if @mplayerDefaultOptions
-			mplayerCommands += @mplayerOverrideCommands
+			mplayerStartupOptions += [@mplayerDefaultOptions] if @mplayerDefaultOptions
+			mplayerStartupOptions += @mplayerOverrideCommands
 
 			if track['volume']
 				mplayerCurrentVolume = 25.0
-				mplayerCommands.each { |command|
+				mplayerStartupOptions.each { |command|
 					if command.include? 'volume'
 						mplayerCurrentVolume = command.match(/.*-volume ([0-9]+)$/)[1].to_f
 					end
 				}
-				mplayerCommands += ["-volume #{(mplayerCurrentVolume / track['volume']).round}"]
+				mplayerStartupOptions += ["-volume #{(mplayerCurrentVolume / track['volume']).round}"]
 			end
 
 			mplayerStartTime = Time.now.to_f
 
-			mplayerStatus = system "mplayer \"#{mediaFilePath}\" #{mplayerCommands.join ' '}"
+			mplayerOutputFile = getTempFilePath 'mplayer-output'
+
+			mplayerStatus = nil
+			mplayerThread = Thread.new {
+				mplayerStatus = system "mplayer \"#{mediaFilePath}\" #{mplayerStartupOptions.join ' '} > #{mplayerOutputFile}"
+			}
+			commandPrompt "commands: ", interactiveCommands, mplayerAction
+			mplayerThread.join
 
 			mplayerEndTime = Time.now.to_f
+
+			deleteStream 'mplayer-input'
+			deleteTempFile 'mplayer-output'
 
 			mplayerPlayTime = mplayerEndTime - mplayerStartTime
 
@@ -511,6 +526,14 @@ module Tunewich
 				end
 			}
 			track
+		end
+
+		def getTrackTags track
+			tags = []
+			@library['tags'].each { |name, tag|
+				tags << name if tag['tracks'].include? track['id']
+			}
+			tags
 		end
 
 		def getTrackTitles tracks
@@ -1115,7 +1138,6 @@ module Tunewich
 			page = (offset.to_f / resultsPerPage.to_f).to_i + 1
 			queryParameter = URI::encode(query)
 			queryUrl="https://www.youtube.com/results?search_query=#{queryParameter}&page=#{page}"
-			puts "queryUrl: #{queryUrl}" # XXX
 			getYouTubeTracksFromPage queryUrl
 		end
 
@@ -1393,7 +1415,7 @@ module Tunewich
 			list
 		end
 
-		def commandPrompt message = nil, commands = nil
+		def commandPrompt message = nil, commands = nil, action = nil
 			if commands
 				commands['help'] = {
 					'info' => 'show this info',
@@ -1421,9 +1443,7 @@ module Tunewich
 			}
 
 			while input = STDIN.gets.chomp
-
 				if commands && !input.empty? && input[0] == '/'
-
 					commandParts = input.match(/^\/([^\s]+)\s*(.*)/)
 					commandName = commandParts[1]
 					commandArgs = commandParts[2]
@@ -1439,13 +1459,14 @@ module Tunewich
 					end
 
 					prompt.call
-
+				elsif action
+					actionResult = action.call input
+					if not actionResult
+						break
+					end
 				else
-
 					break
-
 				end
-
 			end
 
 			response[:input] = input
