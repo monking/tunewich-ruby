@@ -18,7 +18,6 @@ $tunewichWorkingDirectory = "#{ENV['HOME']}/.tunewich"
 $tunewichTmpDirectory = "#{$tunewichWorkingDirectory}/tmp"
 
 # Go to .tunewich directory so that any temp files are stored there.
-# FIXME: don't allow youtube-dl to create --Frag files, or clean them up
 Dir.mkdir $tunewichWorkingDirectory if not Dir.exist? $tunewichWorkingDirectory
 Dir.chdir $tunewichWorkingDirectory
 
@@ -1119,26 +1118,96 @@ module Tunewich
 						'description' => 'Fade volume (/fade VOLUME [DURATION])',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							userEQDefinition = inputParts[1]
-							if userEQDefinition && userEQDefinition.length > 0
-								eqPresets = {
-									'bass' => '4:5:3:2:0:0:0:0:0:0',
-									'earplugs' => '2:6:1:0:0:1:2:4:6:3'
-								}
-								if userEQDefinition == 'help'
-									putsRealtime eqPresets.keys.join ", "
+							loadLibrary
+							@library['player'] ||= {}
+							@library['player']['equalizer_presets'] ||= {}
+
+							# default presets
+							@library['player']['equalizer_presets']['flat'] = '0:0:0:0:0:0:0:0:0:0'
+							@library['player']['equalizer_presets']['bass'] ||= '-1:0:-2:-3:-5:-5:-5:-5:-5:-5'
+							@library['player']['equalizer_presets']['earplugs'] ||= '-4:0:-5:-6:-6:-5:-4:-2:0:-3'
+
+							def handleEQTextInput input
+								is_success = false
+								savePresetNamePattern = /^save ([^ ]+).*/
+								if savePresetNamePattern.match input
+									@eqPreset = input.sub savePresetNamePattern, '\1'
+									@library['player']['equalizer_presets'][@eqPreset] = @eqSetting
+									writeLibraryToFile
+									is_success = true
 								else
-									chosenEQPreset = firstFuzzyMatchValue userEQDefinition, eqPresets.keys
+									chosenEQPreset = firstFuzzyMatchValue input, @library['player']['equalizer_presets'].keys
 									if chosenEQPreset
-										eqSetting = eqPresets[chosenEQPreset]
+										@eqPreset = chosenEQPreset
+										@eqSetting = @library['player']['equalizer_presets'][chosenEQPreset]
+										is_success = true
+										# FIXME: can I target `af_clr` at _just_ `equalizer`? I don't want to also remove scaletempo, for instance
+										putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "af_clr\naf_add equalizer=#{@eqSetting}\n"
 									else
-										eqSetting = userEQDefinition
+										putsRealtime "Unknown preset '#{input}'."
 									end
-									# FIXME: can I target `af_clr` at _just_ `equalizer`? I don't want to also remove scaletempo, for instance
-									putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "af_clr\nf_add equalizer=#{eqSetting}\n"
 								end
+								is_success
+							end
+
+							if inputParts[1] && inputParts[1].length > 0
+								handleEQTextInput inputParts[1]
 							else
-								putsRealtime "TODO: show the current EQ setting"
+								chosenPresetMessage = @eqPreset ? "Using #{@eqPreset}. " : ""
+								putsRealtime "#{chosenPresetMessage}Presets: #{@library['player']['equalizer_presets'].keys.join ", "}"
+
+								def showInteractiveEQ bands, selectedIndex
+									printRepeat "#{bands.join(':')}\r  #{selectedIndex > 0 ? bands.slice(0, selectedIndex).join(':') + ":" : ''}"
+								end
+
+								@eqSetting ||= @library['player']['equalizer_presets']['flat']
+								eqBands = @eqSetting.split(':').map { |level| level.to_i }
+								selectedBandIndex = 0
+								showInteractiveEQ eqBands, selectedBandIndex
+								@shouldShowPlaybackInfo = false
+								interactivePresetNameInput = ''
+								while eqInput = readCharacter
+									inputCausedEQChange = false
+									if eqInput == "\e[A" # up arrow
+										eqBands[selectedBandIndex] = [eqBands[selectedBandIndex] + 1, 10].min
+										inputCausedEQChange = true
+									elsif eqInput == "\e[B" # down arrow
+										eqBands[selectedBandIndex] = [eqBands[selectedBandIndex] - 1, -10].max
+										inputCausedEQChange = true
+									elsif eqInput == "\e[C" # right arrow
+										selectedBandIndex = [selectedBandIndex + 1, eqBands.length - 1].min
+									elsif eqInput == "\e[D" # left arrow
+										selectedBandIndex = [selectedBandIndex - 1, 0].max
+									elsif eqInput == "" # backspace
+										if interactivePresetNameInput.length > 0
+											interactivePresetNameInput = interactivePresetNameInput[0, interactivePresetNameInput.length - 1]
+											printRepeat interactivePresetNameInput
+										end
+									elsif eqInput == "" # clear line
+										interactivePresetNameInput = ''
+										printRepeat interactivePresetNameInput
+									elsif /[\n\r]/.match(eqInput)
+										if interactivePresetNameInput.length > 0
+											print "\n"
+											inputCausedEQChange = handleEQTextInput interactivePresetNameInput
+										end
+										break
+									else
+										interactivePresetNameInput += eqInput
+									end
+
+									if interactivePresetNameInput.length > 0
+										printRepeat interactivePresetNameInput
+									else
+										showInteractiveEQ eqBands, selectedBandIndex
+									end
+
+									if inputCausedEQChange
+										@eqSetting = eqBands.join ':'
+										putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "af_clr\naf_add equalizer=#{@eqSetting}\n"
+									end
+								end
+								@shouldShowPlaybackInfo = true
 							end
 							{:chainedInput => inputParts[2]}
 						}
@@ -1477,18 +1546,21 @@ module Tunewich
 
 					trackDurationInSeconds = getSecondsFromDurationString(@currentTrack['duration'])
 
-					if !@currentTrack['unattached']
+					if trackDurationInSeconds && !@currentTrack['unattached']
 						loadLibrary
+						@currentTrack = matchExistingLibraryTrack(@currentTrack)
 						@currentTrack['playTime'] ||= 0
 						@currentTrack['playTime'] += playerOutput[:playTime].to_i
-						minimumPlayTime = [30, trackDurationInSeconds -10].min
+						minimumPlayTime = [30, trackDurationInSeconds - 10].min
 						if playerOutput[:playTime] >= minimumPlayTime
 							@currentTrack['lastPlayed'] = playerOutput[:endTime].to_i
 							@currentTrack['playCount'] ||= 0
 							@currentTrack['playCount'] += 1
+							whisper "listened for #{playerOutput[:playTime]} (>= min #{minimumPlayTime}): bumping play count to #{@currentTrack['playCount']}", 1
 						else
 							@currentTrack['skipCount'] ||= 0
 							@currentTrack['skipCount'] += 1
+							whisper "listened for #{playerOutput[:playTime]} (< min #{minimumPlayTime}): bumping SKIP count to #{@currentTrack['skipCount']}", 1
 						end
 						writeLibraryToFile
 					end
@@ -1568,7 +1640,7 @@ module Tunewich
 			chapterIndex
 		end
 		
-		def seekToChapter chapterIndex, fadeOutPeriod = 1.0, fadeInPeriod = 0.25
+		def seekToChapter chapterIndex, fadeOutPeriod = 1.0, fadeInPeriod = 0.1
 			currentPlaybackSeconds = @currentPlayerTime
 			whisper "currentPlaybackSeconds: #{currentPlaybackSeconds}", 3
 			chapterTime = @currentTrack['chapters'][chapterIndex]['time']
@@ -1644,6 +1716,7 @@ module Tunewich
 				@volume = targetFadeVolume
 				whisper "fading to volume #{targetFadeVolume}", 2
 			end
+			targetFadeVolume = [[targetFadeVolume, 0].max, 100].min
 			whisper "fading from #{transitionVolume} to #{targetFadeVolume} in #{duration} seconds (playerIndex: #{playerIndex})", 4
 			volumeFadeInterval = 0.02
 			volumeFadeStepCount = (duration.to_f / volumeFadeInterval).to_i
@@ -1844,7 +1917,7 @@ module Tunewich
 			}
 
 			if track['mark']
-				puts "Starting from mark at #{getDurationStringFromSeconds track['mark']} seconds."
+				puts "Starting from mark at #{track['mark']}."
 				offsetSeconds = getSecondsFromDurationString track['mark']
 				playerStartupOptions << "-ss #{offsetSeconds}"
 				loadLibrary
@@ -2296,8 +2369,7 @@ module Tunewich
 			downloadCommand = ''
 
       if @youtubeDLTrackTypes.include? track['type']
-				# TODO: remove --Frag0, --Frag1, ..., --FragN files? Would this interfere with playback if downloading a playing track?
-				youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} -q"
+				youtubeDlCommandBegin = "rm -- --Frag*; youtube-dl -f #{@preferredFileFormat} -q"
 				# youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} --no-part --no-cache-dir --no-continue"
 				youtubeDlCommandEnd = "-- #{track['src']}"
 				if streamPath
@@ -3461,6 +3533,8 @@ module Tunewich
 					'type' => 'podcast',
 					'dateAdded' => Time.now.to_i
 				}
+				@library['feeds'] << podcastFeed
+				writeLibraryToFile
 			end
 			podcastTracks = []
 			REXML::XPath.each(channel, 'item') { |itemElement|
@@ -3481,10 +3555,6 @@ module Tunewich
 					whisper "This RSS item does not have an enclosure, i.e. no link to the audio", 3
 				end
 			}
-			if not feedAlreadyInLibrary
-				@library['feeds'] << podcastFeed
-				writeLibraryToFile
-			end
 			podcastTracks.reverse # put the oldest ones first
 		end
 
