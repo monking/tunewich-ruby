@@ -44,7 +44,8 @@ module Tunewich
 				else
 					@trackIndex = 0
 				end
-			elsif @trackIndex.to_i === 0
+			elsif @trackIndex.is_a? String and @trackIndex != '0'
+				puts "@trackIndex: #{@trackIndex}" # XXX
 				@trackIndex = findTrackIndex @trackIndex
 			else
 				@trackIndex = @trackIndex.to_i
@@ -84,7 +85,13 @@ module Tunewich
 				exit
 			end
 			parser.on("-p", "--playlist QUERY", "Partial or full name of a playlist.") do |playlistQuery|
-				usePlaylist findPlaylistName playlistQuery
+				playlistName = findPlaylistName playlistQuery
+
+				if playlistName
+					usePlaylist playlistName
+				else
+					puts "No playlist found to match query #{playlistQuery}."
+				end
 			end
 			parser.on("-P", "--create-playlist NAME", "Create a new playlist. Implies -p of the same playlist.") do |playlistName|
 				createPlaylist playlistName
@@ -145,7 +152,7 @@ module Tunewich
 					break
 				end
 				selectedListName = findPlaylistName playlistQuery
-				if !selectedListName
+				if not selectedListName
 					puts "No matches. Try again"
 				end
 			end
@@ -155,14 +162,16 @@ module Tunewich
 
 		def findTrackIndex(query)
 			trackTitles = @tracks.map{|t| t['title']}
-			findInList(query, trackTitles)[:index]
+			match = firstFuzzyMatch query, trackTitles
+			match ? match[:index] : false
 		end
 
 		def findPlaylistName(query)
-			findInList(query, @library['playlists'].keys)[:value]
+			match = firstFuzzyMatch query, @library['playlists'].keys
+			match ? match[:value] : false
 		end
 
-		def findInList(query, list)
+		def fuzzyStringSearchInList(query, list)
 			queryPattern = Regexp.new(query + '|' + query.gsub(/\s+/, '').split('').join('.*'), Regexp::IGNORECASE)
 			matches = []
 			list.each_with_index do |value, index|
@@ -175,18 +184,19 @@ module Tunewich
 					};
 					match[:density] = query.length.to_f / match[:matchLength].to_f
 					match[:breadth] = match[:matchLength].to_f / match[:value].length.to_f
-					match[:score] = (match[:breadth] + match[:density]) / 2
+					match[:score] = (match[:breadth] + match[:density] * 2) / 3
 					matches.push(match)
 				end
 			end
 
-			if matches.length === 0
-				return false
-			end
-
 			matches.sort_by { |match| 1 - match[:score] } if matches.length > 1
 
-			{:index => matches[0][:index], :value => matches[0][:value]}
+			matches
+		end
+
+		def firstFuzzyMatch(query, list)
+			matches = fuzzyStringSearchInList query, list
+			matches.length ? matches[0] : false
 		end
 
 		def usePlaylist(name)
@@ -394,16 +404,18 @@ module Tunewich
 		end
 
 		def addTrackToLibrary track
-			@library['library'][track['src']] ||= track
-			@library['library'][track['src']]
+			trackReference = track['src']
+			@library['library'][trackReference] ||= track
+
+			trackReference
 		end
 
 		def addTrackToPlaylist track, playlistName
-			addTrackToLibrary track
+			trackReference = addTrackToLibrary track
 
-			trackReference = track['src']
 			tracks = @library['playlists'][playlistName]['tracks']
-			if tracks.index trackReference === nil
+			puts "tracks.index trackReference: #{tracks.index trackReference}" # XXX
+			if not tracks.index trackReference
 				tracks.push trackReference
 				puts "Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'"
 			else
