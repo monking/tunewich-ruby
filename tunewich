@@ -2768,9 +2768,9 @@ module Tunewich
 							if commandParts
 								commandName = commandParts[1]
 								commandInput = commandParts[2]
-								whisper "commandParts: #{commandParts}", 3
+								whisper "commandName: #{commandName}, commandInput: #{commandInput}", 3
 
-								if not commands[commandName]
+								if !commands.has_key? commandName
 									possibleCommands = []
 									commands.each { |name, command|
 										if name.start_with? commandName
@@ -2778,6 +2778,7 @@ module Tunewich
 										end
 									}
 									if possibleCommands.length == 1
+										whisper "commandName: #{commandName} => #{possibleCommands[0]}"
 										commandName = possibleCommands[0]
 									else
 										commandName = ''
