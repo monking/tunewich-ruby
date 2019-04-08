@@ -120,6 +120,7 @@ module Tunewich
 								writeLibraryToFile true
 							end
 						end
+						nil
 					}
 				},
 				'bpm' => {
@@ -168,6 +169,7 @@ module Tunewich
 						else
 							puts "Canceling: leaving track BPM alone."
 						end
+						nil
 					}
 				},
 				'tag' => {
@@ -189,6 +191,7 @@ module Tunewich
 							addTrackToLibrary @tracks[@trackIndex] if @tracks[@trackIndex]['unattached']
 							writeLibraryToFile true
 						end
+						nil
 					}
 				},
 				'go' => {
@@ -200,28 +203,32 @@ module Tunewich
 							@trackIndex = trackIndex.to_i - 1 % @tracks.length
 						end
 						commandRequiresNext = true
+						nil
 					}
 				},
 				'clear' => {
 					'info' => 'Clear current tracklist',
 					'action' => Proc.new {
 						@clearTracks
+						nil
 					}
 				},
 				'all' => {
 					'info' => "Load entire library.",
 					'action' => Proc.new {
 						useEntireLibrary
+						nil
 					}
 				},
 				'fade' => {
 					'info' => 'Fade volume (/fade VOLUME [DURATION] [NEXT ACTION])',
 					'action' => Proc.new { |properties|
+						output = {}
 						fadeCommandMatch = /^(out|in|[0-9.]+)( [0-9.]+)?( .+)?$/.match properties
 						if fadeCommandMatch
 							whisper "fade command"
 							duration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 2.0
-							followingCommand = fadeCommandMatch[3] && fadeCommandMatch[3].length > 0 ? fadeCommandMatch[3].strip : nil
+							output[:chainedInput] = fadeCommandMatch[3] && fadeCommandMatch[3].length > 0 ? fadeCommandMatch[3].strip : nil
 							volume = getCurrentMplayerVolume
 							targetFadeVolume = fadeCommandMatch[1]
 							if targetFadeVolume == 'out'
@@ -247,10 +254,8 @@ module Tunewich
 								sleep volumeFadeInterval
 							end
 							putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{targetFadeVolume} 1\n"
-							if followingCommand
-								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
-							end
 						end
+						output
 					}
 				},
 				'ramp' => {
@@ -260,9 +265,10 @@ module Tunewich
 						# option to start each track at the same bpm if it's defined for that track
 						rampCommandMatch = /^(out|in|[0-9.]+(bpm)?)( [0-9.]+)?( .+)?$/.match properties
 						#                    1              2      3          4
+						output = {}
 						if rampCommandMatch
 							duration = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].to_f : 0.3
-							followingCommand = rampCommandMatch[4] && rampCommandMatch[4].length > 0 ? rampCommandMatch[4].strip : nil
+							output[:chainedInput] = rampCommandMatch[4] && rampCommandMatch[4].length > 0 ? rampCommandMatch[4].strip : nil
 							speed = getCurrentMplayerSpeed
 							# min- and maxSpeed really depend on the system, and seems limitless when using `-af scaletempo[=speed=tempo]`
 							minSpeed = 0.125
@@ -289,15 +295,15 @@ module Tunewich
 									sleep speedRampInterval
 								end
 								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "speed_set #{targetRampSpeed}\n"
-								if followingCommand
+								if output[:chainedInput] && output[:chainedInput].length > 0
 									whisper "Waiting 1 second for buffered sound to play"
 									sleep 1.0
-									putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
 								end
 							else
 								puts "Bad speed format, or track has no bpm set."
 							end
 						end
+						output
 					}
 				},
 				'list' => {
@@ -320,6 +326,7 @@ module Tunewich
 							puts playlistNames.join "\n"
 						end
 						commandRequiresNext = true
+						nil
 					}
 				},
 				'more' => {
@@ -333,6 +340,7 @@ module Tunewich
 						useTracks tracks, false
 						@trackIndex = 1
 						commandRequiresNext = true
+						nil
 					}
 				},
 				'info' => {
@@ -366,6 +374,7 @@ module Tunewich
 						end
 
 						puts "url: #{info['url']}"
+						nil
 					}
 				},
 				'search' => {
@@ -379,6 +388,7 @@ module Tunewich
 						else
 							puts "Enter a search term of at least 2 characters."
 						end
+						nil
 					}
 				},
 				'loop' => {
@@ -387,6 +397,7 @@ module Tunewich
 						@loop = !@loop
 						commandRequiresNext = true if @loop
 						puts "loop: #{@loop ? 'on' : 'off'}"
+						nil
 					}
 				},
 				'shuffle' => {
@@ -394,6 +405,7 @@ module Tunewich
 					'action' => Proc.new {
 						@shuffle = !@shuffle
 						puts "shuffle: #{@shuffle ? 'on' : 'off'}"
+						nil
 					}
 				},
 				'defvolume' => {
@@ -402,6 +414,7 @@ module Tunewich
 						track = @tracks[@trackIndex]
 						track['loudness'] = getMplayerConfigVolume / getCurrentMplayerVolume
 						writeLibraryToFile true
+						nil
 					}
 				},
 				'download' => {
@@ -412,6 +425,7 @@ module Tunewich
 						else
 							puts "This file is already downloaded."
 						end
+						nil
 					}
 				},
 				'add' => {
@@ -425,51 +439,58 @@ module Tunewich
 							@trackIndex = @tracks.length - 1
 							commandRequiresNext = true
 						end
+						nil
 					}
 				},
 				'again' => {
 					'info' => "Play the last track again.",
-					'action' => Proc.new {
+					'action' => Proc.new { |input|
 						commandRequiresNext = true
+						{:chainedInput => input}
 					}
 				},
 				'filter' => {
 					'info' => 'Edit filters.',
-					'action' => Proc.new {
+					'action' => Proc.new { |input|
 						filtersList = @trackFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackFilters
 						filtersList ||= []
 						instructions = "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}\n\nAvailable tags: #{listAllTagsWithAliases.join ', '}"
 						@trackFilters = parseOptionParameters editListInVim(filtersList, instructions).join ','
 						filterTracksOnDeck
+						{:chainedInput => input}
 					}
 				},
 				'exclude' => {
 					'info' => 'Edit exclude filters.',
-					'action' => Proc.new {
+					'action' => Proc.new { |input|
 						# TODO: replace this with "-" prefixed filter keys in the regular filter command (i.e. "-f tag=silly,-tag=vocal")
 						filtersList = @trackExcludeFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackExcludeFilters
 						filtersList ||= []
 						instructions = "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}\n\nAvailable tags: #{listAllTagsWithAliases.join ', '}"
 						@trackExcludeFilters = parseOptionParameters editListInVim(filtersList, instructions).join ','
 						filterTracksOnDeck
+						{:chainedInput => input}
 					}
 				},
 				'exit' => {
 					'info' => 'Exit.',
-					'action' => Proc.new {
+					'action' => Proc.new { |input|
 						commandRequiresExit = true
+						{:chainedInput => input}
 					}
 				},
 				'verbose' => {
 					'info' => 'Toggle Verbose mode.',
-					'action' => Proc.new {
+					'action' => Proc.new { |input|
 						@verbose = !@verbose
+						{:chainedInput => input}
 					}
 				},
 				'commands' => {
 					'info' => "List #{Player::PLAYER_APPLICATION} commands.",
-					'action' => Proc.new {
+					'action' => Proc.new { |input|
 						system "#{Player::PLAYER_APPLICATION} -input cmdlist"
+						{:chainedInput => input}
 					}
 				}
 			}
@@ -532,6 +553,19 @@ module Tunewich
 				track['playTime'] += playerOutput[:playTime].to_i
 				track['playCount'] ||= 0
 				track['playCount'] += 1
+				writeLibraryToFile true
+
+				track['playTime'] ||= 0
+				track['playTime'] += playerOutput[:playTime].to_i
+				minimumPlayTime = [30, getSecondsFromDurationString(track['duration']) -10].min
+				if playerOutput[:playTime] >= minimumPlayTime
+					track['lastPlayed'] = playerOutput[:endTime].to_i
+					track['playCount'] ||= 0
+					track['playCount'] += 1
+				else
+					track['skipCount'] ||= 0
+					track['skipCount'] += 1
+				end
 				writeLibraryToFile true
 
 				whisper "I've been asked to exit" if commandRequiresExit
@@ -795,6 +829,8 @@ module Tunewich
 
 		def nextTrack
 			if @shuffle
+				# FIXME: this should happen regardles of @shuffle, but it would mess with @trackIndex. With @shuffle == true, it doesn't matter.
+				filterTracksOnDeck()
 				shuffleIndex()
 			else
 				@trackIndex += 1
@@ -1685,10 +1721,12 @@ module Tunewich
 			factor = 1
 			factors = [1,60,60,24]
 
-			durationString.split(':').reverse.each_with_index { |unit, index|
-				factor *= factors[index]
-				seconds += unit.to_f * factor
-			}
+			if durationString && durationString.length > 0
+				durationString.split(':').reverse.each_with_index { |unit, index|
+					factor *= factors[index]
+					seconds += unit.to_f * factor
+				}
+			end
 
 			seconds
 		end
@@ -1957,39 +1995,47 @@ module Tunewich
 			whisper "waiting for user input on STDIN"
 			while input = STDIN.gets.chomp
 				whisper "received STDIN: #{input}"
-				# TODO: allow comma-separated commands (e.g. "x,fq 1" to prepare to exit, then fade this track out in 1 secone)
-				if commands && !input.empty? && input[0] == '/'
+				while commands && !input.empty? && input[0] == '/'
+					whisper "inside command while loop" # XXX
 					commandParts = input.match(/^\/([^\s]+)\s*(.*)/)
 					commandName = commandParts[1]
 					commandArgs = commandParts[2]
 
 					if commands[commandName]
-						response[:commands] << ({
+						commandInfo = {
 							:name => commandName,
 							:args => commandArgs,
 							:output => commands[commandName]['action'].call(commandArgs)
-						})
+						}
+						response[:commands] << commandInfo
+						whisper "command info: #{commandInfo}" # XXX
+						if commandInfo[:output] && commandInfo[:output][:chainedInput] && commandInfo[:output][:chainedInput].length > 0
+							whisper "chained input: #{commandInfo[:output][:chainedInput]}" # XXX
+							input = commandInfo[:output][:chainedInput]
+						else
+							whisper "no chained input" # XXX
+							input = nil
+							break
+						end
 					else
 						puts "Invalid command '#{commandName}'; available commands: #{commands.keys.join ', '}"
 					end
+				end
+				whisper "end command while loop" # XXX
 
-					prompt.call
-				elsif action
+				if action && input && input.length > 0
 					actionResult = action.call input
 					if not actionResult
 						whisper "command returned false; interrupting input loop"
 						break
 					end
-					prompt.call
-				else
-					whisper "no command for tunewich or player; interrupting input loop (do I really want to do this?)"
-					break
 				end
+
+				prompt.call
 			end
 
 			response[:input] = input
-
-			whisper "closing command prompt"
+			whisper "closing command prompt (response #{response})"
 
 			response
 		end
