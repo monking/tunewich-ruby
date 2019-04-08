@@ -134,6 +134,11 @@ module Tunewich
 			}
 		end
 
+		def sendPlayerCommand command, playerIndex = nil
+			playerIndex ||= @currentPlayerIndex
+			putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
+		end
+
 		def interactivePlayback
 			bindingGroupName = 'interactivePlayback'
 
@@ -141,7 +146,7 @@ module Tunewich
 			bindOnce 'before_exit', Proc.new {
 				whisper "before_exist: quitting mplayer", 3
 				shouldExitPlayerLoop = true
-				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "q\n"
+				sendPlayerCommand "q"
 			}, bindingGroupName
 
 			if @tracks && @tracks.length > 0
@@ -700,7 +705,9 @@ module Tunewich
 									timeMessage += " (#{@speed}x)" if @speed != 1
 									if @currentTrack.has_key? 'chapters'
 										chapterIndex = getChapterIndexAtTime @currentTrack, @currentPlayerTime
-										timeMessage += "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['name']}"
+										if chapterIndex
+											timeMessage += "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['name']}"
+										end
 									end
 									outputMessageLines << "#{timeMessage}"
 								else
@@ -1261,7 +1268,7 @@ module Tunewich
 										@eqSetting = @library['player']['equalizer_presets'][chosenEQPreset]
 										is_success = true
 										# FIXME 1gpapK: can I target `af_clr` at _just_ `equalizer`? I don't want to also remove scaletempo, for instance
-										putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "af_clr\naf_add equalizer=#{@eqSetting}\n"
+										sendPlayerCommand "af_clr\naf_add equalizer=#{@eqSetting}"
 									else
 										putsRealtime "Unknown preset '#{input}'."
 									end
@@ -1323,7 +1330,7 @@ module Tunewich
 
 									if inputCausedEQChange
 										@eqSetting = eqBands.join ':'
-										putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "af_clr\naf_add equalizer=#{@eqSetting}\n"
+										sendPlayerCommand "af_clr\naf_add equalizer=#{@eqSetting}"
 									end
 								end
 								@shouldShowPlaybackInfo = true
@@ -1431,7 +1438,7 @@ module Tunewich
 						'description' => 'Toggle loop.',
 						'action' => Proc.new { |input|
 							@loop = !@loop
-							putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "loop #{@loop ? '0' : '-1'}\n"
+							sendPlayerCommand "loop #{@loop ? '0' : '-1'}"
 							putsRealtime "loop: #{@loop ? 'on' : 'off'}"
 							{:chainedInput => input}
 						}
@@ -1611,8 +1618,6 @@ module Tunewich
 				offset += input.length
 			elsif input.match(/^<+$/)
 				offset -= input.length - 1
-			else
-				offset = false
 			end
 
 			offset
@@ -1681,8 +1686,7 @@ module Tunewich
 			if isAbleToSeek
 				fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
 
-				playerInputStreamName = "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
-				putInTempFile playerInputStreamName, "seek #{seekTimeInSeconds} 2\n"
+				sendPlayerCommand "seek #{seekTimeInSeconds} 2"
 
 				fadeVolume 'in', fadeInPeriod, @currentPlayerIndex if fadeInPeriod > 0
 			else
@@ -1775,7 +1779,7 @@ module Tunewich
 				end
 				stepFade = Proc.new { |stepIndex|
 					volumeStepStrategy.call(stepIndex)
-					putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "volume #{transitionVolume} 1\n"
+					sendPlayerCommand "volume #{transitionVolume} 1", playerIndex
 					@currentVolume = transitionVolume
 					trigger 'volume_change'
 					sleep volumeFadeInterval
@@ -1785,7 +1789,7 @@ module Tunewich
 				else
 					(volumeFadeStepCount - 1).downto(1) { |stepIndex| stepFade.call stepIndex }
 				end
-				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "volume #{targetFadeVolume} 1\n"
+				sendPlayerCommand "volume #{targetFadeVolume} 1", playerIndex
 				@currentVolume = targetFadeVolume
 				trigger 'volume_change'
 			else
@@ -1817,12 +1821,12 @@ module Tunewich
 				for stepIndex in 1..speedRampStepCount
 					whisper("rampSpeed: step #{stepIndex} of #{speedRampStepCount}")
 					transitionSpeed += speedStep
-					putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "speed_set #{transitionSpeed}\n"
+					sendPlayerCommand "speed_set #{transitionSpeed}", playerIndex
 					@currentSpeed = transitionSpeed
 					trigger 'speed_change'
 					sleep speedRampInterval
 				end
-				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "speed_set #{targetRampSpeed}\n"
+				sendPlayerCommand "speed_set #{targetRampSpeed}", playerIndex
 				@currentSpeed = targetRampSpeed
 				trigger 'speed_change'
 				isValidInput = true
@@ -1958,7 +1962,7 @@ module Tunewich
 				elsif /pause/.match command
 					@isPlayerPlaying = false
 				end
-				putInTempFile(playerInputStreamName, "#{command}\n")
+				sendPlayerCommand command
 				true
 			}
 
@@ -2060,7 +2064,7 @@ module Tunewich
 			end
 			@playerApplicationThreads[@currentPlayerIndex] = Thread.new {
 				@isPlayerPlaying = true
-				# TODO 1gnyIc
+				# TODO 1gnyIc: fix missing input characters while paused
 				@tempFiles[playerStdoutFile] = true
 				playerCommand = "#{Player::PLAYER_APPLICATION} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '} > #{playerStdoutFile}"
 				whisper(playerCommand, 3)
@@ -2089,16 +2093,19 @@ module Tunewich
 						@currentTrack['chapters'][@currentChapterIndex]['skip'] == true
 					@currentlySkippingChapter = @currentChapterIndex
 					nextNonSkippingChapter = nil
-					whisper(@currentTrack['chapters'].slice(@currentChapterIndex + 1, -1), 3)
 					@currentTrack['chapters'].each_with_index { |chapter, index|
-						if !nextNonSkippingChapter && index > @currentChapterIndex && !chapter.has_key?('skip') || !chapter['skip']
+						if index > @currentChapterIndex && (!chapter.has_key?('skip') || !chapter['skip'])
 							nextNonSkippingChapter = index
+							break
 						end
 					}
 					if nextNonSkippingChapter
+						whisper("Skipping chapter #{@currentChapterIndex}, to #{nextNonSkippingChapter}.", 0)
 						seekToChapter nextNonSkippingChapter, 0.25, 0.25
 					else
-						# TODO:fade out and skip to next track (i.e. quit player)
+						whisper("Skipping chapter #{@currentChapterIndex}; no more playable chapters; skipping track.", 0)
+						fadeVolume "out"
+						playerCommand "q"
 					end
 					@currentlySkippingChapter = nil
 				end
@@ -2195,10 +2202,10 @@ module Tunewich
 			output = nil
 			if @isPlayerPlaying # TODO: 1gG4j9
 				pattern ||= /^()(.*)$/
-				command = "#{property}\n"
+				command = "#{property}"
 				command = "get_property #{command}" if not property.match(/^get_/)
 				# TODO: 1gG4jB
-				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", command
+				sendPlayerCommand command
 				sleep responseDelay if responseDelay
 				lastPlayerOutput = tailTempFile "#{Player::MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
 				if lastPlayerOutput
