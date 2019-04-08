@@ -5,12 +5,12 @@ require "optparse"
 require "json"
 
 module Tunewich
+
 	class Player
 
 		PLAY_END_OK = 'play_end_ok'
 
 		def initialize
-
 			@sessionID = Random.rand(1024)
 			@trackIndex = nil
 			@tracks = nil
@@ -125,7 +125,6 @@ module Tunewich
 				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
 
 			end
-
 		end
 
 		private
@@ -143,30 +142,38 @@ module Tunewich
 				writeLibraryToFile
 				exit
 			end
+
 			parser.on("-c", "--clean", "Enter an interactive cleanup mode, to remove unwanted items from the library.") do
 				interactiveCleanup
 				exit
 			end
+
 			parser.on("-d", "--enable-download", "Enable downloading files when encountering a playlist file without a cached file already download.") do
 				@enableDownload = true
 			end
+
 			parser.on("-D", "--keep-download", "Keep the downloaded file. Normally the file will be removed after playback, unless it belongs to a playlist.") do
 				@keepUnattachedDownload = true
 			end
+
 			parser.on("-f", "--filter RULES", "Filter by rules, in the format 'name=value,name=value'. Available rules are: [min-,max-]rating=[0-5],title=[query],tag=[tag],chapters.") do |rules|
 				@trackFilters = parseOptionParameters rules
 			end
+
 			parser.on("-h", "--help", "Show this help.") do
 				puts parser.help()
 				exit
 			end
+
 			parser.on("-i", "--input-dir DIR", "Directory from which to read the playlist and files. NOTE: when used, this must be the first option. Recommended to define TUNEWICH_DIR instead.") do |inputDir|
 				# FIXME: always process this option first, even if it's provided last
 				setLibraryPath inputDir
 			end
+
 			parser.on("-l", "--loop", "Loop, even if a track doesn't have an A/B loop defined.") do
 				@loop = true
 			end
+
 			parser.on("-p", "--playlist QUERY", "Partial or full name of a playlist.") do |playlistQuery|
 				playlistName = findPlaylistName playlistQuery
 
@@ -176,6 +183,7 @@ module Tunewich
 					puts "No playlist found to match query #{playlistQuery}."
 				end
 			end
+
 			parser.on("-P", "--create-playlist NAME", "Create a new playlist. Implies -p of the same playlist. When used with -w and -q, you may pass an empty string (\"\") to use the search query as the playlist name.") do |playlistName|
 				if !playlistName.empty?
 					createPlaylist playlistName
@@ -190,13 +198,16 @@ module Tunewich
 
 				writeLibraryToFile
 			end
+
 			parser.on("-q", "--query QUERY", "Search YouTube for a video.") do |query|
 				@youtubeSearch = query
 				@tracks = searchYouTube @youtubeSearch
 			end
+
 			parser.on("-s", "--shuffle", "Enable shuffle.") do
 				@shuffle = true
 			end
+
 			parser.on("-t", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).") do |trackQuery|
 				if trackQuery.to_i != 0
 					@trackIndex = trackQuery.to_i - 1
@@ -204,9 +215,11 @@ module Tunewich
 					@trackIndex = trackQuery
 				end
 			end
+
 			parser.on("-u", "--update-track-info", "Fetch updated track information for every track played.") do
 				@updateAllPlayedTrackInfo = true
 			end
+
 			parser.on("-w", "--write-after TIME", "Save tracks to the library when played for the given number of seconds. Use with -q. If a playlist is specified, it will also be added to that playlist.") do |time|
 				@playthroughThreshold = time.to_f
 			end
@@ -237,14 +250,18 @@ module Tunewich
 			selectedListName = nil
 			while !selectedListName do
 				playlistQuery = commandPrompt[:input]
+
 				if not playlistQuery or playlistQuery.length === 0
 					useEntireLibrary
 					break
 				end
+
 				selectedListName = findPlaylistName playlistQuery
+
 				if not selectedListName
 					puts "No matches. Try again"
 				end
+
 			end
 
 			selectedListName
@@ -258,6 +275,7 @@ module Tunewich
 			puts message if message
 
 			while not selectedChapterIndex do
+
 				chapterResponse = commandPrompt commands
 				chapterQuery = chapterResponse[:input]
 				break if not chapterQuery or chapterQuery.length === 0
@@ -298,6 +316,7 @@ module Tunewich
 			matches = []
 			list.each_with_index do |value, index|
 				matchedPortion = queryPattern.match(value)
+
 				if matchedPortion
 					match = {
 						:index => index,
@@ -309,6 +328,7 @@ module Tunewich
 					match[:score] = match[:density] * 10 + match[:breadth]
 					matches << match
 				end
+
 			end
 
 			if matches.length > 1
@@ -327,6 +347,7 @@ module Tunewich
 			@playlistName = name
 			@playlist = @library['playlists'][@playlistName]
 			@tracks = []
+
 			@playlist['tracks'].each do |trackReference|
 				@tracks << @library['library'][trackReference]
 			end
@@ -334,25 +355,32 @@ module Tunewich
 
 		def useEntireLibrary
 			@tracks = []
+
 			@library['library'].keys.each do |trackKey|
 				@tracks << @library['library'][trackKey]
 			end
 		end
 
 		def nextTrack
+
 			if @shuffle
 				shuffleIndex()
 			else
 				@trackIndex += 1
+
 				if @trackIndex > @tracks.length - 1
+
 					if @youtubeSearchPage
 						@youtubeSearchPage += 1
 						@tracks += searchYouTube(@youtubeSearchQuery, (@youtubeSearchPage - 1) * 20)
 					else
 						@trackIndex %= @tracks.length
 					end
+
 				end
+
 			end
+
 		end
 
 		def shuffleIndex
@@ -365,22 +393,29 @@ module Tunewich
 			streaming = !fileAlreadyExists && !@enableDownload && !chapterIndex
 
 			if track['chapters']
+
 				if chapterIndex
+
 					if not streaming
 						titleBlock "Chapter #{chapterIndex + 1}: #{track['chapters'][chapterIndex]['name']}"
 						offsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex]['time']
 						mplayerCommands << "-ss #{offsetSeconds}"
+
 						if chapterIndex < track['chapters'].length - 1
 							nextTrackoffsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex + 1]['time']
 							mplayerCommands << "-endpos #{nextTrackoffsetSeconds - offsetSeconds}"
 						end
+
 					else
 						titleBlock "This track has chapters, but seeking backward is not supported while streaming. Add the -d option to enable downloading."
 					end
+
 				else
 					titleBlock "Playing all chapters in track"
 				end
+
 			elsif track['loop'].kind_of?(Array)
+
 				if not streaming
 					duration = track['loop'][1] - track['loop'][0]
 
@@ -393,9 +428,11 @@ module Tunewich
 				else
 					titleBlock "This track has an A/B loop, but looping is not supported while streaming. Add the -d option to enable downloading."
 				end
+
 			end
 
 			if not fileAlreadyExists
+
 				if streaming
 					streamName = 'youtube-stream'
 					streamPath = mediaFilePath = makeStream streamName
@@ -404,6 +441,7 @@ module Tunewich
 				if not downloadTrack track, streamPath
 					return false
 				end
+
 			end
 
 			mediaFilePath ||= findFileById track['src']
@@ -483,15 +521,18 @@ module Tunewich
 				# status = system "#{youtubeDlCommandBegin} -o \"#{getFilePrefixFromId track['src']}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd}"
 				downloadPid = spawn("#{youtubeDlCommandBegin} -o \"#{getFilePrefixFromId track['src']}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd} &> \"#{downloadFeedbackFile}\"")
 				Process.detach(downloadPid)
+
 				while not fileExistsFromId? track['src'] # FIXME: event driven approach to waiting for a file?
 					printRepeat "Fetching video information for download (#{cliRotate})"
 					sleep 0.1
 				end
+
 				# TODO: see FIXME below
 				# if track.has_key? 'duration'
 				# 	trackDuration = getSecondsFromDurationString track['duration']
 				# 	bufferDuration = trackDuration / 2
 				# end
+
 				while true
 					output = tailTempFile 'download-feedback'
 					# FIXME: get mplayer to play the whole file, even if only part is downloaded when it starts
@@ -509,6 +550,7 @@ module Tunewich
 					printRepeat "(#{cliRotate}) #{output}"
 					sleep 0.1
 				end
+
 				sleep 1 # FIXME: remove `sleep` in favor of checking if the right file exists yet
 			end
 
@@ -523,7 +565,7 @@ module Tunewich
 			marginSize = (width - message.length) / 2 - padding.length
 			marginLeft = marginSize > 1 ? fill * marginSize : ''
 			marginRight = marginLeft
-			if message.length % 2 == 1 then marginRight += fill end
+			marginRight += fill if message.length % 2 == 1
 			puts "\n#{blockRow}"
 			puts "#{marginLeft}#{padding}#{message}#{padding}#{marginRight}"
 			puts blockRow
@@ -545,6 +587,7 @@ module Tunewich
 
 		def readTempFile(name)
 			path = getTempFilePath name
+
 			if File.exist? path
 				return File.read path
 			end
@@ -558,6 +601,7 @@ module Tunewich
 
 		def deleteTempFile(name)
 			path = getTempFilePath name
+
 			if File.exist? path
 				File.delete path
 			end
@@ -565,12 +609,15 @@ module Tunewich
 
 		def makeStream(name)
 			path = getTempFilePath name
+
 			if File.exist? path
 				raise "The temp file '#{name}' already exists. (#{path})"
 			end
+
 			if not system "mkfifo \"#{path}\""
 				raise "ERROR: Could not create the stream file (#{path})"
 			end
+
 			path
 		end
 
@@ -690,6 +737,7 @@ module Tunewich
 		def addTrackReferenceToPlaylist trackReference, playlistName
 			tracks = @library['playlists'][playlistName]['tracks']
 			track = @library['library'][trackReference]
+
 			if not tracks.index trackReference
 				tracks << trackReference
 				puts "Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'"
@@ -715,9 +763,11 @@ module Tunewich
 			open(queryUrl) do |handle|
 				html = []
 				handle.each_line { |line| html << line }
+
 				queryResultIds = html.grep(/href="\/watch/).map! do |line|
 					line.sub!(/^.*watch\?v=([^\"&<]+).*\n/, '\1')
 				end
+
 				queryResultIds.uniq!
 			end
 
@@ -725,6 +775,7 @@ module Tunewich
 			resultTracks = []
 			receivedCount = 0
 			printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
+
 			queryResultIds.each do |id|
 				track = createTrack id
 				resultTracks << track
@@ -734,6 +785,7 @@ module Tunewich
 					printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
 				}
 			end
+
 			threads.each { |thr| thr.join }
 			print "\n"
 
@@ -976,6 +1028,7 @@ module Tunewich
 		alias deleteStream deleteTempFile
 
 	end
+
 end
 
 Tunewich::Player.new
