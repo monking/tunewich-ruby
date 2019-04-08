@@ -175,14 +175,16 @@ module Tunewich
 						useTracks @tracks, false
 					}
 				},
-				'loop' => {
+				'l' => {
+					'info' => 'Toggle loop.',
 					'action' => Proc.new {
 						@loop = !@loop
 						commandRequiresNext = true if @loop
 						puts "loop: #{@loop ? 'on' : 'off'}"
 					}
 				},
-				'shuffle' => {
+				'sh' => {
+					'info' => 'Toggle shuffle.',
 					'action' => Proc.new {
 						@shuffle = !@shuffle
 						puts "shuffle: #{@shuffle ? 'on' : 'off'}"
@@ -328,6 +330,7 @@ module Tunewich
 			mplayerInputFile = makeStream 'mplayer-input'
 			mplayerStartupOptions << "-slave -input file=#{mplayerInputFile}"
 			mplayerThread = nil
+			mplayerStatus = nil
 			mplayerAction = Proc.new { |command|
 				if 'fade' == command
 					count = 15
@@ -340,7 +343,8 @@ module Tunewich
 				else
 					putInTempFile 'mplayer-input', "#{command}\n"
 				end
-				mplayerThread && mplayerThread.alive? ? true : false
+				sleep 0.1
+				mplayerThread.alive?
 			}
 			fileAlreadyExists = trackFileExists? track
 			streaming = !fileAlreadyExists && !@enableDownload && !chapterIndex
@@ -428,7 +432,6 @@ module Tunewich
 
 			mplayerOutputFile = getTempFilePath 'mplayer-output'
 
-			mplayerStatus = nil
 			mplayerThread = Thread.new {
 				mplayerStatus = system "mplayer \"#{mediaFilePath}\" #{mplayerStartupOptions.join ' '} > #{mplayerOutputFile}"
 			}
