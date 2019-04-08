@@ -578,9 +578,12 @@ module Tunewich
 							tagNames = tagNames + tag['aliases']
 						end
 					}
-					guessTagName = firstFuzzyMatchValue(lastInputToken, tagNames) if lastInputToken.length > 0
-					if guessTagName && guessTagName.length > 0
-						input = input.sub!(Regexp.new("#{lastInputToken}$"), guessTagName)
+					guessTagNames = fuzzyStringSearchInList(lastInputToken, tagNames) if lastInputToken.length > 0 # @refactor: duplicating code from trackTabComplete above
+					if guessTagNames && guessTagNames.length == 1
+						input = input.sub!(Regexp.new("#{lastInputToken}$"), guessTagNames[0][:value])
+					elsif guessTagNames && guessTagNames.length > 1
+						heading = "#{[guessTagNames.length, 10].min}/#{guessTagNames.length} tags"
+						putsRealtime "\n#{heading}\n================\n#{guessTagNames.slice(0, 10).map{|m| m[:value]}.join("\n")}"
 					end
 				end
 
@@ -682,9 +685,12 @@ module Tunewich
 				if @currentTrack.has_key?(noteType)
 					if inputParts[:query] && inputParts[:query].length > 0
 						noteTexts = @currentTrack[noteType].map { |c| c['text'] }
-						guessChapterText = firstFuzzyMatchValue(inputParts[:query], noteTexts) if inputParts[:query].length > 0
-						if guessChapterText && guessChapterText.length > 0
-							input = input.sub!(inputParts[:query], guessChapterText[0,30])
+						guessChapterTexts = fuzzyStringSearchInList(inputParts[:query], noteTexts) if inputParts[:query].length > 0
+						if guessChapterTexts && guessChapterTexts.length == 1
+							input = input.sub!(inputParts[:query], guessChapterTexts[0][:value])
+						elsif guessChapterTexts && guessChapterTexts.length > 1
+							heading = "#{[guessChapterTexts.length, 10].min}/#{guessChapterTexts.length} #{noteType}"
+							putsRealtime "\n#{heading}\n================\n#{guessChapterTexts.slice(0, 10).map{|m| m[:value]}.join("\n")}"
 						end
 					else
 						# TODO 1gzoGh: it'd be nice to put in a space if inputParts[:offset] is given
@@ -4447,11 +4453,12 @@ module Tunewich
 		def processCommandsWithInput commandLoopInput, commands, leftoverAction
 			while commandLoopInput && !commandLoopInput.empty? && commandLoopInput[0] == '/'
 				whisper("parsing commands, input: #{commandLoopInput}", 3)
-				commandParts = commandLoopInput.match(/^\/([^\s]*)\s*(.*)/)
-				if commandParts
-					commandName = commandParts[1]
-					commandInput = commandParts[2]
-
+				commandName = nil
+				commandInput = nil
+				inputParts = commandLoopInput.match(/^\/(?<name>[^\s]*)\s*(?<input>.*)/)
+				if inputParts
+					commandName = inputParts[:name]
+					commandInput = inputParts[:input]
 					if !commands.has_key? commandName
 						possibleCommands = fuzzyStringSearchInList(commandName, commands.keys).keep_if{ |c| c[:starts] }.map { |c| c[:value] }
 						if possibleCommands.length == 1
@@ -4621,14 +4628,15 @@ module Tunewich
 						whisper("TODO: move cursor left", 3)
 					elsif inputCharacter == "	" # tab
 						whisper("tab completion (TODO: repeat tab to step through matches)", 3)
+						tailNotice = nil
 						if @commandUserInput[0] == "/"
 							inputCommands = @commandUserInput.sub(/^\//, '').split(/ \//)
 							lastCommandIndex = inputCommands.length - 1
 							if lastCommandIndex > -1
-								inputParts = getCommandInputParts(inputCommands[lastCommandIndex], /^(?<query>\w+)( (?<remainder>.*))?/)
-								if inputParts
+								commandParts = getCommandInputParts(inputCommands[lastCommandIndex], /^(?<command>\w+)( (?<input>.*))?/)
+								if commandParts
 									commandKeys = commands.keys
-									commandName = inputParts[:query]
+									commandName = commandParts[:command]
 									if (
 											commandName &&
 											commandName.length > 0 &&
@@ -4640,7 +4648,7 @@ module Tunewich
 										end
 									end
 
-									commandInput = inputParts[:remainder] || ''
+									commandInput = commandParts[:input] || ''
 
 									if commands.has_key?(commandName)
 										if commandInput.length == 0
@@ -4649,13 +4657,13 @@ module Tunewich
 												modifiedCommandInput = commands[commandName]['showStatus'].call(commands[commandName])
 											end
 											if commands[commandName].has_key?('args')
-												putsRealtime "options: #{commands[commandName]['args'].join(", ")}"
+												tailNotice = "options: #{commands[commandName]['args'].join(", ")}"
 											end
 										end
 
 										if commands[commandName].has_key?('args')
 											inputParts = getCommandInputParts(commandInput)
-											if inputParts[:query] && inputParts[:query].length > 0
+											if inputParts && inputParts[:query] && inputParts[:query].length > 0
 												guessArg = firstFuzzyMatchValue(inputParts[:query], commands[commandName]['args'])
 												if guessArg && guessArg.length > 0
 													commandInput = commandInput.sub!(inputParts[:query], guessArg)
@@ -4673,9 +4681,10 @@ module Tunewich
 								end
 								@commandUserInput = "/" + inputCommands.join(' /')
 							else
-								putsRealtime "Availble commands: #{commands.keys.join(", ")}\n"
+								tailNotice = "Availble commands: #{commands.keys.join(", ")}"
 							end
 						end
+						putsRealtime "#{tailNotice}\n" if tailNotice
 					else
 						@commandUserInput += inputCharacter
 						@commandInputTyped = @commandUserInput
@@ -4774,9 +4783,9 @@ module Tunewich
 			selectedListName
 		end
 
-		def getFormattedNoteList chapters
-			chapters.map { |c|
-				output = "#{" " * (9-c['time'].length)}#{c['time']} #{c['text']}"
+		def getFormattedNoteList notes
+			notes.map { |c|
+				output = "#{" " * ([12-c['time'].length, 0].max)}#{c['time']} #{c['text']}"
 
 				if c.has_key?('skip')
 					output = "#{c.has_key?('skip') && c['skip'] ? 'skip' : '    '}" + output
