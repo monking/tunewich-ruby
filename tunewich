@@ -435,7 +435,7 @@ module Tunewich
 				},
 				'filter' => {
 					'info' => 'Edit filters.',
-					'action' => Proc.new { |query|
+					'action' => Proc.new {
 						filtersList = @trackFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackFilters
 						filtersList ||= []
 						instructions = "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}\n\nAvailable tags: #{listAllTagsWithAliases.join ', '}"
@@ -445,7 +445,7 @@ module Tunewich
 				},
 				'exclude' => {
 					'info' => 'Edit exclude filters.',
-					'action' => Proc.new { |query|
+					'action' => Proc.new {
 						# TODO: replace this with "-" prefixed filter keys in the regular filter command (i.e. "-f tag=silly,-tag=vocal")
 						filtersList = @trackExcludeFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackExcludeFilters
 						filtersList ||= []
