@@ -96,6 +96,8 @@
         - I think negative would imply some other tag that would be better suited. It could reverse the filter effect, also: if I'm filtering to include only "focus" things, I may want to exclude things that have negative "focus" scores. In that case, it would be a placeholder for something more descriptive, so I think I would discourage using negative scores.
           - But :shrug:, maybe it'll be useful one day. I think my real fear here is that my data structure is not efficient, and complicating it futher will slow down the operation of my player. But when considering how the app should work, I shouldn't be concerned so much with that. Let the desired feature be a pressure to make the data store more efficient.
 
+@ruby 1gzG6x; Is `guessTag` initialized in the "else" of this case? `guessTag = ... if lastInputToken...`
+
 ## notes
 
 Hashes are generated with tent:bin/hashtime, which turns the decimal seconds since the unix epoch into a base-62 number with these digits: `0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz`.

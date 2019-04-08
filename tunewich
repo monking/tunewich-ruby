@@ -607,6 +607,20 @@ module Tunewich
 								writeLibraryToFile
 							end
 							{:chainedInput => inputParts[2]}
+						},
+						'tabAction' => Proc.new { |input|
+							inputParts = input.match(/^([^\/]*)(.*)$/)
+							if inputParts[1] && inputParts[1].length > 0
+								lastInputToken = inputParts[1].sub(/^.* /, '')
+								if lastInputToken[0] == '-'
+									lastInputToken = lastInputToken[1,lastInputToken.length - 1]
+								end
+								guessTagName = firstFuzzyMatchValue(lastInputToken, @library['tags'].keys) if lastInputToken.length > 0
+								if guessTagName && guessTagName.length > 0
+									input = input.sub!(lastInputToken, guessTagName)
+								end
+							end
+							input
 						}
 					},
 					'tagall' => {
@@ -2488,7 +2502,9 @@ module Tunewich
 		end
 
 		def fuzzyStringSearchInList(query, list)
-			queryPattern = Regexp.new(query + '|' + query.gsub(/\s+/, '').split('').join('.*'), Regexp::IGNORECASE)
+			regexSafeQuery = query.gsub(/[\*]+/, '')
+			explodedPattern = regexSafeQuery.gsub(/\s+/, '').split('').join('.*')
+			queryPattern = Regexp.new(regexSafeQuery + '|' + explodedPattern, Regexp::IGNORECASE)
 			matches = []
 			list.each_with_index do |value, index|
 				matchedPortion = queryPattern.match(value)
@@ -2497,7 +2513,8 @@ module Tunewich
 					match = {
 						:index => index,
 						:value => value,
-						:matchLength => matchedPortion[0].length
+						:matchLength => matchedPortion[0].length,
+						:starts => value.start_with?(query)
 					};
 					match[:density] = query.length.to_f / match[:matchLength].to_f
 					match[:breadth] = match[:matchLength].to_f / match[:value].length.to_f
@@ -2509,7 +2526,15 @@ module Tunewich
 			end
 
 			if matches.length > 1
-				matches.sort! { |a,b| b[:score] <=> a[:score] }
+				matches.sort! { |a,b|
+					if a[:starts] != b[:starts]
+						b[:starts] ? 1 : 0 <=> a[:starts] ? 1 : 0 # starts first
+					elsif a[:starts] # && b[:starts] (^ implied)
+						a[:value].length <=> b[:value].length # shorter first
+					else
+						b[:score] <=> a[:score] # higher first
+					end
+				}
 			end
 
 			matches
@@ -4005,12 +4030,7 @@ module Tunewich
 					commandInput = commandParts[2]
 
 					if !commands.has_key? commandName
-						possibleCommands = []
-						commands.each { |name, command|
-							if name.start_with? commandName
-								possibleCommands << name
-							end
-						}
+						possibleCommands = fuzzyStringSearchInList(commandName, commands.keys).keep_if{ |c| c[:starts] }.map { |c| c[:value] }
 						if possibleCommands.length == 1
 							whisper("matched #{commandName} -> #{possibleCommands[0]}", 1)
 							commandName = possibleCommands[0]
@@ -4164,6 +4184,41 @@ module Tunewich
 					whisper("TODO: move cursor right", 3)
 				elsif inputCharacter == "\e[D" # left arrow
 					whisper("TODO: move cursor left", 3)
+				elsif inputCharacter == "	" # tab
+					whisper("tab completion (TODO: repeat tab to step through matches)", 3)
+					if @commandUserInput[0] == "/"
+						inputCommands = @commandUserInput.sub(/^\//, '').split(/ \//)
+						lastCommandIndex = inputCommands.length - 1
+						if lastCommandIndex > -1
+							inputParts = inputCommands[lastCommandIndex].match(/^(\w+)( (.*))?/)
+							if inputParts
+								commandKeys = commands.keys
+								commandName = inputParts[1]
+								if (
+									commandName &&
+									commandName.length > 0 &&
+									!commands.has_key?(commandName)
+								)
+									newCommandName = firstFuzzyMatchValue commandName, commandKeys
+									commandName = newCommandName if newCommandName
+								end
+
+								commandInput = inputParts[3]
+								if (
+									commandInput &&
+									commandInput.length > 0 &&
+									commands.has_key?(commandName) &&
+									commands[commandName].has_key?('tabAction')
+								)
+									modifiedCommandInput = commands[commandName]['tabAction'].call(commandInput)
+									commandInput = modifiedCommandInput if modifiedCommandInput
+								end
+
+								inputCommands[lastCommandIndex] = "#{commandName} #{commandInput}"
+							end
+							@commandUserInput = "/" + inputCommands.join(' /')
+						end
+					end
 				else
 					@commandUserInput += inputCharacter
 					@commandInputTyped = @commandUserInput
