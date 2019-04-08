@@ -963,28 +963,39 @@ module Tunewich
 					},
 					'download' => {
 						'description' => "Download the current track for faster play in the future. Optional 'get' parameter prints the download shell command instead.",
+						'args' => ['get'],
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
-							if inputParts[1] == 'get'
-								if trackFileExists? @currentTrack
-									whisper(findTrackFiles(@currentTrack)[0], 0)
+							options = inputParts[1].length > 0 ? inputParts[1].split(/\s+/) : []
+
+							track = @currentTrack
+							shouldEchoCommand = false
+							options.each { |option|
+								case option
+								when 'get'
+									shouldEchoCommand = true
 								else
-									putsRealtime getDownloadCommand @currentTrack
+									if option.to_i == 0
+										trackIndex = findTrackIndex option
+										if trackIndex
+											track = @tracks[trackIndex]
+										else
+											putsRealtime "could not find track '#{option}'"
+										end
+									elsif option.to_i > 0
+										track = @tracks[inputParts[1].to_i - 1 % @tracks.length]
+									end
+								end
+							}
+
+							if shouldEchoCommand
+								if trackFileExists? track
+									whisper(findTrackFiles(track)[0], 0)
+								else
+									putsRealtime getDownloadCommand track
 								end
 							else
-								if inputParts[1].length > 0 && inputParts[1].to_i == 0
-									trackIndex = findTrackIndex inputParts[1]
-									if trackIndex
-										track = @tracks[trackIndex]
-									else
-										putsRealtime "could not find track #{inputParts[1]}"
-									end
-								elsif inputParts[1].to_i > 0
-									track = @tracks[inputParts[1].to_i - 1 % @tracks.length]
-								else
-									track = @currentTrack
-								end
 								if trackFileExists? track
 									putsRealtime "This file is already downloaded."
 								else
@@ -2201,30 +2212,7 @@ module Tunewich
 			end
 
 			if @loop && track['loop'].kind_of?(Array)
-				whisper("This track has has an A/B loop (#{track['loop'].join(" - ")}. This will deprecated in favor of looping notes; for now, use looping chapters instead.", 0)
-				if false && confirm("Change this track's A/B loop to looping chapters?") # disabled
-					loadLibrary
-					track = matchExistingLibraryTrack track
-
-					addChapter(
-						track,
-						{
-							'time' => getDurationStringFromSeconds(track['loop'][0]),
-							'text' => 'a'
-						}
-					)
-					addChapter(
-						track,
-						{
-							'time' => getDurationStringFromSeconds(track['loop'][1]),
-							'text' => 'b',
-							'loop_target' => 'a'
-						}
-					)
-					track.delete 'loop'
-
-					writeLibraryToFile
-				end
+				whisper("This track has has an A/B loop (#{track['loop'].join(" - ")}. This will deprecated in favor of looping notes; for now, use looping chapters instead.", 1)
 			end
 
 			if track['mark'] && !liveStreaming
@@ -2247,23 +2235,25 @@ module Tunewich
 			if fileAlreadyExists
 				mediaFilePath = firstTrackFile track
 			else
+				downloadOptions = {}
 				if streaming
 					if @youtubeDLTrackTypes.include? track['type']
 						whisper("streaming youtube track", 2)
 						streamName = 'youtube-stream'
 						deleteStream streamName
-						streamPath = mediaFilePath = makeStream streamName
-						if not downloadTrack(track, streamPath)
+						downloadOptions['streamPath'] = mediaFilePath = makeStream streamName
+						if not downloadTrack(track, downloadOptions)
 							whisper("could not download/stream track", 1)
 							mediaFilePath = nil
 						end
 					else
 						whisper("streaming other type of track (#{track['type']})", 2)
 						streamName = 'mp3-stream'
+						deleteStream streamName
 						# mplayer 4.2.1 on Mac OS Sierra unable to stream HTTPS
 						if /^https:\/\//.match track['src']
-							streamPath = mediaFilePath = makeStream streamName
-							if not downloadTrack(track, streamPath)
+							downloadOptions['streamPath'] = mediaFilePath = makeStream streamName
+							if not downloadTrack(track, downloadOptions)
 								whisper("could not download/stream track", 1)
 								mediaFilePath = nil
 							end
@@ -2738,24 +2728,37 @@ module Tunewich
 			"#{@fileDirectory}/tunewich.#{track['id']}"
 		end
 
-		# @param hash track
+		# @typedef DownloadOptions
+		# @property audioFormat (see youtube-dl --audio-format)
+		# @property feedbackPath {string} defaults to '/dev/null'
+		# @property streamPath {string} defaults to nil
+
+		# @param track Track
+		# @param options DownloadOptions
 		# @returns string download command
-		def getDownloadCommand(track, downloadFeedbackFile = '/dev/null', streamPath = nil)
+		def getDownloadCommand(track, options = nil)
 			downloadCommand = ''
+			options ||= {}
+			options['feedbackPath'] ||= '/dev/null'
 
 			# TODO 1gparD: output youtube-dl error messages to user
 			if @youtubeDLTrackTypes.include? track['type']
 				youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} -q"
 				# youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} --no-part --no-cache-dir --no-continue"
 				youtubeDlCommandEnd = "-- #{track['src']}"
-				if streamPath
-					downloadCommand = "rm -f -- --Frag*; #{youtubeDlCommandBegin} -o - #{youtubeDlCommandEnd} > \"#{streamPath}\" 2> \"#{downloadFeedbackFile}\""
+				if options['streamPath']
+					downloadCommand = "rm -f -- --Frag*; #{youtubeDlCommandBegin} -o - #{youtubeDlCommandEnd} > \"#{options['streamPath']}\" 2> \"#{options['feedbackPath']}\""
 				else
-					downloadCommand = "#{youtubeDlCommandBegin} -o \"#{getTrackFilePrefix track}.%(title)s.%(ext)s\" #{youtubeDlCommandEnd}"
+					youtubeDlOptions = ''
+					if options
+						youtubeDlOptions += " --audio-format #{options['audioFormat']} " if options.has_key? "audioFormat"
+					end
+					youtubeDlOptions += " -o \"#{getTrackFilePrefix track}.%(title)s.%(ext)s\""
+					downloadCommand = "#{youtubeDlCommandBegin}#{youtubeDlOptions} #{youtubeDlCommandEnd}"
 				end
 			else
-				if streamPath
-					downloadCommand = "curl -sL \"#{track['src']}\" > #{streamPath}"
+				if options['streamPath']
+					downloadCommand = "curl -sL \"#{track['src']}\" > #{options['streamPath']}"
 				else
 					downloadCommand = "curl -sL \"#{track['src']}\" > #{getTrackFilePrefix track}.mp3" #FIXME 1gpanQ: don't assume mp3 file extension
 				end
@@ -2764,22 +2767,24 @@ module Tunewich
 			downloadCommand
 		end
 
-		# @param hash track
-		# @param string/nil streamPath (local file path); if the file already exists, copy it to the destination
+		# @param track hash
+		# @param options DownloadOptions
 		# @returns integer PID of download process, or nil if download failed
-		def downloadTrack(track, streamPath = nil)
+		def downloadTrack(track, options = nil)
 			if !@networkEnabled
 				whisper("not downloading --no-network", 0)
 				return
 			end
 
+			options ||= {}
+
 			downloadPid = nil
 			downloadFeedbackFileName = 'download-feedback'
-			downloadFeedbackFile = createTempFile downloadFeedbackFileName
-			downloadCommand = getDownloadCommand track, downloadFeedbackFile, streamPath
+			options['feedbackFile'] ||= createTempFile downloadFeedbackFileName
+			downloadCommand = getDownloadCommand track, options
 
 			whisper(downloadCommand, 3)
-			if streamPath
+			if options['streamPath']
 				downloadPid = spawn(downloadCommand) # spawn: non-blocking
 			else
 				trigger 'download_begin', track
