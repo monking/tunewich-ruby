@@ -92,6 +92,7 @@ module Tunewich
 			@commandHistory = []
 			@streamingServerType = nil
 			@youtubeDLTrackTypes = ['youtube', 'soundcloud']
+			@isPlayerPlaying = false
 
 			getEnvironmentConfig
 
@@ -1336,12 +1337,12 @@ module Tunewich
 						}
 					},
 					'seek' => {
-            'description' => 'Seek to a time code. Prefix with "+" or "-" to seek relative to current play position. use "/seek mark" to seek to a time marked with the "/mark" command."',
+						'description' => 'Seek to a time code. Prefix with "+" or "-" to seek relative to current play position. use "/seek mark" to seek to a time marked with the "/mark" command."',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
 							seekInput = inputParts[1].strip
-              whisper("seek input: #{seekInput}")
+							whisper("seek input: #{seekInput}")
 							if seekInput && seekInput.length > 0
 								if seekInput == 'mark' && @currentTrack.has_key?('mark')
 									seekInput = @currentTrack['mark']
@@ -1360,7 +1361,7 @@ module Tunewich
 										seekTimeInSeconds = @currentPlayerTime + relativeDirection * seekTimeInSeconds
 									end
 								else
-                  whisper("Failed to get seconds from input '#{seekInput}'")
+									whisper("Failed to get seconds from input '#{seekInput}'")
 									# TODO: seek to either a chapter or a note
 									#		- make chapter functions generic
 									#		- search among chapters and notes as a flat list
@@ -1369,8 +1370,8 @@ module Tunewich
 								if seekTimeInSeconds
 									putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "seek #{seekTimeInSeconds} 2\n"
 								end
-              else
-                whisper("seek input is empty: '#{seekInput}'")
+							else
+								whisper("seek input is empty: '#{seekInput}'")
 							end
 							{:chainedInput => inputParts[2]}
 						}
@@ -1777,7 +1778,7 @@ module Tunewich
 				speedStep = (targetRampSpeed - transitionSpeed) / duration * speedRampInterval
 				whisper("about to ramp speed by #{speedStep} every #{speedRampInterval} seconds", 3)
 				for stepIndex in 1..speedRampStepCount
-          whisper("rampSpeed: step #{stepIndex} of #{speedRampStepCount}")
+					whisper("rampSpeed: step #{stepIndex} of #{speedRampStepCount}")
 					transitionSpeed += speedStep
 					putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "speed_set #{transitionSpeed}\n"
 					@currentSpeed = transitionSpeed
@@ -1915,6 +1916,11 @@ module Tunewich
 			playerStartupOptions << "-slave -quiet -input file=#{playerInputFile}"
 			playerStatus = nil
 			playerAction = Proc.new { |command|
+				if /play/.match command
+					@isPlayerPlaying = true
+				elsif /pause/.match command
+					@isPlayerPlaying = false
+				end
 				putInTempFile(playerInputStreamName, "#{command}\n")
 				true
 			}
@@ -2016,6 +2022,7 @@ module Tunewich
 				@playerTemporaryInteractiveCommands = []
 			end
 			@playerApplicationThreads[@currentPlayerIndex] = Thread.new {
+				@isPlayerPlaying = true
 				playerCommand = "#{Player::PLAYER_APPLICATION} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '} > #{playerStdoutFile}"
 				whisper(playerCommand, 3)
 				playerStatus = `#{playerCommand} 2> /dev/null`
@@ -2156,17 +2163,19 @@ module Tunewich
 
 		def getMplayerProperty property, pattern = nil, responseDelay = nil
 			output = nil
-			pattern ||= /^()(.*)$/
-			command = "#{property}\n"
-			command = "get_property #{command}" if not property.match(/^get_/)
-			# TODO: maybe this needs pausing_keep (http://www.mplayerhq.hu/DOCS/tech/slave.txt). doesn't quite work in my testing
-			putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", command
-			sleep responseDelay if responseDelay
-			lastPlayerOutput = tailTempFile "#{Player::MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
-			if lastPlayerOutput
-				whisper("read #{property} from player, output: #{lastPlayerOutput}", 5)
-				matches = lastPlayerOutput.match pattern
-				output = matches[2] if matches
+			if @isPlayerPlaying
+				pattern ||= /^()(.*)$/
+				command = "#{property}\n"
+				command = "get_property #{command}" if not property.match(/^get_/)
+				# TODO: maybe this needs pausing_keep (http://www.mplayerhq.hu/DOCS/tech/slave.txt). doesn't quite work in my testing
+				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", command
+				sleep responseDelay if responseDelay
+				lastPlayerOutput = tailTempFile "#{Player::MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
+				if lastPlayerOutput
+					whisper("read #{property} from player, output: #{lastPlayerOutput}", 5)
+					matches = lastPlayerOutput.match pattern
+					output = matches[2] if matches
+				end
 			end
 			output
 		end
