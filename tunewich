@@ -313,8 +313,8 @@ module Tunewich
 
 		def play(track, chapterIndex)
 			mplayerCommands = []
-			fileExists = fileExistsFromId? track['src']
-			streaming = !fileExists && !@enableDownload
+			fileAlreadyExists = fileExistsFromId? track['src']
+			streaming = !fileAlreadyExists && !@enableDownload
 
 			if track['chapters']
 				if chapterIndex
@@ -347,7 +347,7 @@ module Tunewich
 				end
 			end
 
-			if not fileExists
+			if not fileAlreadyExists
 				if streaming
 					streamName = 'youtube-stream'
 					streamPath = mediaFilePath = makeStream streamName
@@ -387,9 +387,9 @@ module Tunewich
 
 			if streaming
 				deleteStream streamName
-			elsif track['unattached'] && !@keepUnattachedDownload
+			elsif !fileAlreadyExists && track['unattached'] && !@keepUnattachedDownload
 				deleteFileById track['src']
-				titleBlock "DELETED FILE", 'X'
+				titleBlock "UNATTACHED DOWNLOAD DELETED", 'X'
 			end
 
 			deleteTempFile 'mplayer-input' if mplayerInputFile
