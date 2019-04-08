@@ -254,7 +254,7 @@ module Tunewich
 			end
 
 			if fileAlreadyExists
-        mediaFilePath = findTrackFile track
+        mediaFilePath = firstTrackFile track
       else
 				if streaming
 					streamName = 'youtube-stream'
