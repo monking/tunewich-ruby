@@ -42,6 +42,7 @@
 #   	:negate => []
 #   }
 # - [ ] also stop mplayer #1pnpP3BJJnE
+# - [ ] run commands from FIFO queue as if they had been typed interactively (this would allow the tent "away" function to fade out before killing, e.g.) #1pxQxMENEem
 
 require "io/console" # STDIN.getch
 require "open-uri" # URI
@@ -1535,6 +1536,15 @@ module Tunewich
 
 		def interactivePlayback
 			bindingGroupName = 'interactivePlayback'
+
+      @externalCommandStream = makeStream 'tunewich-commmand-queue'
+			@externalCommandThread = Thread.new {
+        externalCommand = tailTempFile @externalCommandStream
+        if externalCommand
+          whisper("externalCommand: '#{externalCommand}'") # TODO: 1pxQxMENEem
+        end
+        sleep 1
+			}
 
 			shouldExitPlayerLoop = false
 			bindOnce 'request_exit', Proc.new {
