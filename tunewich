@@ -1137,7 +1137,7 @@ module Tunewich
 						}
 					},
 					'eq' => {
-						'description' => 'Fade volume (/fade VOLUME [DURATION])',
+						'description' => 'Set EQ, or save a new preset (/eq [PRESET | save NEW_NAME]). If no preset is given, a list of presets is shown, along with an interactive EQ display, which can by changed using the arrow keys.',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							loadLibrary
