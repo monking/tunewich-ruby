@@ -4785,7 +4785,7 @@ module Tunewich
 
 		def getFormattedNoteList notes
 			notes.map { |c|
-				output = "#{" " * ([12-c['time'].length, 0].max)}#{c['time']} #{c['text']}"
+				output = "#{" " * ([16-c['time'].length, 0].max)}#{c['time']} #{c['text']}"
 
 				if c.has_key?('skip')
 					output = "#{c.has_key?('skip') && c['skip'] ? 'skip' : '    '}" + output
