@@ -2131,8 +2131,8 @@ module Tunewich
 						seek seekSeconds, 0.5, 0.25
 					else
 						whisper("Skipping chapter #{@currentChapterIndex + 1}; no more playable chapters; skipping track.", 0)
-						fadeVolume "out"
-						playerCommand "q"
+						fadeVolume "out", 0.25, @currentPlayerIndex
+						sendPlayerCommand "q"
 					end
 					bindOnce('chapter_change', Proc.new {
 						@currentlySkippingChapter = nil
