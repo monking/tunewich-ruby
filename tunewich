@@ -277,11 +277,27 @@ module Tunewich
 				'info' => {
 					'info' => "Show track info",
 					'action' => Proc.new { |query|
-						info = getTrackInfo @tracks[@trackIndex]['src']
+						alreadyHas = {
+							:title => @tracks[@trackIndex].has_key?('title'),
+							:duration => @tracks[@trackIndex].has_key?('duration'),
+							:description => @tracks[@trackIndex].has_key?('description')
+						}
+						puts "title: #{@tracks[@trackIndex]['title']}" if alreadyHas[:title]
+						puts "duration: #{@tracks[@trackIndex]['duration']}" if alreadyHas[:duration]
+						puts "==============================\n#{@tracks[@trackIndex]['description']}" if alreadyHas[:description]
+
+						if !alreadyHas[:title] || !alreadyHas[:duration]
+							info = getTrackInfo @tracks[@trackIndex]['src']
+							updateTrackInfo @tracks[@trackIndex], info
+
+							puts "title: #{@tracks[@trackIndex]['title']}" if !alreadyHas[:title]
+							puts "duration: #{@tracks[@trackIndex]['duration']}" if !alreadyHas[:duration]
+							puts "==============================\n#{@tracks[@trackIndex]['description']}" if !alreadyHas[:description] && @tracks[@trackIndex]['description']
+						else
+							info = {'url' => "http://youtu.be/#{@tracks[@trackIndex]['src']}"}
+						end
+
 						puts "url: #{info['url']}"
-						puts "duration: #{info['duration']}"
-						puts "=============================="
-						puts info['description']
 					}
 				},
 				'search' => {
@@ -1425,8 +1441,8 @@ module Tunewich
 			track
 		end
 
-		def updateTrackInfo track
-			trackInfo = getTrackInfo track['id']
+		def updateTrackInfo track, trackInfo = nil
+			trackInfo ||= getTrackInfo track['id']
 			return false if !trackInfo
 
 			track['title'] = trackInfo['title']
