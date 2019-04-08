@@ -309,27 +309,36 @@ module Tunewich
 		end
 
 		def bind eventName, handlerProc, handlerGroup = nil, jumpQueue = false
-			handlerId = getUniqueId
-			@eventBindingsIndex[handlerId] = {
-				:eventName => eventName,
-				:handler => handlerProc,
-				:id => handlerId,
-				:group => handlerGroup
-			}
+			handlerId = nil
 
-			@eventBindings[eventName] ||= []
-			if jumpQueue
-				@eventBindings[eventName].unshift << handlerId
+			if eventName.kind_of?(Array)
+				handlerId = []
+				eventName.each{ |name|
+					handlerId << bind(name, handlerProc, handlerGroup, jumpQueue)
+				}
 			else
-				@eventBindings[eventName] << handlerId
-			end
+				handlerId = getUniqueId
+				@eventBindingsIndex[handlerId] = {
+					:eventName => eventName,
+					:handler => handlerProc,
+					:id => handlerId,
+					:group => handlerGroup
+				}
 
-			if handlerGroup
-				@eventBindingGroups[handlerGroup] ||= []
-				@eventBindingGroups[handlerGroup] << handlerId
-			end
+				@eventBindings[eventName] ||= []
+				if jumpQueue
+					@eventBindings[eventName].unshift << handlerId
+				else
+					@eventBindings[eventName] << handlerId
+				end
 
-			whisper("bind, #{eventName}, #{handlerGroup}, #{handlerId}", 5)
+				if handlerGroup
+					@eventBindingGroups[handlerGroup] ||= []
+					@eventBindingGroups[handlerGroup] << handlerId
+				end
+
+				whisper("bind, #{eventName}, #{handlerGroup}, #{handlerId}", 5)
+			end
 
 			handlerId
 		end
@@ -345,12 +354,18 @@ module Tunewich
 		end
 
 		def unbind handlerId
-			if @eventBindingsIndex.has_key? handlerId
-				@eventBindings[@eventBindingsIndex[handlerId][:eventName]].delete_if { |id| id == handlerId }
-				if @eventBindingsIndex[handlerId][:group]
-					@eventBindingGroups[@eventBindingsIndex[handlerId][:group]].delete_if { |id| id == handlerId }
+			if handlerId.kind_of?(Array)
+				handlerId.each{ |id|
+					unbind(id)
+				}
+			else
+				if @eventBindingsIndex.has_key? handlerId
+					@eventBindings[@eventBindingsIndex[handlerId][:eventName]].delete_if { |id| id == handlerId }
+					if @eventBindingsIndex[handlerId][:group]
+						@eventBindingGroups[@eventBindingsIndex[handlerId][:group]].delete_if { |id| id == handlerId }
+					end
+					@eventBindingsIndex.delete handlerId
 				end
-				@eventBindingsIndex.delete handlerId
 			end
 		end
 
@@ -906,7 +921,7 @@ module Tunewich
 									timeMessage += " / #{track['duration']}"
 									timeMessage += " (#{@speed}x)" if @speed != 1
 									if @currentTrack.has_key? 'chapters'
-										chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
+										chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
 										if chapterIndex > -1
 											timeMessage += "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
 										end
@@ -1171,7 +1186,7 @@ module Tunewich
 							loadLibrary
 							@currentTrack = matchExistingLibraryTrack @currentTrack
 
-							chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
+							chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
 							if chapterIndex > -1
 								@currentTrack['chapters'].delete_at chapterIndex
 								writeLibraryToFile
@@ -1185,7 +1200,7 @@ module Tunewich
 						'description' => "Mark the current chapter as to be skipped every time.",
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
+							chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
 							if chapterIndex > -1
 								loadLibrary
 								@currentTrack = matchExistingLibraryTrack @currentTrack
@@ -1981,7 +1996,7 @@ module Tunewich
 			requestedCommandSet
 		end
 
-		def getChapterIndexAtTime chapters, seconds
+		def getNoteIndexAtTime chapters, seconds
 			chapterIndex = -1
 			chapters.each_with_index { |chapter, index|
 				chapterSeconds = getSecondsFromDurationString chapter['time']
@@ -2014,7 +2029,7 @@ module Tunewich
 			else
 				chapterIndexOffset = getOffsetFromInputString input
 				if chapterIndexOffset
-					referenceChapterIndex ||= getChapterIndexAtTime chapters, @currentPlayerTime
+					referenceChapterIndex ||= getNoteIndexAtTime chapters, @currentPlayerTime
 					chapterIndex = referenceChapterIndex + chapterIndexOffset
 				else
 					chapterList = chapters.map { |chapter| "#{chapter['time']} - #{chapter['text']}" }
@@ -2543,7 +2558,7 @@ module Tunewich
 			enablePlaybackInfo # might have been set false if the player quit while realtime output was hidden
 			bind('time_update', Proc.new {
 				if @currentTrack.has_key?('chapters')
-					newChapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
+					newChapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
 					if newChapterIndex > -1
 						if @currentChapterIndex != newChapterIndex
 							@currentChapterIndex = newChapterIndex
@@ -2553,6 +2568,19 @@ module Tunewich
 				else
 					@currentChapterIndex = nil
 				end
+
+				if @currentTrack.has_key?('notes')
+					newNoteIndex = getNoteIndexAtTime @currentTrack['notes'], @currentPlayerTime
+					if newNoteIndex > -1
+						if @currentNoteIndex != newNoteIndex
+							@currentNoteIndex = newNoteIndex
+							trigger 'note_change'
+						end
+					end
+				else
+					@currentNoteIndex = nil
+				end
+
 				showPlaybackInfo
 			}, bindingGroupName)
 
