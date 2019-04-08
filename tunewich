@@ -1695,7 +1695,7 @@ module Tunewich
 		end
 
 		def seek seekTimeInSeconds, fadeOutPeriod = 0.0, fadeInPeriod = 0.0
-			isAbleToSeek = trackFileExists?(@currentTrack) || seekTimeInSeconds > @currentPlayerTime
+			isAbleToSeek = trackFileExists?(@currentTrack) || @currentTrack['type'] == 'audio/mpeg' || seekTimeInSeconds > @currentPlayerTime
 			if isAbleToSeek
 				fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
 
