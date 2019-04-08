@@ -182,6 +182,7 @@ module Tunewich
 					'info' => "Show track info",
 					'action' => Proc.new { |query|
 						info = getTrackInfo @tracks[@trackIndex]['src']
+						puts "url: #{info['url']}"
 						puts "duration: #{info['duration']}"
 						puts "=============================="
 						puts info['description']
@@ -1242,7 +1243,8 @@ module Tunewich
 			track = {
 				'title' => lines.shift.chomp, # first line
 				'duration' => lines.pop.chomp, # last line
-				'description' => lines.join("\n").chomp # everything else
+				'description' => lines.join("\n").chomp, # everything else
+				'url' => "http://youtu.be/#{id}" # youtube-only URL
 			}
 
 			track
