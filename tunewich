@@ -80,10 +80,7 @@ module Tunewich
 			if @tracks && @tracks.length > 0
 				titleBlock "Playing #{@tracks.length} tracks", '#'
 			else
-				if selectedListName = promptForPlaylist
-					usePlaylist selectedListName
-					titleBlock "Playlist: #{@playlistName} (#{@tracks.length})", '#'
-				end
+				useEntireLibrary
 			end
 
 			if @trackIndex == nil
