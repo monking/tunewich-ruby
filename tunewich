@@ -268,6 +268,7 @@ module Tunewich
 						tracks = getYouTubeTracksFromPage(@tracks[@trackIndex]['src'])
 						tracks.shift # remove the first track, which will be the main video on the page
 						tracks.unshift @tracks[@trackIndex]
+						@trackFilters = nil
 						useTracks tracks, false
 						@trackIndex = 1
 						commandRequiresNext = true
@@ -289,6 +290,7 @@ module Tunewich
 						if query and query.length > 1
 							useTracks searchYouTube(query), false
 							@trackIndex = 0
+							@trackFilters = nil
 							commandRequiresNext = true
 						else
 							puts "Enter a search term of at least 2 characters."
@@ -667,7 +669,6 @@ module Tunewich
 		end
 
 		def getMplayerProperty property, pattern = nil
-      # TODO: get text output (any output!) from mplayer in ubuntu
 			pattern ||= /^()(.*)$/
 			command = "#{property}\n"
 			command = "get_property #{command}" if not property.match(/^get_/)
@@ -734,6 +735,9 @@ module Tunewich
 			@tracks = [] if !append
 			@tracks += tracks
 			filterTracksOnDeck
+			if @trackIndex && @trackIndex > @tracks.length - 1
+				@trackIndex = 0 # TODO: should this only happen if "loop" option is enabled
+			end
 		end
 
 		def filterTracksOnDeck
@@ -1281,7 +1285,6 @@ module Tunewich
 					tag = @library['tags'][filters['tag']]
 				else
 					@library['tags'].each { |name, libraryTag|
-						# TODO: list aliases too
 						if libraryTag['aliases']
 							libraryTag['aliases'].each { |tagAlias|
 								if tagAlias == filters['tag']
