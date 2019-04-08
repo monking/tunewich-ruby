@@ -700,11 +700,14 @@ module Tunewich
 		end
 
 		def getTrackInfo id
-			info = `youtube-dl --get-title --get-description --get-duration -- #{id}`.chomp.lines
+			rawInfo = `youtube-dl --get-title --get-description --get-duration -- #{id}`
+			return false if !rawInfo || rawInfo.length == 0
+
+			lines = rawInfo.chomp.lines
 			track = {
-				'title' => info.shift.chomp, # title is the first line
-				'duration' => info.pop.chomp, # duration is the last line
-				'description' => info.join("\n").chomp # everything else is description
+				'title' => lines.shift.chomp, # first line
+				'duration' => lines.pop.chomp, # last line
+				'description' => lines.join("\n").chomp # everything else
 			}
 
 			track
@@ -712,6 +715,8 @@ module Tunewich
 
 		def updateTrackInfo track
 			trackInfo = getTrackInfo track['src']
+			return false if !trackInfo
+
 			track['title'] = trackInfo['title']
 
 			if trackInfo['description']
@@ -784,11 +789,13 @@ module Tunewich
 			receivedCount = 0
 			printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
 
-			queryResultIds.each do |id|
+			queryResultIds.each_with_index do |id, index|
 				track = createTrack id
 				resultTracks << track
 				threads << Thread.new {
-					updateTrackInfo track
+					if not updateTrackInfo track
+						resultTracks.delete track
+					end
 					receivedCount += 1
 					printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
 				}
