@@ -51,8 +51,11 @@ module Tunewich
 			@eventBindingGroups = {}
 			@sessionID = Random.rand(1024)
 			@currentTrack = nil
-			@currentChapterIndex = nil
-			@currentlySkippingChapter = nil
+			@currentNoteIndex = {
+				'chapters' => nil,
+				'notes' => nil
+			}
+			@currentlySkipping = nil
 			@trackIndex = nil
 			@trackQuery = nil
 			@tracks = []
@@ -300,7 +303,7 @@ module Tunewich
 				whisper("trigger #{eventName}, #{@eventBindings[eventName].length} handlers bound", 5)
 				@eventBindings[eventName].each { |handlerId|
 					whisper("event #{eventName}, calling handler handler #{handlerId}", 5)
-					result = @eventBindingsIndex[handlerId][:handler].call(data)
+					result = @eventBindingsIndex[handlerId][:handler].call(eventName, data)
 					break if result == false
 				}
 			else
@@ -345,9 +348,9 @@ module Tunewich
 
 		def bindOnce eventName, handlerProc, handlerGroup = nil
 			handlerId = nil
-			selfRemovingHandlerProc = Proc.new { |data|
+			selfRemovingHandlerProc = Proc.new { |triggeredEventName, data|
 				unbind handlerId
-				handlerProc.call data
+				handlerProc.call triggeredEventName, data
 			}
 			handlerId = bind eventName, selfRemovingHandlerProc, handlerGroup
 			handlerId
@@ -482,47 +485,47 @@ module Tunewich
 			ratio
 		end
 
-		def addChapter track, newChapter
-			if not track['chapters']
-				track['chapters'] = []
+		def addNote track, noteType, newNote
+			if not track[noteType]
+				track[noteType] = []
 			end
 
-			track['chapters'] << newChapter
-			track['chapters'] = sortChapters track['chapters']
+			track[noteType] << newNote
+			track[noteType] = sortNotes track[noteType]
 		end
 
-		def editChapters chapters, emphasizeChapterIndex = nil
-			formattedChapters = getFormattedChapterList chapters
-			if emphasizeChapterIndex
-				emphasisLine = "# ^ current chapter"
-				formattedChapters.insert(emphasizeChapterIndex + 1, emphasisLine)
+		def editNotes notes, emphasizeNoteIndex = nil
+			formattedNotes = getFormattedNoteList notes
+			if emphasizeNoteIndex
+				emphasisLine = "# ^ current"
+				formattedNotes.insert(emphasizeNoteIndex + 1, emphasisLine)
 			end
-			editedFormattedChapters = editListInVim formattedChapters
-			editedChapters = editedFormattedChapters.map { |l|
+			editedFormattedNotes = editListInVim formattedNotes
+			editedNotes = editedFormattedNotes.map { |l|
 				bits = l.match(/^\s*(skip)?\s*([0-9.:]+)\s+(.*?)( \(loop to "(.*)"\))?$/)
 				#              /    1         2            3    4            5         /
 				if bits
-					chapter = {'time' => bits[2], 'text' => bits[3]}
-					chapter['skip'] = true if bits[1] == 'skip'
-					chapter['loop_target'] = bits[5] if bits[5]
-					chapter
+					note = {'time' => bits[2], 'text' => bits[3]}
+					note['skip'] = true if bits[1] == 'skip'
+					note['loop_target'] = bits[5] if bits[5]
+					note
 				else
 					false
 				end
 			}
-			editedChapters.keep_if { |c| c }
-			whisper("from:\n#{JSON.pretty_generate(chapters)}\nto:\n#{JSON.pretty_generate(editedChapters)}", 3)
-			editedChapters
+			editedNotes.keep_if { |c| c }
+			whisper("from:\n#{JSON.pretty_generate(notes)}\nto:\n#{JSON.pretty_generate(editedNotes)}", 3)
+			editedNotes
 		end
 
-		def sortChapters chapters
+		def sortNotes chapters
 			chapters.sort { |a, b|
 				getSecondsFromDurationString(a['time']) <=> getSecondsFromDurationString(b['time'])
 			}
 		end
 
 		def getCommandInputParts(input, pattern = nil)
-			input.match(pattern || /^([^\/]*)(.*)$/)
+			input.match(pattern || /^(?<query>[^\/]*)(?<remainder>.*)$/)
 		end
 
 		def getInteractiveCommands modes = [], bindingGroupName
@@ -538,13 +541,13 @@ module Tunewich
 					matchingTitlesAndIds = [].concat(trackTitlesAndIds) # clone titles only for visual feedback to user
 					shouldShowTracks = true
 
-					if inputParts[1] && inputParts[1].length > 0
-						matchingTitlesAndIds = fuzzyStringSearchInList(inputParts[1], trackTitlesAndIds)
+					if inputParts[:query] && inputParts[:query].length > 0
+						matchingTitlesAndIds = fuzzyStringSearchInList(inputParts[:query], trackTitlesAndIds)
 						if matchingTitlesAndIds.length > 0
 							matchingTitlesAndIds = matchingTitlesAndIds.map { |m| m[:value] }
 							if matchingTitlesAndIds.length == 1
 								matchingTitle = matchingTitlesAndIds[0].sub(/ \[[^\]]+\]$/, '')
-								input = input.sub!(inputParts[1], matchingTitle)
+								input = input.sub!(inputParts[:query], matchingTitle)
 								shouldShowTracks = false if matchingTitlesAndIds.length == 1
 							end
 						end
@@ -561,33 +564,11 @@ module Tunewich
 				input
 			}
 
-			chapterInputPattern = /^([+-][0-9.]+ +)?([^\/]*)(.*)$/
-			chapterTabComplete = Proc.new { |input|
-				inputParts = getCommandInputParts(input, chapterInputPattern)
-
-				if @currentTrack.has_key?('chapters')
-					if inputParts[2] && inputParts[2].length > 0
-						chapterNames = @currentTrack['chapters'].map { |c| c['text'] }
-						guessChapterName = firstFuzzyMatchValue(inputParts[2], chapterNames) if inputParts[2].length > 0
-						if guessChapterName && guessChapterName.length > 0
-							input = input.sub!(inputParts[2], guessChapterName)
-						end
-					else
-						# TODO 1gzoGh: it'd be nice to put in a space if inputParts[1] (offset) is given
-						putsRealtime getFormattedChapterList(@currentTrack['chapters']).join("\n")
-					end
-				else
-					putsRealtime "No chapters on the current track."
-				end
-
-				input
-			}
-
 			tagTabComplete = Proc.new { |input|
 				inputParts = getCommandInputParts(input)
 
-				if inputParts[1] && inputParts[1].length > 0
-					lastInputToken = inputParts[1].sub(/^.* /, '')
+				if inputParts[:query] && inputParts[:query].length > 0
+					lastInputToken = inputParts[:query].sub(/^.* /, '')
 					if lastInputToken[0] == '-'
 						lastInputToken = lastInputToken[1,lastInputToken.length - 1]
 					end
@@ -615,6 +596,107 @@ module Tunewich
 				value
 			}
 
+			noteCommandArgs = ['new', 'edit', 'rm', 'skip']
+			noteInputPattern = Regexp.new("^((?<offset>[+-][0-9.]+)|(?<option>#{noteCommandArgs.join('|')}) ?)?(?<query>[^\\/]*)(?<remainder>.*)$")
+			handleNoteCommand = Proc.new { |input, command, noteType|
+				whisper("note command - input: #{input}", 3)
+				noteInputPattern =~ input
+				inputParts = getCommandInputParts(input, noteInputPattern)
+				whisper("inputParts: '#{inputParts}'", 3)
+				whisper("offset: '#{inputParts[:offset]}', option: '#{inputParts[:option]}', query: '#{inputParts[:query]}', remainder: '#{inputParts[:remainder]}'", 3)
+
+				if inputParts[:option] && noteCommandArgs.include?(inputParts[:option])
+					loadLibrary
+					@currentTrack = matchExistingLibraryTrack @currentTrack
+
+					if inputParts[:option] == 'new'
+						@currentTrack[noteType] ||= []
+						addNote(
+							@currentTrack,
+							noteType,
+							{
+								'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime),
+								'text' => inputParts[:query]
+							}
+						)
+						writeLibraryToFile
+					elsif inputParts[:option] == 'edit'
+						notes = editNotes(@currentTrack[noteType] || [], @currentNoteIndex[noteType])
+						if notes && notes.length > 0
+							@currentTrack[noteType] = sortNotes notes
+						elsif @currentTrack[noteType] && @currentTrack[noteType].length > 0
+							if confirm("Do you want to clear #{noteType} from this track?")
+								@currentTrack.delete noteType
+							end
+						end
+						writeLibraryToFile
+						whisper("#{noteType} changes written to library file", 3)
+					elsif inputParts[:option] == 'remove'
+						# TODO 1gzTHg: take input to choose a note
+						noteIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
+						if noteIndex > -1
+							@currentTrack[noteType].delete_at noteIndex
+							writeLibraryToFile
+						end
+					elsif inputParts[:option] == 'skip'
+						noteIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
+						if noteIndex > -1
+							@currentTrack[noteType][noteIndex]['skip'] = true
+							writeLibraryToFile
+							seekToNextPlayableNoteOrSkip @currentTrack[noteType], @currentNoteIndex[noteType]
+						end
+					end
+				else
+
+					if @currentTrack[noteType]
+						if inputParts[:query] && inputParts[:query].length > 0
+							noteIndex = getNoteIndexByQuery inputParts[:query], @currentTrack[noteType]
+						else
+							putsRealtime getFormattedNoteList(@currentTrack[noteType]).join("\n")
+						end
+					else
+						putsRealtime "No #{noteType} on the current track."
+					end
+
+					if noteIndex && noteIndex >= 0 && noteIndex < @currentTrack[noteType].length
+						whisper("Done with #{noteType} selection. Resulting #{noteType} index: #{noteIndex}", 3)
+						note = @currentTrack[noteType][noteIndex]
+						seekSeconds = getSecondsFromDurationString note['time']
+						offsetSeconds = inputParts[:offset].to_f if inputParts[:offset]
+						seekSeconds += offsetSeconds if offsetSeconds
+						seek seekSeconds, 0.5, 0.25
+					elsif inputParts[:option] && inputParts[:option].length > 0
+						putsRealtime "No #{noteType} found."
+					end
+				end
+
+				{:chainedInput => inputParts[:remainder]}
+			}
+			noteTabComplete = Proc.new { |input, command, noteType|
+				noteInputPattern =~ input
+				inputParts = getCommandInputParts(input, noteInputPattern)
+				whisper("pattern: '#{noteInputPattern}'", 3)
+				whisper("inputParts: #{inputParts}", 3)
+				whisper("offset: '#{inputParts[:offset]}', option: '#{inputParts[:option]}', query: '#{inputParts[:query]}', remainder: '#{inputParts[:remainder]}'", 3)
+
+				if @currentTrack.has_key?(noteType)
+					if inputParts[:query] && inputParts[:query].length > 0
+						noteTexts = @currentTrack[noteType].map { |c| c['text'] }
+						guessChapterText = firstFuzzyMatchValue(inputParts[:query], noteTexts) if inputParts[:query].length > 0
+						if guessChapterText && guessChapterText.length > 0
+							input = input.sub!(inputParts[:query], guessChapterText[0,30])
+						end
+					else
+						# TODO 1gzoGh: it'd be nice to put in a space if inputParts[:offset] is given
+						putsRealtime getFormattedNoteList(@currentTrack[noteType]).join("\n")
+					end
+				else
+					putsRealtime "No #{noteType} on the current track."
+				end
+
+				input
+			}
+
 			# TODO: 1gG4fU @refactor
 			interactiveCommands = {
 				'base' => {
@@ -633,13 +715,13 @@ module Tunewich
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
 
-							if inputParts[2] && inputParts[2].length > 0
+							if inputParts[:remainder] && inputParts[:remainder].length > 0
 								output = {
-									:chainedInput => inputParts[2]
+									:chainedInput => inputParts[:remainder]
 								}
 
 								waitEvent = nil
-								waitInput = inputParts[1].chomp.strip
+								waitInput = inputParts[:query].chomp.strip
 								if waitInput.length > 0
 									if waitInput.match(/^[0-9:.]+\s*$/)
 										waitTime = getSecondsFromDurationString waitInput
@@ -689,7 +771,7 @@ module Tunewich
 						'description' => "Rate this track + or -, or give it an explicit number.",
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							newRating = inputParts[1] if (inputParts[1].length > 0) && (inputParts[1].match(/^[+-]?[0-9]*/))
+							newRating = inputParts[:query] if (inputParts[:query].length > 0) && (inputParts[:query].match(/^[+-]?[0-9]*/))
 							oldRating = @currentTrack['rating']
 							if newRating.length < 1
 								putsRealtime "current rating: #{@currentTrack['rating']}"
@@ -709,7 +791,7 @@ module Tunewich
 								addTrackToLibrary @currentTrack if @currentTrack['unattached']
 								writeLibraryToFile
 							end
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'bpm' => {
@@ -721,8 +803,8 @@ module Tunewich
 							inputParts = getCommandInputParts(input)
 							commitBPM = false
 
-							if inputParts[1].length > 0
-								bpm = inputParts[1].to_f
+							if inputParts[:query].length > 0
+								bpm = inputParts[:query].to_f
 								commitBPM = true
 							else
 								bpm = getUserInputBPM
@@ -746,7 +828,7 @@ module Tunewich
 							end
 							command['showStatus'].call
 
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'tag' => {
@@ -756,10 +838,10 @@ module Tunewich
 						},
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							if !inputParts[1] || inputParts[1].length < 1
+							if !inputParts[:query] || inputParts[:query].length < 1
 								command['showStatus'].call
 							else
-								tagsToAdd = inputParts[1].split(/[, ]+/)
+								tagsToAdd = inputParts[:query].split(/[, ]+/)
 								whisper("all tags given: #{tagsToAdd}", 2)
 								tagsToRemove = []
 								tagsToRemove.replace(tagsToAdd).keep_if {|name| name.match(/^-/)}
@@ -772,7 +854,7 @@ module Tunewich
 								addTrackToLibrary @currentTrack if @currentTrack['unattached']
 								writeLibraryToFile
 							end
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						},
 						'tabComplete' => tagTabComplete
 					},
@@ -780,8 +862,8 @@ module Tunewich
 						'description' => "Tag all tracks in the current tracklist.",
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							if inputParts[1] && inputParts[1].length > 0
-								tagsToAdd = inputParts[1].split(/[, ]+/)
+							if inputParts[:query] && inputParts[:query].length > 0
+								tagsToAdd = inputParts[:query].split(/[, ]+/)
 								tagsToRemove = []
 								tagsToAdd.each { |tagName|
 									if /^-/.match tagName
@@ -797,7 +879,7 @@ module Tunewich
 								}
 								writeLibraryToFile
 							end
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						},
 						'tabComplete' => tagTabComplete
 					},
@@ -838,10 +920,10 @@ module Tunewich
 						'description' => "Go to a track in the current list.",
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							if inputParts[1] && inputParts[1].length > 0
-								@trackIndex = findTrackIndex inputParts[1]
+							if inputParts[:query] && inputParts[:query].length > 0
+								@trackIndex = findTrackIndex inputParts[:query]
 							end
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						},
 						'tabComplete' => trackTabComplete
 					},
@@ -875,8 +957,8 @@ module Tunewich
 							inputParts = getCommandInputParts(input)
 							track = nil
 							trackIndex = nil
-							if inputParts[1] && inputParts[1].length > 0
-								trackIndex = findTrackIndex(inputParts[1])
+							if inputParts[:query] && inputParts[:query].length > 0
+								trackIndex = findTrackIndex(inputParts[:query])
 								track = @tracks[trackIndex] if trackIndex
 							else
 								# the user may have altered the track list, so that it no longer includes the currently playing track
@@ -960,7 +1042,7 @@ module Tunewich
 								putsRealtime "Cannot show info. No track found."
 							end
 
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						},
 						'tabComplete' => trackTabComplete
 					},
@@ -990,10 +1072,10 @@ module Tunewich
 						},
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							@shuffle = getToggledValueByInput.call(@shuffle, inputParts[1])
+							@shuffle = getToggledValueByInput.call(@shuffle, inputParts[:query])
 							shuffleIndex() if @shuffle
 							command['showStatus'].call
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'net' => {
@@ -1005,11 +1087,11 @@ module Tunewich
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
 
-							@networkEnabled = getToggledValueByInput.call(@networkEnabled, inputParts[1])
+							@networkEnabled = getToggledValueByInput.call(@networkEnabled, inputParts[:query])
 
 							command['showStatus'].call
 
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'download' => {
@@ -1018,7 +1100,7 @@ module Tunewich
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
 
-							options = inputParts[1].length > 0 ? inputParts[1].split(/\s+/) : []
+							options = inputParts[:query].length > 0 ? inputParts[:query].split(/\s+/) : []
 
 							track = @currentTrack
 							shouldEchoCommand = false
@@ -1050,7 +1132,7 @@ module Tunewich
 								end
 							end
 
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 						# 'tabComplete' => Proc.new { |input, command|
 						# 	trackTabComplete input.sub(Regexp.new("^(#{command['args'].join('|')}) "), '')
@@ -1060,9 +1142,9 @@ module Tunewich
 					'add' => {
 						'description' => 'Add a new track to the play queue. Input: <URL>[,<URL>,...] [<TAG>[,<TAG>,...]] -- URLs: comma-separated URLs or YouTube IDs (Some URLs will add multiple tracks, like a bandcamp album (or TODO: YouTube playliist); tags: comma-separated tags to add to the tracks.',
 						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input, /^([^ ]*?)( .*?)?( \/.*)?$/)
-							urls = inputParts[1].split ',' if inputParts[1]
-							tags = inputParts[2].split ',' if inputParts[2]
+							inputParts = getCommandInputParts(input, /^(?<query>[^ ]*?)(?<tags> .*?)?(?<remainder> \/.*)?$/)
+							urls = inputParts[:query].split ',' if inputParts[:query]
+							tags = inputParts[:tags].split ',' if inputParts[:tags]
 							whisper("urls: #{urls}\ntags: #{tags}", 3)
 							if urls && urls.length > 0
 								tracks = getTracksFromURLs urls
@@ -1076,21 +1158,21 @@ module Tunewich
 
 								@trackIndex = @tracks.length - tracks.length
 							end
-							{:chainedInput => inputParts[3]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'feed' => {
 						'description' => 'Load a feed that has been saved with /add (currently only podcasts).',
 						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input, /^(.*?)( \/.*)?$/)
+							inputParts = getCommandInputParts(input, /^(?<query>.*?)(?<remainder> \/.*)?$/)
 
 							feed = nil
 
 							feedNames = @library['feeds'].map { |libraryFeed| libraryFeed['title'] }
 							availableFeedsMessage = "Available feeds:\n	#{feedNames.join "\n	"}"
 							if @library.has_key?('feeds') && @library['feeds'].length > 0
-								if inputParts[1] && inputParts[1].length > 0
-									match = firstFuzzyMatch inputParts[1], feedNames
+								if inputParts[:query] && inputParts[:query].length > 0
+									match = firstFuzzyMatch inputParts[:query], feedNames
 
 									if match && match[:score] > 1
 										feed = @library['feeds'][match[:index]]
@@ -1114,126 +1196,16 @@ module Tunewich
 								whisper("@library.keys: #{@library.keys}", 3)
 							end
 
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'chapter' => {
 						'description' => 'Skip to a chapter, or show chapter list. Input: [optional seconds offset], number or name of chapter; or "<" or ">" to go back or forward, multiples to go further.',
+						'args' => noteCommandArgs,
 						'action' => Proc.new { |input, command|
-							whisper("chapter command - input: #{input}", 3)
-							inputParts = getCommandInputParts(input, chapterInputPattern)
-							if @currentTrack['chapters']
-								if inputParts[2] && inputParts[2].length > 0
-									chapterIndex = getChapterIndexByQuery inputParts[2], @currentTrack['chapters']
-								else
-									putsRealtime getFormattedChapterList(@currentTrack['chapters']).join("\n")
-									# FIXME: promptForChapterIndex doesn't respond correctly to input, even ctrl+c
-									# whisper("Prompting to select a chapter from the list...", 3)
-
-									# chapterPromptMessage = nil
-
-									# disablePlaybackInfo
-									# chapterResponse = promptForChapterIndex @currentTrack['chapters'], interactiveCommands, chapterPromptMessage
-									# enablePlaybackInfo
-									# chapterIndex = chapterResponse[:index]
-								end
-							else
-								putsRealtime "No chapters on the current track."
-							end
-
-							if chapterIndex && chapterIndex >= 0 && chapterIndex < @currentTrack['chapters'].length
-								whisper("Done with chapter selection. Resulting chapter index: #{chapterIndex}", 3)
-								chapter = @currentTrack['chapters'][chapterIndex]
-								seekSeconds = getSecondsFromDurationString chapter['time']
-								seekOffset = inputParts[1].to_f
-								seekSeconds += seekOffset if seekOffset
-								seek seekSeconds, 0.5, 0.25
-							elsif inputParts[2] && inputParts[2].length > 0
-								putsRealtime "No chapter found."
-							end
-
-							{:chainedInput => inputParts[3]}
+							handleNoteCommand.call input, command, 'chapters'
 						},
-						'tabComplete' => chapterTabComplete
-					},
-					'mkchapter' => {
-						'description' => "Make a chapter, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing). Input: name.",
-						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
-
-							loadLibrary
-							@currentTrack = matchExistingLibraryTrack @currentTrack
-
-							addChapter(
-								@currentTrack,
-								{
-									'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime),
-									'text' => inputParts[1]
-								}
-							)
-
-							writeLibraryToFile
-
-							{:chainedInput => inputParts[2]}
-						}
-					},
-					'rmchapter' => {
-						'description' => "Remove the current chapter.",
-						'action' => Proc.new { |input, command|
-							# TODO 1gzTHg: take input to choose a chapter
-							inputParts = getCommandInputParts(input)
-
-							loadLibrary
-							@currentTrack = matchExistingLibraryTrack @currentTrack
-
-							chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
-							if chapterIndex > -1
-								@currentTrack['chapters'].delete_at chapterIndex
-								writeLibraryToFile
-							end
-
-							{:chainedInput => inputParts[2]}
-						}
-						# 'tabComplete' => chapterTabComplete # TODO 1gzTHg: take input to choose a chapter
-					},
-					'skipchapter' => {
-						'description' => "Mark the current chapter as to be skipped every time.",
-						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
-							chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
-							if chapterIndex > -1
-								loadLibrary
-								@currentTrack = matchExistingLibraryTrack @currentTrack
-
-								@currentTrack['chapters'][chapterIndex]['skip'] = true
-								writeLibraryToFile
-								seekToNextPlayableChapterOrSkip @currentTrack['chapters'], @currentChapterIndex
-							end
-
-							{:chainedInput => inputParts[2]}
-						}
-					},
-					'editchapters' => {
-						'description' => "Edit all the chapters for the current track (using vim).",
-						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
-
-							loadLibrary
-							@currentTrack = matchExistingLibraryTrack @currentTrack
-
-							chapters = editChapters(@currentTrack['chapters'] || [], @currentChapterIndex)
-							if chapters && chapters.length > 0
-								@currentTrack['chapters'] = sortChapters chapters
-							elsif @currentTrack['chapters'] && @currentTrack['chapters'].length > 0
-								if confirm("Do you want to clear chapters from this track?")
-									@currentTrack.delete 'chapters'
-								end
-							end
-							writeLibraryToFile
-							whisper("Chapter changes written to library file", 3)
-
-							{:chainedInput => inputParts[2]}
-						}
+						'tabComplete' => Proc.new { |input, command| noteTabComplete.call(input, command, 'chapters') }
 					},
 					'filter' => {
 						'description' => 'Set filters (same as -f/--filter). With no arguments, the filters are edited in Vim.',
@@ -1254,11 +1226,11 @@ module Tunewich
 						'args' => ['clear'],
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							if inputParts[1] && inputParts[1].length > 0
-								if inputParts[1] == 'clear'
+							if inputParts[:query] && inputParts[:query].length > 0
+								if inputParts[:query] == 'clear'
 									filters = []
 								else
-									filters = parseOptionParameters inputParts[1]
+									filters = parseOptionParameters inputParts[:query]
 								end
 							else
 								filtersList = command['listFilters'].call()
@@ -1284,7 +1256,7 @@ module Tunewich
 							}
 
 							filterTracksOnDeck
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						},
 						'tabComplete' => Proc.new { |input|
 							if input.match(/tag=[^=]*$/)
@@ -1314,12 +1286,12 @@ module Tunewich
 						},
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							if inputParts[1] && inputParts[1].length > 0
-								@configuredVerbosity = inputParts[1].to_i
+							if inputParts[:query] && inputParts[:query].length > 0
+								@configuredVerbosity = inputParts[:query].to_i
 							end
 							command['showStatus'].call
 
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'format' => {
@@ -1330,12 +1302,12 @@ module Tunewich
 						'args' => ['m4a', 'mp4', 'bestaudio', 'bestvideo', '[height=720]'],
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							if inputParts[1].length > 0
-								@preferredFileFormat = inputParts[1].chomp
+							if inputParts[:query].length > 0
+								@preferredFileFormat = inputParts[:query].chomp
 							else
 								command['showStatus'].call
 							end
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'commands' => {
@@ -1351,8 +1323,8 @@ module Tunewich
 							inputParts = getCommandInputParts(input)
 							success = false
 
-							if inputParts[1].length > 0
-								tags = inputParts[1].split(Player::TAG_INPUT_SPLIT)
+							if inputParts[:query].length > 0
+								tags = inputParts[:query].split(Player::TAG_INPUT_SPLIT)
 								if tags.length == 2
 									# TODO: optionally remove parent tags from all tracks which contain child tag
 									success = relateTags tags
@@ -1367,7 +1339,7 @@ module Tunewich
 							end
 
 							putsRealtime "Tags: \n	#{@library['tags'].keys.sort.join(", ")}" if not success
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						},
 						'tabComplete' => tagTabComplete
 					},
@@ -1377,8 +1349,8 @@ module Tunewich
 							inputParts = getCommandInputParts(input)
 							success = false
 
-							if inputParts[1].length > 0
-								tags = inputParts[1].split(Player::TAG_INPUT_SPLIT)
+							if inputParts[:query].length > 0
+								tags = inputParts[:query].split(Player::TAG_INPUT_SPLIT)
 								if tags.length > 1
 									success = combineTags tags
 									if success
@@ -1392,7 +1364,7 @@ module Tunewich
 							end
 
 							putsRealtime "Tags: \n	#{@library['tags'].keys.sort.join(", ")}" if not success
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						},
 						'tabComplete' => tagTabComplete
 					},
@@ -1411,7 +1383,7 @@ module Tunewich
 								writeLibraryToFile
 							end
 							putsRealtime "#{checksumString} ... #{checksum ? 'OK: changes written' : 'Mismatch: changes not written'}"
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'rmfile' => {
@@ -1419,7 +1391,7 @@ module Tunewich
 						'args' => ['this', 'unknown', 'current', 'all'],
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							setDescriptor = inputParts[1] && inputParts[1].length > 0 ? inputParts[1] : 'this'
+							setDescriptor = inputParts[:query] && inputParts[:query].length > 0 ? inputParts[:query] : 'this'
 
 							filesToDelete = []
 							filesToIgnore = ['.', '..']
@@ -1474,15 +1446,15 @@ module Tunewich
 							else
 								putsRealtime "No files to delete."
 							end
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'rmlist' => {
 						'description' => '<playlistName> remove a playlist.',
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							if inputParts[1] && inputParts[1].length > 0
-								playlistName = findPlaylistName inputParts[1]
+							if inputParts[:query] && inputParts[:query].length > 0
+								playlistName = findPlaylistName inputParts[:query]
 
 								if playlistName
 									@library['playlists'].delete playlistName
@@ -1493,7 +1465,7 @@ module Tunewich
 							else
 								putsRealtime "#{@library['playlists'].map { |name, p| name } .join "\n"}\n\nPlease specify a playlist name (new or existing)."
 							end
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'refresh' => {
@@ -1502,7 +1474,7 @@ module Tunewich
 							inputParts = getCommandInputParts(input)
 							loadLibrary
 							@currentTrack = matchExistingLibraryTrack @currentTrack
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					}
 				},
@@ -1514,17 +1486,25 @@ module Tunewich
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
 							output = {
-								:chainedInput => inputParts[2]
+								:chainedInput => inputParts[:remainder]
 							}
-							if inputParts[1] && inputParts[1].length > 0
+							if inputParts[:query] && inputParts[:query].length > 0
 								whisper("Running player action (#{input})", 3)
-								output[:action] = inputParts[1]
+								output[:action] = inputParts[:query]
 							end
 
 							output
 						}
 					},
 					'note' => {
+						'description' => "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing).",
+						'args' => noteCommandArgs,
+						'action' => Proc.new { |input, command|
+							handleNoteCommand.call input, command, 'notes'
+						},
+						'tabComplete' => Proc.new { |input, command| noteTabComplete.call(input, command, 'notes') }
+					},
+					'noteOld' => {
 						'description' => "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing).",
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
@@ -1534,7 +1514,7 @@ module Tunewich
 							@currentTrack = matchExistingLibraryTrack @currentTrack
 
 							# TODO 1gor9z: when typing `/note` and there are no existing notes, begin creating a note
-							if !inputParts[1] || inputParts[1].length < 1
+							if !inputParts[:query] || inputParts[:query].length < 1
 								if @currentTrack.has_key? 'notes'
 									notesList = @currentTrack['notes'].map { |note| "#{note['time']} - #{note['text']}" }
 									editedNotesList = editListInVim notesList
@@ -1566,7 +1546,7 @@ module Tunewich
 							else
 								@currentTrack['notes'] ||= []
 								note = {
-									'text' => inputParts[1],
+									'text' => inputParts[:query],
 									'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime)
 								}
 								liveStreaming = doesTrackHaveTag(@currentTrack, 'live-radio') # TODO: 1gSke5
@@ -1588,7 +1568,7 @@ module Tunewich
 								writeLibraryToFile
 							end
 
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'eq' => {
@@ -1627,8 +1607,8 @@ module Tunewich
 								is_success
 							end
 
-							if inputParts[1] && inputParts[1].length > 0
-								handleEQTextInput inputParts[1]
+							if inputParts[:query] && inputParts[:query].length > 0
+								handleEQTextInput inputParts[:query]
 							else
 								chosenPresetMessage = @eqPreset ? "Using #{@eqPreset}. " : ""
 								putsRealtime "#{chosenPresetMessage}Presets: #{@library['player']['equalizer_presets'].keys.join ", "}"
@@ -1686,17 +1666,17 @@ module Tunewich
 								end
 								enablePlaybackInfo
 							end
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						},
 						'tabComplete' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
 							presetNames = @library['player']['equalizer_presets'].keys
 							options = command['args'] + presetNames
 
-							if inputParts[1] && inputParts[1].length > 0
-								presetGuess = firstFuzzyMatchValue(inputParts[1], options)
+							if inputParts[:query] && inputParts[:query].length > 0
+								presetGuess = firstFuzzyMatchValue(inputParts[:query], options)
 								if presetGuess && presetGuess.length > 0
-									input = input.sub!(inputParts[1], presetGuess)
+									input = input.sub!(inputParts[:query], presetGuess)
 								end
 							else
 								putsRealtime "\nEQ presets: #{presetNames.join(", ")}"
@@ -1788,7 +1768,7 @@ module Tunewich
 							loadLibrary
 							@currentTrack = matchExistingLibraryTrack @currentTrack
 
-							if inputParts[1] && inputParts[1].length > 0
+							if inputParts[:query] && inputParts[:query].length > 0
 								removeMarkFromTrack @currentTrack
 							else
 								addMarkToTrack @currentTrack, @commandinputStartPlayerTime
@@ -1825,10 +1805,10 @@ module Tunewich
 						},
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							@breakLoop = getToggledValueByInput.call(@breakLoop, inputParts[1])
+							@breakLoop = getToggledValueByInput.call(@breakLoop, inputParts[:query])
 
 							command['showStatus'].call
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'loop' => {
@@ -1845,19 +1825,19 @@ module Tunewich
 						},
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							if inputParts[1].match(/^[0-9]+$/)
-								loopLimit = inputParts[1].to_i
+							if inputParts[:query].match(/^[0-9]+$/)
+								loopLimit = inputParts[:query].to_i
 								@loop = true
 								@loopLimit = loopLimit
-							elsif inputParts[1] == 'reset'
+							elsif inputParts[:query] == 'reset'
 								@loopHistory = {}
 							else
-								@loop = getToggledValueByInput.call(@loop, inputParts[1])
+								@loop = getToggledValueByInput.call(@loop, inputParts[:query])
 							end
 
 							command['showStatus'].call
 
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'seek' => {
@@ -1866,10 +1846,10 @@ module Tunewich
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
 
-							seekInput = inputParts[1].strip
+							seekInput = inputParts[:query].strip
 							seekTimeInSeconds = parseRelativeTime seekInput
 							seek seekTimeInSeconds, 0.5, 0.5
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'logarithmic' => {
@@ -1884,7 +1864,7 @@ module Tunewich
 						'description' => "Save current volume relative to default in library.",
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							loudness = inputParts[1].to_f
+							loudness = inputParts[:query].to_f
 							if loudness > 0.0
 								loadLibrary
 								@currentTrack = matchExistingLibraryTrack @currentTrack
@@ -1893,7 +1873,7 @@ module Tunewich
 								@volumeMultipliers['track_loudness'] = loudness
 								writeLibraryToFile
 							end
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'again' => {
@@ -1915,9 +1895,9 @@ module Tunewich
 						},
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							@forceStreaming = getToggledValueByInput(@forceStreaming, inputParts[1])
+							@forceStreaming = getToggledValueByInput(@forceStreaming, inputParts[:query])
 							command['showStatus'].call
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'player' => {
@@ -1938,15 +1918,15 @@ module Tunewich
 						},
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							if inputParts[1] != 'status' # if status, fall though
-								@downmixMono = getToggledValueByInput.call(@downmixMono, inputParts[1])
+							if inputParts[:query] != 'status' # if status, fall though
+								@downmixMono = getToggledValueByInput.call(@downmixMono, inputParts[:remainder])
 								sendPlayerCommand 'af_del pan'
 								sendPlayerCommand 'af_add pan=1:0.5:0.5' if @downmixMono # assuming stereo source
 							end
 
 							command['showStatus'].call
 
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'video' => {
@@ -1958,7 +1938,7 @@ module Tunewich
 						},
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							isVideoEnabled = getToggledValueByInput.call(command['showStatus'].call(), inputParts[1])
+							isVideoEnabled = getToggledValueByInput.call(command['showStatus'].call(), inputParts[:query])
 
 							if isVideoEnabled
 								@playerOverrideCommands.delete_if { |option| option.match(/-novideo\b/) }
@@ -1970,7 +1950,7 @@ module Tunewich
 
 							command['showStatus'].call
 
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[:remainder]}
 						}
 					}
 				}
@@ -2021,24 +2001,24 @@ module Tunewich
 			offset
 		end
 
-		def getChapterIndexByQuery input, chapters, referenceChapterIndex = nil
-			chapterIndex = nil
+		def getNoteIndexByQuery input, notes, referenceIndex = nil
+			noteIndex = nil
 
 			if input.match(/^[0-9]+$/)
-				chapterIndex = input.to_i - 1
+				noteIndex = input.to_i - 1
 			else
-				chapterIndexOffset = getOffsetFromInputString input
-				if chapterIndexOffset
-					referenceChapterIndex ||= getNoteIndexAtTime chapters, @currentPlayerTime
-					chapterIndex = referenceChapterIndex + chapterIndexOffset
+				noteIndexOffset = getOffsetFromInputString input
+				if noteIndexOffset
+					referenceIndex ||= getNoteIndexAtTime notes, @currentPlayerTime
+					noteIndex = referenceIndex + noteIndexOffset
 				else
-					chapterList = chapters.map { |chapter| "#{chapter['time']} - #{chapter['text']}" }
-					chapterIndex = firstFuzzyMatchIndex input, chapterList
+					chapterList = notes.map { |note| "#{note['time']} - #{note['text']}" }
+					noteIndex = firstFuzzyMatchIndex input, chapterList
 				end
 			end
-			whisper("Choosing chapter #{chapterIndex}", 2)
+			whisper("Choosing note #{noteIndex}", 2)
 
-			chapterIndex
+			noteIndex
 		end
 
 		def parseRelativeTime seekInput
@@ -2367,7 +2347,7 @@ module Tunewich
 			nextChapterIndex
 		end
 
-		def seekToNextPlayableChapterOrSkip chapters, fromIndex
+		def seekToNextPlayableNoteOrSkip chapters, fromIndex
 			nextChapterIndex = getNextPlayableChapterIndex @currentTrack['chapters'], fromIndex
 
 			if nextChapterIndex
@@ -2557,85 +2537,85 @@ module Tunewich
 
 			enablePlaybackInfo # might have been set false if the player quit while realtime output was hidden
 			bind('time_update', Proc.new {
-				if @currentTrack.has_key?('chapters')
-					newChapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
-					if newChapterIndex > -1
-						if @currentChapterIndex != newChapterIndex
-							@currentChapterIndex = newChapterIndex
-							trigger 'chapter_change'
+				['chapters', 'notes'].each { |noteType|
+					if @currentTrack.has_key?(noteType)
+						newIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
+						if newIndex > -1 && @currentNoteIndex[noteType] != newIndex
+							@currentNoteIndex[noteType] = newIndex
+							eventName = noteType.sub(/s$/, '_change')
+							trigger eventName
 						end
+					else
+						@currentNoteIndex[noteType] = nil
 					end
-				else
-					@currentChapterIndex = nil
-				end
-
-				if @currentTrack.has_key?('notes')
-					newNoteIndex = getNoteIndexAtTime @currentTrack['notes'], @currentPlayerTime
-					if newNoteIndex > -1
-						if @currentNoteIndex != newNoteIndex
-							@currentNoteIndex = newNoteIndex
-							trigger 'note_change'
-						end
-					end
-				else
-					@currentNoteIndex = nil
-				end
+				}
 
 				showPlaybackInfo
 			}, bindingGroupName)
 
 			@loopHistory = {};
-			bind('chapter_change', Proc.new {
-				# check if we need to skip this chapter
-				loopTarget = @currentTrack['chapters'][@currentChapterIndex]['loop_target'] if @currentTrack['chapters'][@currentChapterIndex].has_key?('loop_target')
+
+			onNoteChange = Proc.new { |noteType|
+				# check if we need to skip
+				currentIndex = @currentNoteIndex[noteType]
+				loopTarget = @currentTrack[noteType][currentIndex]['loop_target'] if @currentTrack[noteType][currentIndex].has_key?('loop_target')
 				if (
 						@loop  &&
 						!@breakLoop  &&
-						!@currentlySkippingChapter &&
-						@currentTrack['chapters'][@currentChapterIndex] &&
+						!@currentlySkipping &&
+						@currentTrack[noteType][currentIndex] &&
 						loopTarget &&
 						(
 							!@loopHistory.has_key?(loopTarget) ||
 							(@loopLimit == 0 || @loopHistory[loopTarget] < @loopLimit)
 						)
 				)
-					whisper("jumping to target chapter '#{@currentTrack['chapters'][@currentChapterIndex]['loop_target']}'", 2)
-					@currentlySkippingChapter = @currentChapterIndex
+					whisper("looping to target '#{@currentTrack[noteType][currentIndex]['loop_target']}'", 2)
+					@currentlySkipping = "#{noteType}:#{currentIndex}"
 
 					loopTargetSeconds = getSecondsFromDurationString loopTarget
 					if loopTargetSeconds
 						seek loopTargetSeconds
 					else
-						targetChapterIndex = getChapterIndexByQuery loopTarget, @currentTrack['chapters']
-						if targetChapterIndex
+						targetNoteIndex = getNoteIndexByQuery loopTarget, @currentTrack[noteType]
+						if targetNoteIndex
 							if @loopHistory.has_key?(loopTarget)
 								@loopHistory[loopTarget] += 1
 							else
 								@loopHistory[loopTarget] = 1;
 							end
 							whisper("\nLoop ##{getLoopLimitStatusMessage}", 1)
-							fadeInterval = 0.0
-							seekToChapter targetChapterIndex, fadeInterval, fadeInterval
+							seekTime = @currentTrack[noteType][targetNoteIndex]['time']
+							seekSeconds = getSecondsFromDurationString seekTime
+							seek seekSeconds
 						end
 					end
 
-					bindOnce('chapter_change', Proc.new {
-						@currentlySkippingChapter = nil
+					bindOnce(['note_change', 'chapter_change'], Proc.new {
+						@currentlySkipping = nil
 					})
 				elsif (
-						!@currentlySkippingChapter &&
-						@currentTrack['chapters'][@currentChapterIndex] &&
-						@currentTrack['chapters'][@currentChapterIndex].has_key?('skip') &&
-						@currentTrack['chapters'][@currentChapterIndex]['skip'] == true
+						!@currentlySkipping &&
+						@currentTrack[noteType][currentIndex] &&
+						@currentTrack[noteType][currentIndex].has_key?('skip') &&
+						@currentTrack[noteType][currentIndex]['skip'] == true
 				)
-					@currentlySkippingChapter = @currentChapterIndex
+					@currentlySkipping = currentIndex
 
-					seekToNextPlayableChapterOrSkip @currentTrack['chapters'], @currentlySkippingChapter
+					seekToNextPlayableNoteOrSkip @currentTrack[noteType], @currentlySkipping
 
-					bindOnce('chapter_change', Proc.new {
-						@currentlySkippingChapter = nil
+					bindOnce(['note_change', 'chapter_change'], Proc.new {
+						@currentlySkipping = nil
 					})
+				else
+					whisper("#{noteType}: #{@currentTrack[noteType][currentIndex]['text']}", 1)
 				end
+			}
+
+			bind(['chapter_change', 'note_change'], Proc.new { |eventName|
+				noteType = eventName.sub(/_.*/, 's')
+				whisper("#{eventName}, doing onNoteChange with noteType '#{noteType}'", 3)
+				onNoteChange.call noteType
 			}, bindingGroupName)
 
 			while @playerApplicationThreads[@currentPlayerIndex].alive?
@@ -2714,11 +2694,11 @@ module Tunewich
 
 				# show current chapter name
 				if @currentTrack.has_key?('chapters')
-					if @currentChapterIndex && @currentTrack['chapters'][@currentChapterIndex]
-						playbackInfo << "#{unicodeChars[:openBook]}	#{@currentTrack['chapters'][@currentChapterIndex]['text']}" # undefined method `[]' for nil:NilClass (NoMethodError)
+					if @currentNoteIndex['chapters'] && @currentTrack['chapters'][@currentNoteIndex['chapters']]
+						playbackInfo << "#{unicodeChars[:openBook]}	#{@currentTrack['chapters'][@currentNoteIndex['chapters']]['text']}" # undefined method `[]' for nil:NilClass (NoMethodError)
 					end
 				else
-					@currentChapterIndex = nil
+					@currentNoteIndex['chapters'] = nil
 				end
 
 				# show tags on this track
@@ -4040,7 +4020,7 @@ module Tunewich
 						updateRadioMetadata @currentTrack['title']
 					}
 					bind 'chapter_change', Proc.new {
-						updateRadioMetadata "#{@currentTrack['title']} (#{@currentTrack['chapters'][@currentChapterIndex]['text']})"
+						updateRadioMetadata "#{@currentTrack['title']} (#{@currentTrack['chapters'][@currentNoteIndex['chapters']]['text']})"
 					}
 					if streamingServerType == 'homebrew'
 						icecastConfigFile = "#{$serviceConfigDir}/icecast.xml"
@@ -4642,10 +4622,10 @@ module Tunewich
 							inputCommands = @commandUserInput.sub(/^\//, '').split(/ \//)
 							lastCommandIndex = inputCommands.length - 1
 							if lastCommandIndex > -1
-								inputParts = getCommandInputParts(inputCommands[lastCommandIndex], /^(\w+)( (.*))?/)
+								inputParts = getCommandInputParts(inputCommands[lastCommandIndex], /^(?<query>\w+)( (?<remainder>.*))?/)
 								if inputParts
 									commandKeys = commands.keys
-									commandName = inputParts[1]
+									commandName = inputParts[:query]
 									if (
 											commandName &&
 											commandName.length > 0 &&
@@ -4657,7 +4637,7 @@ module Tunewich
 										end
 									end
 
-									commandInput = inputParts[3] || ''
+									commandInput = inputParts[:remainder] || ''
 
 									if commands.has_key?(commandName)
 										if commandInput.length == 0
@@ -4670,20 +4650,19 @@ module Tunewich
 											end
 										end
 
+										if commands[commandName].has_key?('args')
+											inputParts = getCommandInputParts(commandInput)
+											if inputParts[:query] && inputParts[:query].length > 0
+												guessArg = firstFuzzyMatchValue(inputParts[:query], commands[commandName]['args'])
+												if guessArg && guessArg.length > 0
+													commandInput = commandInput.sub!(inputParts[:query], guessArg)
+												end
+											end
+										end
+
 										if commands[commandName].has_key?('tabComplete')
 											modifiedCommandInput = commands[commandName]['tabComplete'].call(commandInput, commands[commandName])
 											commandInput = modifiedCommandInput if modifiedCommandInput
-										else
-
-											if commands[commandName].has_key?('args')
-												inputParts = getCommandInputParts(commandInput)
-												if inputParts[1] && inputParts[1].length > 0
-													guessArg = firstFuzzyMatchValue(inputParts[1], commands[commandName]['args'])
-													if guessArg && guessArg.length > 0
-														commandInput = commandInput.sub!(inputParts[1], guessArg)
-													end
-												end
-											end
 										end
 									end
 
@@ -4727,11 +4706,11 @@ module Tunewich
 
 			@commandUserInput = nil
 
-			externalInputHandlerId = bind('external_input', Proc.new { |extInputChar|
+			externalInputHandlerId = bind('external_input', Proc.new { |eventName, extInputChar|
 				handleInputCharacter(extInputChar, prompt, commands, action)
 				false # stop propagation of event
 			}, nil, true);
-			externalCommandHandlerId = bind('external_command', Proc.new { |extInput|
+			externalCommandHandlerId = bind('external_command', Proc.new { |eventName, extInput|
 				whisper("external_command: #{extInput}", 3)
 				handleInputLine(extInput, commands, action) if extInput
 				false # stop propagation of event
@@ -4792,7 +4771,7 @@ module Tunewich
 			selectedListName
 		end
 
-		def getFormattedChapterList chapters
+		def getFormattedNoteList chapters
 			chapters.map { |c|
 				output = "#{" " * (9-c['time'].length)}#{c['time']} #{c['text']}"
 
@@ -4812,7 +4791,7 @@ module Tunewich
 			whisper("prompting for chapter selection", 3)
 			selectedChapterIndex = nil
 
-			chapterList = getFormattedChapterList chapters
+			chapterList = getFormattedNoteList chapters
 			prePromptMessage = "	#{chapterList.join "\n	"}"
 			prePromptMessage += "\n#{message}" if message
 			promptMessage = "Please choose a chapter (leave blank to play first):"
