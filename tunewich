@@ -104,10 +104,10 @@ module Tunewich
 
 			bindOnce 'before_exit', Proc.new {
 				if @services && @services.length > 0
-					whisper("Exiting: killing #{@services.length} services", 1)
+					whisper("Exiting: killing #{@services.length} services", 2)
 					@services.each { |thread| thread.kill if thread.alive? }
 				else
-					whisper("Exiting: no services running", 1)
+					whisper("Exiting: no services running", 2)
 				end
 			}
 
@@ -137,6 +137,7 @@ module Tunewich
 
 			shouldExitPlayerLoop = false
 			bindOnce 'before_exit', Proc.new {
+				whisper "before_exist: quitting mplayer", 3
 				shouldExitPlayerLoop = true
 				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "q\n"
 			}, bindingGroupName
@@ -272,7 +273,6 @@ module Tunewich
 		end
 
 		def kill
-			whisper "player.kill" # XXX
 			trigger 'before_exit'
 			cleanup
 		end
@@ -3839,10 +3839,10 @@ module Tunewich
 		def commandPrompt message = nil, commands = nil, action = nil
 			shouldBreakCommandLoop = false
 			commandLoopExitBinding = bindOnce 'before_exit', Proc.new {
-				whisper "command loop before_exit handler" # XXX
+				whisper "before_exit: break command loop", 3
 				shouldBreakCommandLoop = true
 			}
-			whisper("opening command prompt", 3)
+			whisper("opening command prompt (commandLoopExitBinding: #{commandLoopExitBinding})", 3)
 
 			prompt = Proc.new {
 				print "#{message} " if message
@@ -3975,7 +3975,6 @@ module Tunewich
 					end
 					@commandInputTyped = nil
 				elsif /[\n\r]/.match inputCharacter
-					whisper "input character: newline" # XXX
 					@commandHistory.unshift input
 					@shouldShowPlaybackInfo = true
 					response[:input] = input
@@ -4182,12 +4181,13 @@ module Tunewich
 
 		def listenForExternalCommands # 1gOsMN
 			streamName = 'command-queue'
-			externalCommandThread = Thread.new {
+			shouldListenForExternalCommands = true
+			Thread.new {
 				externalCommandStream = makeStream streamName
 				whisper("external command stream: #{externalCommandStream}", 2)
 				File.open(externalCommandStream, 'r') { |externalCommandStreamHandle|
 					externalCommand = ""
-					while true do
+					while shouldListenForExternalCommands do
 						while ($_ = externalCommandStreamHandle.read(1)) do
 							# trigger 'external_input', $_
 							if $_ != "\n"
@@ -4203,9 +4203,8 @@ module Tunewich
 				}
 			}
 			bindOnce 'before_exit', Proc.new{
-				if externalCommandThread.alive?
-					externalCommandThread.kill
-				end
+				whisper "before_exit: killing external commands listener (nerfed: will it allow stuff to continue?)", 3
+				shouldListenForExternalCommands = false
 			}
 		end
 
@@ -4225,5 +4224,5 @@ begin
 
 	player.kill
 rescue Exception
-	player.cleanup
+	player.kill
 end
