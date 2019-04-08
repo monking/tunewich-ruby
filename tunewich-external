@@ -1,6 +1,23 @@
 #!/bin/bash
 
+showHelp() {
+echo "
+OPTIONS:
+  -l   Send commands only on newline (enter key). By default, each character is sent immediately.
+  -h   Show this help.
+"
+}
+
 queueFile="$(ls -t ~/.tunewich/tmp/tunewich*-command-queue | head -1)"
+commitMode=char
+
+while getopts l flag; do
+  case $flag in
+    l) commitMode=line;;
+    h) showHelp; exit 0;;
+  esac
+done
+[[ $OPTIND -gt 1 ]] && shift $((OPTIND - 1))
 
 [[ -z "$queueFile" ]] && {
 	echo "No command queue file found"
@@ -16,6 +33,7 @@ else
 	echo "Beginning interactive input"
 	echo "Run 'tunewich --help' to see the list of interactive commands."
 	echo "Note that most interactive commands won't work, like /eq, /bpm."
+	echo "Mode: $commitMode"
 	echo
 	echo "Ctrl+C to exit."
 	echo
@@ -27,6 +45,7 @@ else
 		case "$ch" in
 			'')
 				# surely other things will also come across as empty, besides newline?
+        [[ $commitMode = line ]] && echo -e "$inputLine" > "$queueFile"
 				inputLine=
 				ch=$'\n'
 				echo -ne "$ch";;
@@ -35,6 +54,6 @@ else
 			*) inputLine+="$ch";;
 		esac
 		1>&2 echo -ne "\r${prompt}${inputLine}"
-		echo -ne "$ch" > "$queueFile"
+		[[ $commitMode = char ]] && echo -ne "$ch" > "$queueFile"
 	done
 fi
