@@ -63,7 +63,7 @@ module Tunewich
 			# TODO: catch SIGINT (ctrl+c) & prompt for playlist again
 			playbackSuccessful = true
 			while playbackSuccessful do
-				break if not @tracks[@trackIndex]
+				break if !@trackIndex || !@tracks[@trackIndex]
 
 				titleBlock "[#{@trackIndex + 1}] - #{@tracks[@trackIndex]['title']}"
 
