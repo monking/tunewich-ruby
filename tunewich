@@ -8,7 +8,7 @@ module Tunewich
 
 	class Player
 
-		PLAY_END_OK = 'play_end_ok'
+		HELP_FILTER = "Filter by rules, in the format 'title=Some Title,tag=fun,chapters'. Available rules are: [min-,max-]rating=[0-5],title=[query],tag=[tag],chapters."
 
 		def initialize
 			@sessionID = Random.rand(1024)
@@ -64,22 +64,30 @@ module Tunewich
 			commandRequiresNext = false
 
 			interactiveCommands = {
-				'quit' => Proc.new {
-					puts "quitting..."
-					commandRequiresBreak = true
+				'quit' => {
+					'action' => Proc.new {
+						puts "quitting..."
+						commandRequiresBreak = true
+					}
 				},
-				'skip' => Proc.new {
-					puts "skipping..."
-					nextTrack()
-					commandRequiresNext = true
+				'skip' => {
+					'action' => Proc.new {
+						puts "skipping..."
+						nextTrack()
+						commandRequiresNext = true
+					}
 				},
-				'loop' => Proc.new {
-					@loop = !@loop
-					puts "loop: #{@loop ? 'on' : 'off'}"
+				'loop' => {
+					'action' => Proc.new {
+						@loop = !@loop
+						puts "loop: #{@loop ? 'on' : 'off'}"
+					}
 				},
-				'shuffle' => Proc.new {
-					@shuffle = !@shuffle
-					puts "shuffle: #{@shuffle ? 'on' : 'off'}"
+				'shuffle' => {
+					'action' => Proc.new {
+						@shuffle = !@shuffle
+						puts "shuffle: #{@shuffle ? 'on' : 'off'}"
+					}
 				}
 			}
 
@@ -156,7 +164,7 @@ module Tunewich
 				@keepUnattachedDownload = true
 			end
 
-			parser.on("-f", "--filter RULES", "Filter by rules, in the format 'name=value,name=value'. Available rules are: [min-,max-]rating=[0-5],title=[query],tag=[tag],chapters.") do |rules|
+			parser.on("-f", "--filter RULES", Player::HELP_FILTER) do |rules|
 				@trackFilters = parseOptionParameters rules
 			end
 
@@ -796,87 +804,108 @@ module Tunewich
 			libraryCleanupSegment = {}
 
 			commands = {
-				'unlisted' => Proc.new {
+				'unlisted' => {
+					'info' => 'select all tracks not in any playlist',
+					'action' => Proc.new {
 
-					unattachedTracks = {}
+						unattachedTracks = {}
 
-					@library['library'].map { |id, t| unattachedTracks[id] = t }
+						@library['library'].map { |id, t| unattachedTracks[id] = t }
 
-					@library['playlists'].each do |name, playlist|
-						playlist['tracks'].each do |id|
-							unattachedTracks.delete id if unattachedTracks.has_key? id
-						end
-					end
-
-					if unattachedTracks.length > 0
-						unattachedTracks.each { |id, track| libraryCleanupSegment[id] = track }
-						puts "#{listTrackTitles libraryCleanupSegment}\n\n(#{libraryCleanupSegment.length} tracks selected)"
-					else
-						puts "Every track is assigned to a playlist. No suggestions for cleanup."
-					end
-
-				},
-				'all' => Proc.new {
-					libraryCleanupSegment = cloneLibrary @library['library']
-					puts "All tracks selected (#{libraryCleanupSegment.length})"
-				},
-				'add' => Proc.new { |playlistQuery|
-					if playlistQuery && playlistQuery.length > 0
-						playlistName = findPlaylistName playlistQuery
-
-						if playlistName
-							libraryCleanupSegment.keys.each { |id| addTrackReferenceToPlaylist id, playlistName }
-						elsif confirm "No existing playlist matching '#{playlistQuery}'. Create one?"
-							createPlaylist playlistName, libraryCleanupSegment.keys
-						else
-							playlistName = nil
-						end
-
-						if playlistName
-							libraryCleanupSegment = {}
-							puts "Added #{libraryCleanupSegment.length} tracks to playlist '#{playlistName}'"
-						else
-							puts "No change"
-						end
-					else
-						puts "#{@library['playlists'].map { |name, p| name } .join "\n"}\n\nPlease specify a playlist name (new or existing)."
-					end
-
-				},
-				'filter' => Proc.new { |filterString|
-					libraryCleanupSegment = cloneLibrary @library['library'] if libraryCleanupSegment.length == 0
-					# FIXME: lots of back and forth from arrays to hashes here. Want to pick one?
-					libraryCleanupSegment = cloneTracksToLibrary filterTracks cloneLibraryToTracks(libraryCleanupSegment), parseOptionParameters(filterString)
-					puts "#{libraryCleanupSegment.length} tracks selected"
-				},
-				'edit' => Proc.new {
-					putInTempFile 'cleanup', listTrackTitles(libraryCleanupSegment)
-					system "vim #{getTempFilePath 'cleanup'}"
-					libraryCleanupSegment = getTracksFromTitleList readTempFile('cleanup')
-					deleteTempFile 'cleanup'
-					puts "#{listTrackTitles libraryCleanupSegment}\n\n(#{libraryCleanupSegment.length} tracks selected)"
-				},
-				'clear' => Proc.new {
-					libraryCleanupSegment = {}
-					puts "0 tracks selected"
-				},
-				'rm' => Proc.new {
-					initialLibraryLength = @library['library'].length
-					libraryCleanupSegment.each do |id, track|
-						@library['library'].delete id
-						playlistMatches = []
-						@library['playlists'].each { |playlistName, p|
-							index = p['tracks'].index id
-							if index
-								playlistMatches << playlistName
-								p['tracks'].delete_at index
+						@library['playlists'].each do |name, playlist|
+							playlist['tracks'].each do |id|
+								unattachedTracks.delete id if unattachedTracks.has_key? id
 							end
-						}
-					end
-					checksum = initialLibraryLength - libraryCleanupSegment.length == @library['library'].length
-					checksumString = "#{initialLibraryLength} - #{libraryCleanupSegment.length} == #{@library['library'].length}"
-					puts "#{checksumString} ... #{checksum ? 'OK' : 'Mismatch'}"
-					libraryCleanupSegment = {}
+						end
+
+						if unattachedTracks.length > 0
+							unattachedTracks.each { |id, track| libraryCleanupSegment[id] = track }
+							puts "#{listTrackTitles libraryCleanupSegment}\n\n(#{libraryCleanupSegment.length} tracks selected)"
+						else
+							puts "Every track is assigned to a playlist. No suggestions for cleanup."
+						end
+
+					}
+				},
+				'all' => {
+					'info' => 'select all tracks in the library',
+					'action' => Proc.new {
+						libraryCleanupSegment = cloneLibrary @library['library']
+						puts "All tracks selected (#{libraryCleanupSegment.length})"
+					}
+				},
+				'add' => {
+					'info' => '<playlistName> add selection to a playlist.',
+					'action' => Proc.new { |playlistQuery|
+						if playlistQuery && playlistQuery.length > 0
+							playlistName = findPlaylistName playlistQuery
+
+							if playlistName
+								libraryCleanupSegment.keys.each { |id| addTrackReferenceToPlaylist id, playlistName }
+							elsif confirm "No existing playlist matching '#{playlistQuery}'. Create one?"
+								createPlaylist playlistName, libraryCleanupSegment.keys
+							else
+								playlistName = nil
+							end
+
+							if playlistName
+								libraryCleanupSegment = {}
+								puts "Added #{libraryCleanupSegment.length} tracks to playlist '#{playlistName}'"
+							else
+								puts "No change"
+							end
+						else
+							puts "#{@library['playlists'].map { |name, p| name } .join "\n"}\n\nPlease specify a playlist name (new or existing)."
+						end
+
+					}
+				},
+				'filter' => {
+					'info' => Player::HELP_FILTER,
+					'action' => Proc.new { |filterString|
+						libraryCleanupSegment = cloneLibrary @library['library'] if libraryCleanupSegment.length == 0
+						# FIXME: lots of back and forth from arrays to hashes here. Want to pick one?
+						libraryCleanupSegment = cloneTracksToLibrary filterTracks cloneLibraryToTracks(libraryCleanupSegment), parseOptionParameters(filterString)
+						puts "#{libraryCleanupSegment.length} tracks selected"
+					}
+				},
+				'edit' => {
+					'info' => 'edit selection in Vim',
+					'action' => Proc.new {
+						putInTempFile 'cleanup', listTrackTitles(libraryCleanupSegment)
+						system "vim #{getTempFilePath 'cleanup'}"
+						libraryCleanupSegment = getTracksFromTitleList readTempFile('cleanup')
+						deleteTempFile 'cleanup'
+						puts "#{listTrackTitles libraryCleanupSegment}\n\n(#{libraryCleanupSegment.length} tracks selected)"
+					}
+				},
+				'clear' => {
+					'info' => 'clear the selection',
+					'action' => Proc.new {
+						libraryCleanupSegment = {}
+						puts "0 tracks selected"
+					}
+				},
+				'rm' => {
+					'info' => 'remove selected tracks',
+					'action' => Proc.new {
+						initialLibraryLength = @library['library'].length
+						libraryCleanupSegment.each do |id, track|
+							@library['library'].delete id
+							playlistMatches = []
+							@library['playlists'].each { |playlistName, p|
+								index = p['tracks'].index id
+								if index
+									playlistMatches << playlistName
+									p['tracks'].delete_at index
+								end
+							}
+						end
+						checksum = initialLibraryLength - libraryCleanupSegment.length == @library['library'].length
+						checksumString = "#{initialLibraryLength} - #{libraryCleanupSegment.length} == #{@library['library'].length}"
+						puts "#{checksumString} ... #{checksum ? 'OK' : 'Mismatch'}"
+						libraryCleanupSegment = {}
+					}
 				}
 			}
 
@@ -938,6 +967,21 @@ module Tunewich
 		end
 
 		def commandPrompt commands = nil, message = nil
+			if commands
+				commands['help'] = {
+					'info' => 'show this info',
+					'action' => Proc.new {
+						commandInfo = []
+						commands.each { |name, set|
+							info = "\"#{name}\""
+							info += " -- #{set['info']}" if set['info']
+							commandInfo << info
+						}
+						puts commandInfo.join "\n"
+					}
+				}
+			end
+
 			prompt = Proc.new {
 				puts "\n(commands: \"#{commands.keys.join '", "'}\")" if commands
 				print message if message
@@ -961,7 +1005,7 @@ module Tunewich
 						response[:commands] << ({
 							:name => commandName,
 							:args => commandArgs,
-							:output => commands[commandName].call(commandArgs)
+							:output => commands[commandName]['action'].call(commandArgs)
 						})
 					else
 						puts "Invalid command '#{commandName}'; available commands: #{commands.keys.join ', '}"
