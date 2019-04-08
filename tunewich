@@ -26,7 +26,6 @@ module Tunewich
 	class Player
 
 		PROMPT_TIMEOUT_RESPONSE = 'prompt_timeout_response'
-		CHAPTER_SELECT_TIMEOUT = 15
 		FILTER_HELP_1 = "Filter tracks by rules, in the format 'key=value,key=value 2,key'."
 		FILTER_HELP_2 = "Available rules are: [min-,max-]rating=<#0-5>,title=<query>,tag=<tag>,chapters,last=<[[[DD:]HH:]MM:]SS>,ab."
 		FILTER_HELP_3 = "Prepend an '-' to your rule to add it to exclude matches (e.g. '-tag=' vs 'tag=')."
@@ -376,7 +375,7 @@ module Tunewich
 				'edit' => {
 					'description' => 'Edit playing tracklist in Vim.',
 					'action' => Proc.new { |input|
-						editedTracklisit = getTracksFromTitleList editListInVim(listTrackTitles(@tracks), "remove or comment any tracks you want to deselect")
+						editedTracklisit = getTracksFromTitleList editListInVim(listTrackTitles(@tracks), "remove or comment with # any tracks you want to deselect")
 						useTracks editedTracklisit, false
 						puts "#{@tracks.length} tracks selected"
 						{:chainedInput => input}
@@ -443,6 +442,10 @@ module Tunewich
 							timeMessage = "      time : #{getDurationStringFromSeconds getCurrentMplayerTimePosition}"
 							timeMessage += " / #{track['duration']}" if alreadyHas[:duration]
 							timeMessage += " (#{@speed}x)" if @speed != 1
+							if @currentTrack.has_key? 'chapters'
+								chapterIndex = getChapterIndexAtTime @currentTrack, getCurrentMplayerTimePosition
+								timeMessage += "\n   chapter : #{@currentTrack['chapters'][chapterIndex]['name']}"
+							end
 							puts timeMessage
 						else
 							puts "  duration : #{track['duration']}" if alreadyHas[:duration]
@@ -630,6 +633,79 @@ module Tunewich
 					'description' => "Play the last track again.",
 					'action' => Proc.new { |input|
 						commandRequiresNext = true
+						{:chainedInput => input}
+					}
+				},
+				'chapter' => {
+					'description' => 'Skip to a chapter, or show chapter list.',
+					'action' => Proc.new { |input|
+						inputParts = input.match(/^([^\/]*)(.*)$/)
+						fileExists = trackFileExists? @currentTrack
+						if inputParts[1] && inputParts[1].length > 0
+							if @currentTrack['chapters']
+								chapterIndex = inputParts[1].to_i - 1
+								if chapterIndex <= 0
+									chapterIndex = getChapterIndexAtTime @currentTrack, getCurrentMplayerTimePosition
+									if inputParts[1] == '>'
+										chapterIndex +=1
+									elsif inputParts[1] == '<'
+										chapterIndex -= 1
+									else
+										chapterList = @currentTrack['chapters'].map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
+										selectedChapter = firstFuzzyMatch inputParts[1], chapterList
+										chapterIndex = selectedChapter[:index] if selectedChapter
+									end
+								end
+								whisper "Choosing chapter #{chapterIndex}", 2
+							else
+								puts "No chapters on the current track."
+							end
+							input = inputParts[2]
+						else
+							if @currentTrack['chapters']
+								whisper "Prompting to select a chapter from the list...", 2
+								commandRequiresBreak = false
+								commandRequiresNext = false
+
+								chapterPromptMessage = nil
+
+								if !fileExists && !@enableDownload
+									chapterPromptMessage = "NOTE: Choosing a chapter will cause the file to download fully before playing."
+								end
+
+								chapterResponse = promptForChapterIndex @currentTrack['chapters'], interactiveCommands, chapterPromptMessage
+								chapterIndex = chapterResponse[:index]
+
+								next if commandRequiresNext
+								break if commandRequiresBreak
+							else
+								puts "No chapters on the current track."
+							end
+						end
+
+						whisper "Done with chapter selection. Resulting chapter index: #{chapterIndex}", 4
+
+						if chapterIndex
+							if fileExists
+								whisper "file exists. fading out, then seeking", 4
+								whisper "fading out", 4
+								fadeVolume 'out', 1, @currentPlayerIndex
+								whisper "seeking", 4
+								chapterTime = @currentTrack['chapters'][chapterIndex]['time']
+								whisper "chapterTime: #{chapterTime}", 4
+								chapterSeconds = getSecondsFromDurationString chapterTime
+								whisper "chapterSeconds: #{chapterSeconds}", 4
+								playerInputStreamName = "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
+								putInTempFile playerInputStreamName, "seek #{chapterSeconds} 2\n"
+								whisper "restore previous volume", 4
+								fadeVolume 'in', 0, @currentPlayerIndex
+							else
+								whisper "file does not exists. TODO: download", 4
+								# TODO download the file, THEN skip to it again
+								commandRequiresNext = true
+							end
+						end
+
 						{:chainedInput => input}
 					}
 				},
@@ -823,6 +899,26 @@ module Tunewich
 					commandPrompt "empty", interactiveCommands
 				end
 			end
+		end
+
+		def getChapterIndexAtTime track, seconds
+			chapterIndex = nil
+			whisper "Finding chapter at #{seconds} seconds on track: #{track['title']}", 4
+			if track.has_key? 'chapters'
+				whisper "Looping through chapters.", 4
+				track['chapters'].each_with_index { |chapter, index|
+					chapterSeconds = getSecondsFromDurationString chapter['time']
+					whisper "chapterSeconds: #{chapterSeconds}", 4
+					if chapterSeconds <= seconds
+						chapterIndex = index
+					else
+						break
+					end
+				}
+			else
+				whisper "This track has no chapters: #{track['title']}", 2
+			end
+			chapterIndex
 		end
 
 		def fadeVolume targetFadeVolume, duration, playerIndex
@@ -2220,8 +2316,10 @@ module Tunewich
 			factor = 1
 			factors = [1,60,60,24]
 
+			whisper "getting seconds from duration string: '#{durationString}'", 5
 			if durationString && durationString.length > 0
 				durationString.split(':').reverse.each_with_index { |unit, index|
+					whisper "unit: '#{unit}', index: '#{index}'", 5
 					factor *= factors[index]
 					seconds += unit.to_f * factor
 				}
@@ -2492,11 +2590,11 @@ module Tunewich
 
 		def editListInVim list, instructions = nil
 			instructions ||= "edit"
-			fileDirections = "##\n#{instructions.gsub(/^/, '# ')}\n##\n\n"
+			fileDirections = "##\n#{instructions.gsub(/^/, '# ')}\n##"
 
 			editListName = 'edit-list'
 			deleteTempFile editListName
-			putInTempFile editListName, fileDirections + list.join("\n")
+			putInTempFile editListName, list.join("\n") + "\n\n" + fileDirections
 
 			system "vim #{getTempFilePath editListName}"
 
@@ -2630,28 +2728,6 @@ module Tunewich
 			confirmed
 		end
 
-		def timedTextPrompt timeout, message = nil, commands = nil
-			input = nil
-
-			thr = Thread.new {
-				input = STDIN.gets.chomp
-				# input = commandPrompt message, commands # doesn't keep the thread alive...
-			}
-
-			timer = 0
-			while thr.alive?
-				printRepeat "(#{timeout - timer}) #{message}"
-				sleep 1
-				timer += 1
-				if timer >= timeout
-					input = nil
-					Thread.kill thr
-				end
-			end
-
-			input
-		end
-
 		def promptForPlaylist
 			puts "Please choose a playlist (leave blank to play all):\n  #{@library['playlists'].keys.join "\n  "}"
 			selectedListName = nil
@@ -2675,6 +2751,7 @@ module Tunewich
 		end
 
 		def promptForChapterIndex chapters, commands = nil, message = nil
+			whisper "prompting for chapter selection", 4
 			selectedChapterIndex = nil
 
 			chapterList = chapters.map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
@@ -2684,7 +2761,7 @@ module Tunewich
 
 			while not selectedChapterIndex do
 				puts prePromptMessage
-				chapterQuery = timedTextPrompt Player::CHAPTER_SELECT_TIMEOUT, promptMessage, commands
+				chapterQuery = commandPrompt(promptMessage, commands)[:input]
 				break if not chapterQuery or chapterQuery.length === 0
 
 				selectedChapter = firstFuzzyMatch chapterQuery, chapterList
@@ -2697,6 +2774,8 @@ module Tunewich
 				end
 
 			end
+
+			whisper "Selected chapter #{selectedChapterIndex}", 4
 
 			{
 				:index => selectedChapterIndex
