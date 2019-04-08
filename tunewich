@@ -41,6 +41,7 @@ module Tunewich
 			@sessionID = Random.rand(1024)
 			@trackIndex = nil
 			@tracks = []
+			@verbose = false
 			@trackFilters = nil
 			@trackExcludeFilters = nil
 			@noNetwork = false
@@ -56,6 +57,10 @@ module Tunewich
 		end
 
 		private
+
+		def whisper message
+			puts "  DEBUG: #{message}" if @verbose
+		end
 
 		def getEnvironmentConfig
 			if ENV.key? 'TUNEWICH_PLAYER_OPTS'
@@ -147,7 +152,7 @@ module Tunewich
 					'info' => "Load a playlist.",
 					'action' => Proc.new { |playlistQuery|
 						# TODO: generalized function to list playlists, their track count, and the average rating among rated tracks
-						puts "playlistQuery: #{playlistQuery}" # XXX
+						whisper "playlistQuery: #{playlistQuery}"
 						playlistNames = @library['playlists'].keys
 						if playlistQuery && playlistQuery.length > 0
 							match = firstFuzzyMatch optionsOutput[:playlistQuery], playlistNames
@@ -297,6 +302,7 @@ module Tunewich
 					updateTrackInfo track
 				end
 
+				whisper "checking if file exists" 
 				fileExists = trackFileExists? track
 
 				if !fileExists && @noNetwork
@@ -331,10 +337,14 @@ module Tunewich
 				#  l: copy a link to share the source
 				#  x: remove from library
 				#  d: download
+				whisper "about to play track" 
 				playerOutput = play track, chapterIndex, interactiveCommands
 
+				whisper "I've been asked to exit" if commandRequiresExit
 				exit if commandRequiresExit
+				whisper "I've been asked to break" if commandRequiresBreak
 				break if commandRequiresBreak
+				whisper "I've been asked to skip to next" if commandRequiresNext
 				next if commandRequiresNext
 
 				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
@@ -411,8 +421,10 @@ module Tunewich
 			mplayerStatus = nil
 			volumeBeforeFadingOut = 10 # FIXME: better initial default
 			mplayerAction = Proc.new { |command|
+				whisper "mplayerAction: begin"
 				fadeCommandMatch = /^fade (out|in|\d+)( \d+)?( .+)?$/.match command
 				if fadeCommandMatch
+					whisper "mplayerAction: found a fade command"
 					duration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 1.0
 					followingCommand = fadeCommandMatch[3] && fadeCommandMatch[3].length > 0 ? fadeCommandMatch[3].strip : nil
 					volume = getCurrentMplayerVolume
@@ -427,6 +439,7 @@ module Tunewich
 					end
 					volumeFadeInterval = 0.1
 					volumeStep = (targetFadeVolume - volume) / duration * volumeFadeInterval
+					whisper "mplayerAction: about to fade volume"
 					while (volume - targetFadeVolume).abs > 0.1
 						volume += volumeStep
 						printRepeat "fading: #{volume.round()}"
@@ -434,18 +447,23 @@ module Tunewich
 						sleep volumeFadeInterval
 					end
 					if followingCommand
+						whisper "mplayerAction: second command > input"
 						putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
 					end
 				else
+					whisper "mplayerAction: normal command > input"
 					putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{command}\n"
 				end
 				if /^vol/.match command
+					whisper "mplayerAction: found a volume command"
 					volume = getCurrentMplayerVolume
 					puts "volume: #{volume}"
 				end
+				whisper "mplayerAction: done"
 
 				true
 			}
+			whisper "checking again if file exist :[" 
 			fileAlreadyExists = trackFileExists? track
 			streaming = !fileAlreadyExists && !@enableDownload && !chapterIndex
 
@@ -455,6 +473,7 @@ module Tunewich
 			end
 
 			if track['chapters']
+				whisper "ooh, this track has chapters" 
 
 				if chapterIndex
 
@@ -477,12 +496,15 @@ module Tunewich
 				end
 
 			elsif track['loop'].kind_of?(Array)
+				whisper "ooh, this track has has an A/B loop!" 
 
 				if not streaming
 					duration = track['loop'][1] - track['loop'][0]
 
+					whisper "putting a 'seek to the beginning' command in the player command input file" 
 					mplayerAction.call 'seek -999:00:00' # this is a silly way to do it. -100% doesn't work. Still, there's a moment of the audio heard before this command is run.
 
+					whisper "setting some player startup options" 
 					# loop back from B to A
 					mplayerStartupOptions << "-ss #{track['loop'][0]}"
 					mplayerStartupOptions << "-endpos #{duration}"
@@ -510,6 +532,8 @@ module Tunewich
 				puts "File not found for #{track['title']}."
 				return false
 			end
+
+			whisper "Alright, file path is set to play from #{mediaFilePath}" 
 
 			if !streamName
 				mplayerStartupOptions << "-loop 0" if track['loop'] or @loop
@@ -547,7 +571,7 @@ module Tunewich
 			if streaming
 				deleteStream streamName
 			elsif !fileAlreadyExists && track['unattached'] && !@keepUnattachedDownload
-				deleteFileById track['id']
+				deleteTrackFile track
 				titleBlock "UNATTACHED DOWNLOAD DELETED", 'X'
 			end
 
@@ -712,8 +736,8 @@ module Tunewich
 			matches.length ? matches[0] : false
 		end
 
-		def deleteFileById(id)
-			`rm #{getFilePrefixFromId id}*`
+		def deleteTrackFile(track)
+			`rm #{getTrackFilePrefix track}*`
 		end
 
 		def firstTrackFile(track)
@@ -722,7 +746,9 @@ module Tunewich
 		end
 
 		def findTrackFiles(track)
-			Dir.glob("#{getFilePrefixFromId track['id']}*")
+			globString = "#{getTrackFilePrefix track}*"
+			whisper "findTrackFiles: globbing for: '#{globString}'" 
+			Dir.glob(globString)
 		end
 
 		def trackFileExists?(track)
@@ -736,8 +762,8 @@ module Tunewich
 			id != fileName ? id : false
 		end
 
-		def getFilePrefixFromId(id)
-			"#{@fileDirectory}/tunewich-#{id}"
+		def getTrackFilePrefix(track)
+			"#{@fileDirectory}/tunewich-#{track['id']}"
 		end
 
 		def downloadTrack(track, streamPath = nil)
@@ -752,8 +778,8 @@ module Tunewich
 			if streamPath
 				downloadPid = spawn("#{youtubeDlCommandBegin} -o - #{youtubeDlCommandEnd} > \"#{streamPath}\" 2> \"#{downloadFeedbackFile}\"")
 			else
-				# status = system "#{youtubeDlCommandBegin} -o \"#{getFilePrefixFromId track['src']}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd}"
-				downloadPid = spawn("#{youtubeDlCommandBegin} -o \"#{getFilePrefixFromId track['src']}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd} &> \"#{downloadFeedbackFile}\"")
+				# status = system "#{youtubeDlCommandBegin} -o \"#{getTrackFilePrefix track}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd}"
+				downloadPid = spawn("#{youtubeDlCommandBegin} -o \"#{getTrackFilePrefix track}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd} &> \"#{downloadFeedbackFile}\"")
 				Process.detach(downloadPid)
 
 				while not trackFileExists? track # FIXME: event driven approach to waiting for a file?
@@ -785,8 +811,8 @@ module Tunewich
 					sleep 0.1
 				end
 
-				puts "Waiting 5 seconds to be sure the file is ready..."
-				sleep 5 # FIXME: remove `sleep` in favor of checking if the right file exists yet
+				puts "Waiting 0.5 seconds to be sure the file is ready..."
+				sleep 0.5 # FIXME: remove `sleep` in favor of checking if the right file exists yet
 			end
 
 			deleteTempFile downloadFeedbackFileName
@@ -820,7 +846,10 @@ module Tunewich
 
 		def putInTempFile(name, value)
 			path = getTempFilePath name
-			File.write(path, value) && path
+			whisper "#{path} << '#{value.chomp}'"
+			writeResult = File.write(path, value)
+			whisper "#{path} [written: #{writeResult}]"
+			writeResult && path
 		end
 
 		def readTempFile(name)
@@ -1332,7 +1361,7 @@ module Tunewich
 				if sourceLine && sourceLine.length > 0
 					match = sourceLine[0].match sourcePattern
 					source = match[1]
-					puts "source: #{source}" # XXX
+					whisper "source: #{source}" 
 				end
 			end
 
@@ -1436,6 +1465,10 @@ module Tunewich
 				else
 					@trackIndex = trackQuery
 				end
+			end
+
+			parser.on("-v", "--verbose", "Chatter about what's going on", " ") do
+				@verbose = true
 			end
 
 			parser.on("-w", "--write [SECONDS]", "Save changes to the library. If SECONDS are given, only tracks played that many seconds will be written.", " ") do |seconds|
