@@ -172,7 +172,7 @@ module Tunewich
 				'info' => {
 					'info' => "Show track info",
 					'action' => Proc.new { |query|
-						info = getTrackInfo @tracks[@trackIndex]['id']
+						info = getTrackInfo @tracks[@trackIndex]['src']
 						puts "duration: #{info['duration']}"
 						puts "=============================="
 						puts info['description']
