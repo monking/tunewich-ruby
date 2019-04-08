@@ -2559,31 +2559,36 @@ module Tunewich
 			@loopHistory = {};
 			bind('chapter_change', Proc.new {
 				# check if we need to skip this chapter
-				targetChapterName = @currentTrack['chapters'][@currentChapterIndex]['loop_target'] if @currentTrack['chapters'][@currentChapterIndex].has_key?('loop_target')
+				loopTarget = @currentTrack['chapters'][@currentChapterIndex]['loop_target'] if @currentTrack['chapters'][@currentChapterIndex].has_key?('loop_target')
 				if (
 						@loop  &&
 						!@breakLoop  &&
 						!@currentlySkippingChapter &&
 						@currentTrack['chapters'][@currentChapterIndex] &&
-						targetChapterName &&
+						loopTarget &&
 						(
-							!@loopHistory.has_key?(targetChapterName) ||
-							(@loopLimit == 0 || @loopHistory[targetChapterName] < @loopLimit)
+							!@loopHistory.has_key?(loopTarget) ||
+							(@loopLimit == 0 || @loopHistory[loopTarget] < @loopLimit)
 						)
 				)
 					whisper("jumping to target chapter '#{@currentTrack['chapters'][@currentChapterIndex]['loop_target']}'", 2)
 					@currentlySkippingChapter = @currentChapterIndex
 
-					targetChapterIndex = getChapterIndexByQuery targetChapterName, @currentTrack['chapters']
-					if targetChapterIndex
-						if @loopHistory.has_key?(targetChapterName)
-							@loopHistory[targetChapterName] += 1
-						else
-							@loopHistory[targetChapterName] = 1;
+					loopTargetSeconds = getSecondsFromDurationString loopTarget
+					if loopTargetSeconds
+						seek loopTargetSeconds
+					else
+						targetChapterIndex = getChapterIndexByQuery loopTarget, @currentTrack['chapters']
+						if targetChapterIndex
+							if @loopHistory.has_key?(loopTarget)
+								@loopHistory[loopTarget] += 1
+							else
+								@loopHistory[loopTarget] = 1;
+							end
+							whisper("\nLoop ##{getLoopLimitStatusMessage}", 1)
+							fadeInterval = 0.0
+							seekToChapter targetChapterIndex, fadeInterval, fadeInterval
 						end
-						whisper("\nLoop ##{getLoopLimitStatusMessage}", 1)
-						fadeInterval = 0.0
-						seekToChapter targetChapterIndex, fadeInterval, fadeInterval
 					end
 
 					bindOnce('chapter_change', Proc.new {
@@ -3874,18 +3879,17 @@ module Tunewich
 		end
 
 		def getSecondsFromDurationString durationString
-			seconds = 0
-			factor = 1
-			factors = [1,60,60,24]
-
+			seconds = nil
 			timecodeRegExpPattern = /^[0-9:.]+$/
+
 			if durationString && durationString.length > 0 && durationString.match(timecodeRegExpPattern)
+				seconds = 0
+				factor = 1
+				factors = [1,60,60,24]
 				durationString.split(':').reverse.each_with_index { |unit, index|
 					factor *= factors[index]
 					seconds += unit.to_f * factor
 				}
-			else
-				seconds = nil
 			end
 
 			seconds
