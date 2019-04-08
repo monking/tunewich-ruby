@@ -225,12 +225,14 @@ module Tunewich
 					};
 					match[:density] = query.length.to_f / match[:matchLength].to_f
 					match[:breadth] = match[:matchLength].to_f / match[:value].length.to_f
-					match[:score] = (match[:breadth] + match[:density] * 2) / 3
+					match[:score] = match[:density] * 10 + match[:breadth]
 					matches.push(match)
 				end
 			end
 
-			matches.sort_by { |match| 1 - match[:score] } if matches.length > 1
+			if matches.length > 1
+				matches.sort! { |a,b| b[:score] <=> a[:score] }
+			end
 
 			matches
 		end
@@ -279,6 +281,7 @@ module Tunewich
 		def play(track)
 			if track['get_info']
 				track.delete 'get_info'
+				puts "Getting track title and description. This may take a moment."
 				track = updateTrackInfo track
 			end
 
@@ -305,7 +308,8 @@ module Tunewich
 			elsif track['chapters']
 				if not streaming
 					chapterIndex = promptForChapterIndex track['chapters']
-					puts "you chose the chapter: #{track['chapters'][chapterIndex]}" # XXX
+					titleBlock "Chapter: #{track['chapters'][chapterIndex]['name']}"
+
 					offsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex]['time']
 					mplayerCommands.push("-ss #{offsetSeconds}")
 					if chapterIndex < track['chapters'].length - 1
@@ -510,14 +514,11 @@ module Tunewich
 		end
 
 		def updateTrackInfo track
-			puts "getting track info for #{track['src']}" # XXX
 			trackInfo = getTrackInfo track['src']
-			puts "trackInfo: #{trackInfo}" # XXX
 			track['title'] = trackInfo['title']
 
 			if trackInfo['description']
 				chapters = getChaptersFromDescription trackInfo['description'].lines
-				puts "chapters found #{chapters}" # XXX
 				track['chapters'] = chapters if chapters
 			end
 
@@ -527,7 +528,6 @@ module Tunewich
 		def getChaptersFromDescription description
 			description.grep(/[0-9]+:[0-9:.]+/).map! do |line|
 				matches = line.match(/^(.*?)[ (]*([0-9]+:[0-9:.]+)[ )]*(.*)$/)
-				puts "#{line} => #{matches}" # XXX
 				{
 					'time' => matches[2],
 					'name' => "#{matches[1]} #{matches[3]}".strip
