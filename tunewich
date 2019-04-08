@@ -9,7 +9,7 @@
 # - [ ] getDownloadCommand, bind download_complete, etc. #1pnpL0cTQwS
 # - [ ] check if editChapter was successful #1pnpL3Do9W4
 # - [ ] it would be nice to make the chapter, if the intent is clear. #1pnpL5bWrGa
-# - [ ] same as sortChapters, combine? #1pnpLF55sNk
+# - [ ] sorting notes in the same way as sortChapters, combine? #1pnpLF55sNk
 # - [ ] use the 'turn' command to only sort tracks by their #1pnpLRdDbCi
 #   similarity to the filter, rather than removing those that don't
 #   match
@@ -43,8 +43,6 @@
 #   }
 # - [ ] also stop mplayer #1pnpP3BJJnE
 # - [ ] run commands from FIFO queue as if they had been typed interactively (this would allow the tent "away" function to fade out before killing, e.g.) #1pxQxMENEem
-# - [+] note the time when a command is begun to be typed (i.e. "/" is pressed). Use this time when recording a note #1pxisWCFria
-#		- [ ] test
 
 require "io/console" # STDIN.getch
 require "open-uri" # URI
@@ -1126,19 +1124,23 @@ module Tunewich
 								if @currentTrack.has_key? 'notes'
 									notesList = @currentTrack['notes'].map { |note| "#{note['time']} - #{note['text']}" }
 									editedNotesList = editListInVim notesList
-									editedNotes = []
-									editedNotesList.each_with_index { |editedLine, index|
-										lineMatches = editedLine.match(/^([0-9:]+) - (.*)/)
-										if lineMatches
-											editedNotes << {
-												'time' => lineMatches[1],
-												'text' => lineMatches[2]
-											}
-										else
-											editedNotes.last['text'] += "\n#{editedLine}"
-										end
-									}
-									@currentTrack['notes'] = editedNotes
+									if editedNotesList.length > 0
+										editedNotes = []
+										editedNotesList.each_with_index { |editedLine, index|
+											lineMatches = editedLine.match(/^([0-9:]+) - (.*)/)
+											if lineMatches
+												editedNotes << {
+													'time' => lineMatches[1],
+													'text' => lineMatches[2]
+												}
+											else
+												editedNotes.last['text'] += "\n#{editedLine}"
+											end
+										}
+										@currentTrack['notes'] = editedNotes
+									else
+										@currentTrack.delete('notes')
+									end
 									notesChanged = true
 								else
 									putsRealtime "No notes on the current track."
@@ -1147,18 +1149,19 @@ module Tunewich
 								@currentTrack['notes'] ||= []
 								note = {
 									'text' => inputParts[1],
-									'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime) # TODO: 1pxisWCFria
+									'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime)
 								}
 								if note['text'].length < 1
 									note['text'] = editListInVim([], 'Write your note').join "\n"
 								end
 								@currentTrack['notes'] << note
-								@currentTrack['notes'].sort! { |a, b| getSecondsFromDurationString(a['time']) <=> getSecondsFromDurationString(b['time']) } # TODO: 1pnpLF55sNk
 								notesChanged = true
 							end
 
 							if notesChanged
-								@currentTrack['notes'].sort! { |a, b| getSecondsFromDurationString(a['time']) <=> getSecondsFromDurationString(b['time']) } # TODO: 1pnpLF55sNk
+								if @currentTrack.has_key?('notes')
+									@currentTrack['notes'].sort! { |a, b| getSecondsFromDurationString(a['time']) <=> getSecondsFromDurationString(b['time']) } # TODO: 1pnpLF55sNk
+								end
 								addTrackToLibrary @currentTrack if @currentTrack['unattached']
 								writeLibraryToFile
 							end
@@ -3947,7 +3950,7 @@ module Tunewich
 
 					prompt.call
 				else
-					if not input || input.length == 0
+					if not input
 						input = ''
 						@shouldShowPlaybackInfo = false
 						if inputCharacter == '/'
