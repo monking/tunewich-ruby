@@ -229,17 +229,19 @@ module Tunewich
 
 					titleBlock "[#{@trackIndex + 1}] - #{@currentTrack['title']}"
 
-					nextTrack() # call nextTrack after @trackIndex is announced, but before play, so that the user can see which track will come next.
+					if @userMode == 'play'
+						nextTrack() # call nextTrack after @trackIndex is announced, but before play, so that the user can see which track will come next.
 
-					if @updateAllPlayedTrackInfo && @networkEnabled
-						printRepeat "Getting latest track information..."
-						updateTrackInfo @currentTrack
-					end
+						if @updateAllPlayedTrackInfo && @networkEnabled
+							printRepeat "Getting latest track information..."
+							updateTrackInfo @currentTrack
+						end
 
-					fileExists = trackFileExists? @currentTrack
+						fileExists = trackFileExists? @currentTrack
 
-					if !fileExists && !@networkEnabled
-						next
+						if !fileExists && !@networkEnabled
+							next
+						end
 					end
 
 					if @userMode != initialUserMode
@@ -255,7 +257,7 @@ module Tunewich
 							setUserMode 'edit'
 						end
 					when 'edit'
-						commandPrompt 'edit', interactiveCommands
+						commandPrompt '(keep hitting enter)', interactiveCommands
 					end
 
 					if @currentTrack && playerOutput
@@ -556,9 +558,8 @@ module Tunewich
 					shouldShowTracks = true
 
 					if inputParts[:query] && inputParts[:query].length > 0
-						matchingTitlesAndIds = fuzzyStringSearchInList(inputParts[:query], trackTitlesAndIds)
+						matchingTitlesAndIds = fuzzyStringSearchInListValues(inputParts[:query], trackTitlesAndIds)
 						if matchingTitlesAndIds.length > 0
-							matchingTitlesAndIds = matchingTitlesAndIds.map { |m| m[:value] }
 							if matchingTitlesAndIds.length == 1
 								matchingTitle = matchingTitlesAndIds[0].sub(/ \[[^\]]+\]$/, '')
 								input = input.sub!(inputParts[:query], matchingTitle)
@@ -592,12 +593,12 @@ module Tunewich
 							tagNames = tagNames + tag['aliases']
 						end
 					}
-					guessTagNames = fuzzyStringSearchInList(lastInputToken, tagNames) if lastInputToken.length > 0 # @refactor: duplicating code from trackTabComplete above
+					guessTagNames = fuzzyStringSearchInListValues(lastInputToken, tagNames) if lastInputToken.length > 0 # @refactor: duplicating code from trackTabComplete above
 					if guessTagNames && guessTagNames.length == 1
-						input = input.sub!(Regexp.new("#{lastInputToken}$"), guessTagNames[0][:value])
+						input = input.sub!(Regexp.new("#{lastInputToken}$"), guessTagNames[0])
 					elsif guessTagNames && guessTagNames.length > 1
 						heading = "#{[guessTagNames.length, 10].min}/#{guessTagNames.length} tags"
-						putsRealtime "\n#{heading}\n================\n#{guessTagNames.slice(0, 10).map{|m| m[:value]}.join("\n")}"
+						putsRealtime "\n#{heading}\n================\n#{guessTagNames.slice(0, 10).join("\n")}"
 					end
 				end
 
@@ -648,14 +649,14 @@ module Tunewich
 						end
 						writeLibraryToFile
 						whisper("#{noteType} changes written to library file", 3)
-					elsif inputParts[:option] == 'remove'
+					elsif inputParts[:option] == 'remove' && @currentPlayerTime
 						# TODO 1gzTHg: take input to choose a note
 						noteIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
 						if noteIndex > -1
 							@currentTrack[noteType].delete_at noteIndex
 							writeLibraryToFile
 						end
-					elsif inputParts[:option] == 'skip'
+					elsif inputParts[:option] == 'skip' && @currentPlayerTime
 						noteIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
 						if noteIndex > -1
 							@currentTrack[noteType][noteIndex]['skip'] = true
@@ -699,12 +700,12 @@ module Tunewich
 				if @currentTrack.has_key?(noteType)
 					if inputParts[:query] && inputParts[:query].length > 0
 						noteTexts = @currentTrack[noteType].map { |c| c['text'] }
-						guessChapterTexts = fuzzyStringSearchInList(inputParts[:query], noteTexts) if inputParts[:query].length > 0
+						guessChapterTexts = fuzzyStringSearchInListValues(inputParts[:query], noteTexts) if inputParts[:query].length > 0
 						if guessChapterTexts && guessChapterTexts.length == 1
-							input = input.sub!(inputParts[:query], guessChapterTexts[0][:value])
+							input = input.sub!(inputParts[:query], guessChapterTexts[0])
 						elsif guessChapterTexts && guessChapterTexts.length > 1
 							heading = "#{[guessChapterTexts.length, 10].min}/#{guessChapterTexts.length} #{noteType}"
-							putsRealtime "\n#{heading}\n================\n#{guessChapterTexts.slice(0, 10).map{|m| m[:value]}.join("\n")}"
+							putsRealtime "\n#{heading}\n================\n#{guessChapterTexts.slice(0, 10).join("\n")}"
 						end
 					else
 						# TODO 1gzoGh: it'd be nice to put in a space if inputParts[:offset] is given
@@ -737,7 +738,8 @@ module Tunewich
 							'fade_end',
 							'speed_ramp_start',
 							'speed_ramp_end',
-							'download_success'
+							'download_success',
+							'transcode_complete'
 						],
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
@@ -1040,7 +1042,8 @@ module Tunewich
 								outputMessageLines << "       bpm : #{track['bpm']}" if alreadyHas[:bpm]
 
 								if track == @currentTrack
-									timeMessage = "			time : #{getDurationStringFromSeconds @currentPlayerTime}"
+									timeMessage = ""
+									timeMessage += "			time : #{getDurationStringFromSeconds @currentPlayerTime}" if @currentPlayerTime
 									if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
 										durationResponseFromPlayer = getMplayerProperty('get_time_length', /^(ANS_LENGTH=)(.*?)(\?)?$/, 0.1)
 										whisper("Got duration from player: '#{durationResponseFromPlayer}'", 2)
@@ -1050,7 +1053,7 @@ module Tunewich
 									end
 									timeMessage += " / #{track['duration']}"
 									timeMessage += " (#{@speed}x)" if @speed != 1
-									if @currentTrack.has_key? 'chapters'
+									if @currentPlayerTime && @currentTrack.has_key?('chapters')
 										chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
 										if chapterIndex > -1
 											timeMessage += "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
@@ -1129,8 +1132,11 @@ module Tunewich
 						}
 					},
 					'download' => {
-						'description' => "Download the current track for faster play in the future. Optional 'get' parameter prints the download shell command instead.",
-						'args' => ['get'],
+						'description' => "options) get: show the command, or the path to the file if already downloaded; auto: download any file upon playing. With no options, downloads the current track for faster play in the future.",
+						'args' => ['get', 'auto'],
+						'showStatus' => Proc.new {
+							putsRealtime "Auto download: #{@autoDownload ? 'on' : 'off'}"
+						},
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
 
@@ -1138,9 +1144,13 @@ module Tunewich
 
 							track = @currentTrack
 							shouldEchoCommand = false
+							shouldShowStatus = false
 							downloadOptions = {}
 							options.each { |option|
 								case option
+								when 'auto'
+									@autoDownload = !@autoDownload
+									shouldShowStatus = true
 								when 'get'
 									shouldEchoCommand = true
 								else
@@ -1150,12 +1160,14 @@ module Tunewich
 							}
 
 							if shouldEchoCommand
-								trackFiles = findTrackFiles(track)
+								trackFiles = @forceStreaming ? [] : findTrackFiles(track)
 								if trackFiles.length > 0
 									whisper(trackFiles.join("\n"), 0)
 								else
 									putsRealtime getDownloadCommand(track, downloadOptions)
 								end
+							elsif shouldShowStatus
+								command['showStatus'].call
 							else
 								if trackFileExists? track
 									putsRealtime "This file is already downloaded."
@@ -1172,6 +1184,59 @@ module Tunewich
 						# 	trackTabComplete input.sub(Regexp.new("^(#{command['args'].join('|')}) "), '')
 						# }
 						## FIXME ^: erroring
+					},
+					'transcode' => {
+						'description' => "[FORMAT]  Transcode downloaded file to another format (default Ogg/Vorbis). This is the same as doing '/format FORMAT /download'.",
+						'args' => ['vorbis'],
+						'action' => Proc.new { |input, command|
+							inputParts = getCommandInputParts(input)
+
+							outputFormat = inputParts[:query] && inputParts[:query].length > 0 ? inputParts[:query] : 'vorbis'
+
+							trackFiles = findTrackFiles(@currentTrack) if @currentTrack
+							if trackFiles
+								if trackFiles.length > 1
+									commandPrompt "pick a file:", nil, Proc.new { |fileQuery|
+										foundOneTrack = false
+										filteredFiles = fuzzyStringSearchInListValues(trackFiles, fileQuery)
+										if filteredFiles.length == 1
+											trackFiles = filteredFiles
+											foundOneTrack = true
+										end
+
+										!foundOneTrack
+									}
+								end
+								if trackFiles.length == 1
+									commandArgs = ["-i \"#{trackFiles[0]}\""]
+
+									case outputFormat
+									when 'vorbis'
+										outputFileExtension = 'ogg'
+										commandArgs << "-c:a libvorbis"
+									else
+										outputFileExtension = outputFormat
+									end
+
+									outputFilePath = trackFiles[0].sub(/\.[^.]+$/, ".#{outputFileExtension}")
+									commandArgs << "\"#{outputFilePath}\""
+									transcodeOutputFile = createTempFile "transcoding.#{Random.rand(1024)}"
+									command = "ffmpeg #{commandArgs.join(' ')} 2>&1 >#{transcodeOutputFile}"
+									Thread.new {
+										system(command)
+										trigger "transcode_complete"
+									}
+								elsif trackFiles.length > 1
+									putsRealtime "Please repeat the command with a specific fragemnt of one of these filenames:\n#{trackFiles.join("\n")}"
+								else
+									putsRealtime "The current track does not have any downloaded files to transcode."
+								end
+							else
+								putsRealtime getDownloadCommand(track, downloadOptions)
+							end
+
+							{:chainedInput => inputParts[:remainder]}
+						}
 					},
 					'add' => {
 						'description' => 'Add a new track to the play queue. Input: <URL>[,<URL>,...] [<TAG>[,<TAG>,...]] -- URLs: comma-separated URLs or YouTube IDs (Some URLs will add multiple tracks, like a bandcamp album (or TODO: YouTube playliist); tags: comma-separated tags to add to the tracks.',
@@ -1489,6 +1554,7 @@ module Tunewich
 							if filesToDelete.length > 0
 
 								if confirm("Delete #{filesToDelete.length} files?")
+
 									filesToDelete.each { |file|
 										File.delete "#{@fileDirectory}/#{file.chomp}"
 									}
@@ -1498,6 +1564,17 @@ module Tunewich
 							else
 								putsRealtime "No files to delete."
 							end
+
+							@library['x.hosts'] ||= {}
+							@library['x.hosts'][$hostname] ||= {}
+							@library['x.hosts'][$hostname]['downloaded'] = Dir.entries(@fileDirectory).map { |file|
+								if !filesToIgnore.include? file
+									getIdFromFileName file
+								end
+							}.delete_if { |id|
+								!id
+							}.uniq
+
 							{:chainedInput => inputParts[:remainder]}
 						}
 					},
@@ -2046,17 +2123,23 @@ module Tunewich
 			@userMode = mode if Tunewich::Player::MODES.has_key?(mode)
 		end
 
-		def getNoteIndexAtTime chapters, seconds
-			chapterIndex = -1
-			chapters.each_with_index { |chapter, index|
-				chapterSeconds = getSecondsFromDurationString chapter['time']
-				if chapterSeconds <= seconds
-					chapterIndex = index
-				else
-					break
-				end
-			}
-			chapterIndex
+		def getNoteIndexAtTime notes, seconds
+			noteIndex = -1
+			if !seconds
+				whisper("getNoteIndexAtTime: nil seconds", 3)
+			else
+				notes.each_with_index { |note, index|
+					noteSeconds = getSecondsFromDurationString note['time']
+					if !noteSeconds
+						whisper("unable to get seconds from note time '#{note['time']}'", 3)
+					elsif noteSeconds <= seconds
+						noteIndex = index
+					else
+						break
+					end
+				}
+			end
+			noteIndex
 		end
 
 		def getOffsetFromInputString input
@@ -2754,7 +2837,7 @@ module Tunewich
 				playbackInfo << "#{unicodeChars[:speaker]} #{volumeIndication}"
 
 				# show playback position
-				timeMessage = "#{unicodeChars[:timer]}	#{getDurationStringFromSeconds @currentPlayerTime, 0}"
+				timeMessage = "#{unicodeChars[:timer]}	#{getDurationStringFromSeconds @currentPlayerTime, 0}" if @currentPlayerTime
 				timeMessage += "/#{@currentTrack['duration']}" if @currentTrack.has_key?('duration')
 				timeMessage += "(#{(@currentSpeed * 10).round / 10.0}x)" if @currentSpeed != 1
 				playbackInfo << timeMessage
@@ -3045,6 +3128,10 @@ module Tunewich
 			matches
 		end
 
+		def fuzzyStringSearchInListValues(query, list)
+			fuzzyStringSearchInList(query, list).map { |m| m[:value] }
+		end
+
 		def firstFuzzyMatch(query, list)
 			matches = fuzzyStringSearchInList query, list
 			matches.length ? matches[0] : false
@@ -3081,9 +3168,8 @@ module Tunewich
 		end
 
 		def getIdFromFileName(fileName)
-			id = fileName.gsub(/^tunewich.([^.]+).*$/) {
-				$1
-			}
+			id = fileName.gsub(/^tunewich.([^.]+).*$/) { $1 }
+			whisper("id: '#{id}', file: '#{fileName}'", 4)
 			id != fileName ? id : false
 		end
 
