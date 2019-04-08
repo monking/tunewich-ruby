@@ -440,11 +440,12 @@ module Tunewich
 			end
 			editedFormattedChapters = editListInVim formattedChapters
 			editedChapters = editedFormattedChapters.map { |l|
-				bits = l.match(/^\s*(skip)?\s*([0-9.:]+)\s+(.*)$/)
-				#              /    1         2            3    /
+				bits = l.match(/^\s*(skip)?\s*([0-9.:]+)\s+(.*?)( \(loop to "(.*)"\))?$/)
+				#              /    1         2            3    4            5         /
 				if bits
 					chapter = {'time' => bits[2], 'text' => bits[3]}
 					chapter['skip'] = true if bits[1] == 'skip'
+					chapter['loop_target'] = bits[5] if bits[5]
 					chapter
 				else
 					false
@@ -621,8 +622,6 @@ module Tunewich
 								if guessWaitEvent && guessWaitEvent.length > 0
 									input = input.sub!(inputParts[1], guessWaitEvent)
 								end
-							else
-								putsRealtime "Available events: #{availableWaitEvents.join ', '}"
 							end
 							input
 						}
@@ -1065,13 +1064,13 @@ module Tunewich
 						}
 					},
 					'chapter' => {
-						'description' => 'Skip to a chapter, or show chapter list. Input: number or name of chapter; or "<" or ">" to go back or forward, multiples to go further.',
+						'description' => 'Skip to a chapter, or show chapter list. Input: [optional seconds offset], number or name of chapter; or "<" or ">" to go back or forward, multiples to go further.',
 						'action' => Proc.new { |input|
 							whisper("chapter command - input: #{input}", 3)
-							inputParts = input.match(/^([^\/]*)(.*)$/)
+							inputParts = input.match(/^([+-][0-9.]+ +)?([^\/]*)(.*)$/)
 							if @currentTrack['chapters']
-								if inputParts[1] && inputParts[1].length > 0
-									chapterIndex = getChapterIndexByQuery inputParts[1], @currentTrack['chapters']
+								if inputParts[2] && inputParts[2].length > 0
+									chapterIndex = getChapterIndexByQuery inputParts[2], @currentTrack['chapters']
 								else
 									putsRealtime getFormattedChapterList(@currentTrack['chapters']).join("\n")
 									# FIXME: promptForChapterIndex doesn't respond correctly to input, even ctrl+c
@@ -1092,12 +1091,14 @@ module Tunewich
 								whisper("Done with chapter selection. Resulting chapter index: #{chapterIndex}", 3)
 								chapter = @currentTrack['chapters'][chapterIndex]
 								seekSeconds = getSecondsFromDurationString chapter['time']
+								seekOffset = inputParts[1].to_f
+								seekSeconds += seekOffset if seekOffset
 								seek seekSeconds, 0.5, 0.25
-							elsif inputParts[1] && inputParts[1].length > 0
+							elsif inputParts[2] && inputParts[2].length > 0
 								putsRealtime "No chapter found."
 							end
 
-							{:chainedInput => inputParts[2]}
+							{:chainedInput => inputParts[3]}
 						},
 						'tabComplete' => chapterTabComplete
 					},
@@ -1335,6 +1336,7 @@ module Tunewich
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							loadLibrary
+							@currentTrack = matchExistingLibraryTrack @currentTrack
 							{:chainedInput => inputParts[2]}
 						}
 					}
@@ -4370,23 +4372,28 @@ module Tunewich
 								)
 									newCommandName = firstFuzzyMatchValue commandName, commandKeys
 									if newCommandName
-										printRepeat "\n#{newCommandName}: #{commands[newCommandName]['description']}"
 										commandName = newCommandName 
 									end
 								end
 
 								commandInput = inputParts[3] || ''
-								if (
-									commands.has_key?(commandName) &&
-									commands[commandName].has_key?('tabComplete')
-								)
-									modifiedCommandInput = commands[commandName]['tabComplete'].call(commandInput)
-									commandInput = modifiedCommandInput if modifiedCommandInput
+
+								if commands.has_key?(commandName)
+									if commandInput.length == 0
+										printRepeat "#{commandName}: #{commands[commandName]['description']}\n"
+									end
+
+									if commands[commandName].has_key?('tabComplete')
+										modifiedCommandInput = commands[commandName]['tabComplete'].call(commandInput)
+										commandInput = modifiedCommandInput if modifiedCommandInput
+									end
 								end
 
 								inputCommands[lastCommandIndex] = "#{commandName} #{commandInput}"
 							end
 							@commandUserInput = "/" + inputCommands.join(' /')
+						else
+							printRepeat "Availble commands: #{commands.keys.join(", ")}\n"
 						end
 					end
 				else
@@ -4486,9 +4493,17 @@ module Tunewich
 
 		def getFormattedChapterList chapters
 			chapters.map { |c|
-				"#{c.has_key?('skip') && c['skip'] ? 'skip' : '    '}" +
-					"#{" " * (9-c['time'].length)}#{c['time']}" +
-					" #{c['text']}"
+				output = "#{" " * (9-c['time'].length)}#{c['time']} #{c['text']}"
+
+				if c.has_key?('skip')
+					output = "#{c.has_key?('skip') && c['skip'] ? 'skip' : '    '}" + output
+				end
+
+				if c.has_key?('loop_target')
+					output += " (loop to \"#{c['loop_target']}\")"
+				end
+
+				output
 			}
 		end
 
