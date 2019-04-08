@@ -1,6 +1,6 @@
 #!/usr/bin/env ruby
 
-# TODO: fix inability to pause
+# TODO: fix inability to pause with @configuredVerbosity > -1
 
 require "io/console" # STDIN.getch
 require "open-uri" # URI
@@ -13,6 +13,12 @@ require "rexml/xpath" # REXML::XPath
 $clearLineCharacter = "\033[0K"
 $disableWrapCharacter = "\033[?7l"
 $enableWrapCharacter = "\033[?7h"
+$tunewichWorkingDirectory = "#{ENV['HOME']}/.tunewich"
+
+# Go to .tunewich directory so that any temp files are stored there.
+# FIXME: don't allow youtube-dl to create --Frag files, or clean them up
+Dir.mkdir $tunewichWorkingDirectory if not Dir.exist? $tunewichWorkingDirectory
+Dir.chdir $tunewichWorkingDirectory
 
 module Tunewich
 
@@ -65,12 +71,13 @@ module Tunewich
 			@playerTemporaryInteractiveCommands = []
 			@playerOverrideCommands = []
 			@currentPlayerIndex = 0
-			@volumeBeforeFadingOut = 10 # FIXME: better initial default
 			@speedBeforeRampingOut = 1
 			@playerThreads = []
 			@inputThread = nil
 			@playerApplicationThreads = []
+			@otherThreads = []
 			@forceStreaming = false
+			@commandHistory = []
 
 			getEnvironmentConfig
 
@@ -90,9 +97,28 @@ module Tunewich
 			@currentSpeed = @speed
 
 			interactivePlayback
+
+			whisper "Exiting player", 1
+			if @services && @services.length > 0
+				@services.each { |thread| thread.kill if thread.alive? }
+			end
 		end
 
 		private
+
+		def readCharacter
+			STDIN.echo = false
+			STDIN.raw!
+			input = STDIN.getc.chr
+			if input == "\e" then
+				input << STDIN.read_nonblock(3) rescue nil
+				input << STDIN.read_nonblock(2) rescue nil
+			end
+		ensure
+			STDIN.echo = true
+			STDIN.cooked!
+			return input
+		end
 
 		def whisper message, verbosity = 1
 			# 1: verbose user output
@@ -214,37 +240,17 @@ module Tunewich
 					'description' => "Interactively set the beats-per-minute of the track. Do '/bpm 0' to remove (not chainable)",
 					'action' => Proc.new { |input|
 						inputParts = input.match(/^([^\/]*)(.*)$/)
-						@shouldShowPlaybackInfo = false
 						commitBPM = false
 
 						if inputParts[1].length > 0
 							bpm = inputParts[1].to_f
 							commitBPM = true
 						else
-							firstTimeInSeconds = nil
-							lastTimeInSeconds = nil
-							iterations = 0;
-							bpm = @currentTrack['bpm'];
-							outputMessageLines = []
-							outputMessageLines << "Current BPM is #{bpm}." if bpm
-							outputMessageLines << "Hit enter on the beat. Type \"k\" to accept, or anything else to cancel setting the BPM."
-							putsRealtime outputMessageLines.join "\n"
-							while bpmInput = STDIN.getch
-								if not /[\n\r]/.match(bpmInput)
-									commitBPM = bpmInput == 'k'
-									break
-								end
-
-								iterations += 1
-								now = Time.now.to_f
-								firstTimeInSeconds ||= now
-								lastTimeInSeconds = now
-								if lastTimeInSeconds != firstTimeInSeconds
-									bpm = ((iterations - 1).to_f / (lastTimeInSeconds - firstTimeInSeconds) * 60.0).round(1);
-									printRepeat "BPM: #{bpm} "
-								end
+							bpm = getUserInputBPM
+							if bpm
+								commitBPM = true
+								bpm /= @speed
 							end
-							print "\n"
 						end
 
 						if commitBPM
@@ -260,8 +266,6 @@ module Tunewich
 						else
 							putsRealtime "Canceling: leaving track BPM alone."
 						end
-
-						@shouldShowPlaybackInfo = true
 
 						{:chainedInput => inputParts[2]}
 					}
@@ -313,6 +317,37 @@ module Tunewich
 						{:chainedInput => inputParts[2]}
 					}
 				},
+				'note' => {
+					'description' => "Make a note on this track, with a timestamp.",
+					'action' => Proc.new { |input|
+						inputParts = input.match(/^([^\/]*)(.*)$/)
+
+						loadLibrary
+						@currentTrack = matchExistingLibraryTrack @currentTrack
+
+						if !inputParts[1] || inputParts[1].length < 1
+							if @currentTrack.has_key? 'notes'
+								putsRealtime "Notes: #{@currentTrack['notes']}"
+							else
+								putsRealtime "No notes on the current track."
+							end
+						else
+							@currentTrack['notes'] ||= []
+							note = {
+								'text' => inputParts[1],
+								'time' => getDurationStringFromSeconds(getCurrentMplayerTimePosition)
+							}
+							if note['text'].length < 1
+								note['text'] = editListInVim([], 'Write your note').join "\n"
+							end
+							@currentTrack['notes'] << note
+
+							addTrackToLibrary @currentTrack if @currentTrack['unattached']
+							writeLibraryToFile
+						end
+						{:chainedInput => inputParts[2]}
+					}
+				},
 				'go' => {
 					'description' => "Go to a track in the current list.",
 					'action' => Proc.new { |input|
@@ -359,16 +394,27 @@ module Tunewich
 				'ramp' => {
 					'description' => 'Ramp speed (/ramp SPEED [DURATION])',
 					'action' => Proc.new { |input|
-						rampCommandMatch = /^(out|in|[0-9.]+(bpm)?)( [0-9.]+)?[^\/]*(.*)$/.match input
+						rampCommandMatch = /^(out|in|[0-9.]*(bpm)?)( [0-9.]+)?[^\/]*(.*)$/.match input
 						#                    1              2      3          4
 						if rampCommandMatch
 							duration = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].to_f : 0.3
 							whisper 'without -af scaletempo[=speed=tempo], min and max limited by the system (~1/8 and ~4.5 on my Mac Mini)', 1
-							targetRampSpeed = determineRelativeSpeed rampCommandMatch[1], @currentTrack, true
-							rampSuccess = rampSpeed targetRampSpeed, duration, @currentPlayerIndex
-							if rampSuccess && rampCommandMatch[4] && rampCommandMatch[4].length > 0
-								whisper "Waiting 1 second for buffered sound to play", 2
-								sleep 1.0
+							targetRampSpeed = rampCommandMatch[1]
+							if rampCommandMatch[1] == 'bpm'
+								targetRampBPM = getUserInputBPM
+								if targetRampBPM && targetRampBPM > 0
+									targetRampSpeed = "#{targetRampBPM}bpm"
+								else
+									targetRampSpeed = nil
+								end
+							end
+							if targetRampSpeed
+								targetRampSpeed = determineRelativeSpeed targetRampSpeed, @currentTrack, true
+								rampSuccess = rampSpeed targetRampSpeed, duration, @currentPlayerIndex
+								if rampSuccess && rampCommandMatch[4] && rampCommandMatch[4].length > 0
+									whisper "Waiting 1 second for buffered sound to play", 2
+									sleep 1.0
+								end
 							end
 						end
 						{:chainedInput => rampCommandMatch[4]}
@@ -387,7 +433,7 @@ module Tunewich
 					'description' => 'Wait some number of seconds to execute following chained commands',
 					'action' => Proc.new { |input|
 						inputParts = input.match(/^([^\/]*)(.*)$/)
-						if inputParts[1].length > 0 && inputParts[1].match(/^[0-9.]+$/)
+						if inputParts[1].length > 0 && inputParts[1].strip.match(/^[0-9.]+$/)
 							sleep inputParts[1].to_f
 						end
 						{:chainedInput => inputParts[2]}
@@ -489,72 +535,78 @@ module Tunewich
 							track = @currentTrack
 						end
 
-						alreadyHas = {
-							:title => track.has_key?('title'),
-							:duration => track.has_key?('duration'),
-							:description => track.has_key?('description'),
-							:bpm => track.has_key?('bpm')
-						}
-						tagNames = getTrackTags track
-
-						outputMessageLines = []
-						outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
-						outputMessageLines << "    volume : #{getCurrentMplayerVolume}/100"
-						outputMessageLines << "------------------------------"
-						outputMessageLines << "     title : #{track['title']}" if alreadyHas[:title]
-						if track == @currentTrack
-							timeMessage = "      time : #{getDurationStringFromSeconds getCurrentMplayerTimePosition}"
-							if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
-								track['duration'] = getDurationStringFromSeconds getMplayerDuration
-							end
-							timeMessage += " / #{track['duration']}"
-							timeMessage += " (#{@speed}x)" if @speed != 1
-							if @currentTrack.has_key? 'chapters'
-								chapterIndex = getChapterIndexAtTime @currentTrack, getCurrentMplayerTimePosition
-								timeMessage += "\n   chapter : #{@currentTrack['chapters'][chapterIndex]['name']}"
-							end
-							outputMessageLines << "#{timeMessage}"
-						else
-							outputMessageLines << "  duration : #{track['duration']}" if alreadyHas[:duration]
-						end
-						outputMessageLines << "      tags : #{tagNames.join ', '}" if tagNames.length > 0
-						outputMessageLines << "    rating : #{track['rating']}" if track['rating']
-						outputMessageLines << "       bpm : #{track['bpm']}" if alreadyHas[:bpm]
-						outputMessageLines << "downloaded : #{trackFileExists? track}"
-						outputMessageLines << "==============================\n#{track['description']}" if alreadyHas[:description]
-						putsRealtime outputMessageLines.join "\n"
-
-						outputMessageLines = []
-						if !alreadyHas[:title] || !alreadyHas[:duration] || track['title'].length == 0 || @configuredVerbosity > 0
-							if track['type'] === 'youtube'
-								info = getYouTubeTrackInfo track['src']
-							end
-							updateTrackInfo track, info
-
-							outputMessageLines << "     title : #{track['title']}" if !alreadyHas[:title]
-							outputMessageLines << "  duration : #{track['duration']}" if !alreadyHas[:duration]
-							outputMessageLines << "sourceTags : #{info['sourceTags']}" if info['sourceTags']
-							outputMessageLines << "==============================\n#{track['description']}" if !alreadyHas[:description] && track['description']
-						else
-							info = {'link' => track['link'] || track['src']}
-							if track['type'] === 'youtube'
-								info['link'] = "http://youtu.be/#{track['src']}"
-							end
-						end
-
-						outputMessageLines << "      link : #{info['link']}"
-
-						if @configuredVerbosity > 0 && tagNames.length > 0
-							whisper "about to loop through tagNames", 4
-							tagNames.each { |tagName|
-								whisper "digging up ancestors of #{tagName}", 4
-								ancestorTags = getAncestorTagNames tagName
-								whisper("ancestors of tag '#{tagName}': #{ancestorTags}", 1) if ancestorTags.length > 0
+						if track
+							alreadyHas = {
+								:title => track.has_key?('title'),
+								:duration => track.has_key?('duration'),
+								:description => track.has_key?('description'),
+								:bpm => track.has_key?('bpm')
 							}
-						end
+							tagNames = getTrackTags track
 
-						outputMessageLines << "------------------------------"
-						putsRealtime outputMessageLines.join "\n"
+							outputMessageLines = []
+							outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
+							outputMessageLines << "    volume : #{getCurrentMplayerVolume}/100"
+							outputMessageLines << "------------------------------"
+							outputMessageLines << "     title : #{track['title']}" if alreadyHas[:title]
+							if track == @currentTrack
+								timeMessage = "      time : #{getDurationStringFromSeconds getCurrentMplayerTimePosition}"
+								if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
+									track['duration'] = getDurationStringFromSeconds getMplayerDuration
+								end
+								timeMessage += " / #{track['duration']}"
+								timeMessage += " (#{@speed}x)" if @speed != 1
+								if @currentTrack.has_key? 'chapters'
+									chapterIndex = getChapterIndexAtTime @currentTrack, getCurrentMplayerTimePosition
+									timeMessage += "\n   chapter : #{@currentTrack['chapters'][chapterIndex]['name']}"
+								end
+								outputMessageLines << "#{timeMessage}"
+							else
+								outputMessageLines << "  duration : #{track['duration']}" if alreadyHas[:duration]
+							end
+							outputMessageLines << "      tags : #{tagNames.join ', '}" if tagNames.length > 0
+							outputMessageLines << "    rating : #{track['rating']}" if track['rating']
+							outputMessageLines << "       bpm : #{track['bpm']}" if alreadyHas[:bpm]
+							outputMessageLines << "downloaded : #{trackFileExists? track}"
+							outputMessageLines << "==============================\n#{track['description']}" if alreadyHas[:description]
+							putsRealtime outputMessageLines.join "\n"
+
+							outputMessageLines = []
+							if !alreadyHas[:title] || !alreadyHas[:duration] || track['title'].length == 0 || @configuredVerbosity > 0
+								info = nil
+								if track['type'] === 'youtube'
+									info = getYouTubeTrackInfo track['src']
+								end
+								updateTrackInfo track, info
+
+								outputMessageLines << "     title : #{track['title']}" if !alreadyHas[:title]
+								outputMessageLines << "  duration : #{track['duration']}" if !alreadyHas[:duration]
+								outputMessageLines << "sourceTags : #{info['sourceTags']}" if info && info.has_key?('sourceTags')
+								outputMessageLines << "==============================\n#{track['description']}" if !alreadyHas[:description] && track['description']
+							end
+							if not info
+								info = {'link' => track['link'] || track['src']}
+								if track['type'] === 'youtube'
+									info['link'] = "http://youtu.be/#{track['src']}"
+								end
+							end
+
+							outputMessageLines << "      link : #{info['link']}" if info
+
+							if @configuredVerbosity > 0 && tagNames.length > 0
+								whisper "about to loop through tagNames", 4
+								tagNames.each { |tagName|
+									whisper "digging up ancestors of #{tagName}", 4
+									ancestorTags = getAncestorTagNames tagName
+									whisper("ancestors of tag '#{tagName}': #{ancestorTags}", 1) if ancestorTags.length > 0
+								}
+							end
+
+							outputMessageLines << "------------------------------"
+							putsRealtime outputMessageLines.join "\n"
+						else
+							putsRealtime "Cannot show info. No track found."
+						end
 
 						{:chainedInput => inputParts[2]}
 					}
@@ -725,19 +777,27 @@ module Tunewich
 					}
 				},
 				'add' => {
-					'description' => 'Add a new track to the play queue. Input: audio URL, page URL containing links to media, YouTube video ID.',
+					'description' => 'Add a new track to the play queue. Input: <urls> [<tags>] -- urls: comma-separated URLs or YouTube IDs (Some URLs will add multiple tracks, like a bandcamp album); tags: comma-separated tags to add to the tracks.',
 					'action' => Proc.new { |input|
-            inputParts = input.match(/^(.*?)( \/.*)?$/)
-						urls = inputParts[1].split ','
-						if urls.length > 0
+						whisper "input: '#{input}'", 3 # XXX
+						inputParts = input.match(/^([^ ]*?)( .*?)?( \/.*)?$/)
+						urls = inputParts[1].split ',' if inputParts[1]
+						tags = inputParts[2].split ',' if inputParts[2]
+						whisper "urls: #{urls}\ntags: #{tags}", 3
+						if urls && urls.length > 0
 							tracks = getTracksFromURLs urls
 							putsRealtime "Adding #{tracks.length} tracks to queue. Playing next."
+							if tracks.length && tags && tags.length > 0
+								tracks.each { |t|
+									addTrackToTags t, tags
+								}
+							end
 							useTracks tracks
 
 							@trackIndex = @tracks.length - tracks.length
 							commandRequiresNext = true
 						end
-						{:chainedInput => inputParts[2]}
+						{:chainedInput => inputParts[3]}
 					}
 				},
 				'feed' => {
@@ -781,6 +841,12 @@ module Tunewich
 				'again' => {
 					'description' => "Play the last track again.",
 					'action' => Proc.new { |input|
+						@trackIndex = @tracks.index @currentTrack
+						if !@trackIndex
+							useTracks [@currentTrack]
+							@trackIndex = @tracks.length - 1
+							# TODO: add @currentTrack to queue
+						end
 						commandRequiresNext = true
 						{:chainedInput => input}
 					}
@@ -794,7 +860,7 @@ module Tunewich
 					}
 				},
 				'chapter' => {
-					'description' => 'Skip to a chapter, or show chapter list.',
+					'description' => 'Skip to a chapter, or show chapter list. Input: number or name of chapter; or "<" or ">" to go back or forward, multiples to go further.',
 					'action' => Proc.new { |input|
 						whisper "chapter command - input: #{input}", 3
 						inputParts = input.match(/^([^\/]*)(.*)$/)
@@ -808,7 +874,7 @@ module Tunewich
 									if inputParts[1].match /^>+$/
 										chapterIndex += inputParts[1].length
 									elsif inputParts[1].match /^<+$/
-										chapterIndex -= inputParts[1].length
+										chapterIndex -= inputParts[1].length - 1
 									else
 										chapterList = @currentTrack['chapters'].map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
 										selectedChapter = firstFuzzyMatch inputParts[1], chapterList
@@ -853,7 +919,7 @@ module Tunewich
 								fadeVolume 'out', 1, @currentPlayerIndex
 								playerInputStreamName = "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
 								putInTempFile playerInputStreamName, "seek #{chapterSeconds} 2\n"
-								fadeVolume 'in', 0, @currentPlayerIndex
+								fadeVolume 'in', 0.25, @currentPlayerIndex
 							else
 								putsRealtime "Download the file to be able to seek backwards."
 								commandRequiresNext = true
@@ -1093,6 +1159,45 @@ module Tunewich
 			chapterIndex
 		end
 
+		def getUserInputBPM
+
+			@shouldShowPlaybackInfo = false
+			firstTimeInSeconds = nil
+			lastTimeInSeconds = nil
+			iterations = 0;
+			bpm = @currentTrack['bpm'];
+			outputMessageLines = []
+			outputMessageLines << "Current BPM is #{bpm}." if bpm
+			outputMessageLines << "Hit enter on the beat. Type \"k\" to accept, \"r\" to accept the nearest whole number, or anything else to cancel setting the BPM."
+			putsRealtime outputMessageLines.join "\n"
+			while bpmInput = readCharacter
+				if not /[\n\r]/.match(bpmInput)
+					if bpmInput.match /^[kr]$/
+						if bpmInput == 'r'
+							bpm = bpm.round
+						end
+					else
+						bpm = nil
+					end
+					break
+				end
+
+				iterations += 1
+				now = Time.now.to_f
+				firstTimeInSeconds ||= now
+				lastTimeInSeconds = now
+				if lastTimeInSeconds != firstTimeInSeconds
+					bpm = ((iterations - 1).to_f / (lastTimeInSeconds - firstTimeInSeconds) * 60.0).round(1);
+					printRepeat "BPM: #{bpm} "
+				end
+			end
+			print "\n"
+
+			@shouldShowPlaybackInfo = true
+
+			return bpm
+		end
+
 		def fadeVolume targetFadeVolume, duration, playerIndex
 			@shouldShowPlaybackInfo = false # For some reason not doing this causes volume to fade from 0 every time
 			whisper "fadeVolume(targetFadeVolume:#{targetFadeVolume}, duration:#{duration}, playerIndex:#{playerIndex})", 4
@@ -1102,9 +1207,8 @@ module Tunewich
 			if targetFadeVolume == 'out'
 				whisper "fading out volume", 2
 				targetFadeVolume = 0
-				@volumeBeforeFadingOut = volume
 			elsif targetFadeVolume == 'in'
-				targetFadeVolume = @volumeBeforeFadingOut
+				targetFadeVolume = @volume
 				whisper "fading in volume (to #{targetFadeVolume})", 2
 			elsif targetFadeVolume.match /x$/
 				multiplier = targetFadeVolume.to_f
@@ -1153,6 +1257,7 @@ module Tunewich
 		end
 
 		def rampSpeed targetRampSpeed, duration, playerIndex
+			whisper "targetRampSpeed: #{targetRampSpeed}", 3
 			@shouldShowPlaybackInfo = false
 			if targetRampSpeed
 				speed = getCurrentMplayerSpeed
@@ -1347,7 +1452,16 @@ module Tunewich
 					else
 						whisper "streaming other type of track (#{track['type']})", 2
 						streamName = 'mp3-stream'
-						mediaFilePath = track['src']
+						# mplayer 4.2.1 on Mac OS Sierra unable to stream HTTPS
+						if /^https:\/\//.match track['src']
+							streamPath = mediaFilePath = makeStream streamName
+							if not downloadTrack track, streamPath
+								whisper "could not download/stream track", 1
+								return response
+							end
+						else
+							mediaFilePath = track['src']
+						end
 					end
 				end
 			end
@@ -1519,6 +1633,7 @@ module Tunewich
 			@playerTrackDuration
 		end
 
+		# @return float seconds
 		def getCurrentMplayerTimePosition
 			now = Time.now.to_f
 			if !@lastPlayerTimeGetTime || now - @lastPlayerTimeGetTime > 0.5
@@ -1802,8 +1917,10 @@ module Tunewich
 							sleep 0.1
 						end
 					else
-						printRepeat "Waiting for download to finish..."
-						Process.wait(downloadPid)
+						if downloadPid.alive?
+							printRepeat "Waiting for download to finish..."
+							Process.wait(downloadPid)
+						end
 						printRepeat "Download complete."
 					end
 
@@ -1819,12 +1936,13 @@ module Tunewich
 		end
 
 		def notify(message)
-			if UNAME == 'Linux'
-				if @configuredVerbosity > 0
-					`notify-send --expire-time=3000 --urgency=low tunewich "#{message}"`
+			if @configuredVerbosity > 0
+				if UNAME == 'Linux'
+						`notify-send --expire-time=3000 --urgency=low tunewich "#{message}"`
+				elsif UNAME == 'Darwin'
+					clean_message = message.gsub /"/, '\\"'
+					system "osascript -e 'display notification \"#{clean_message}\" with title \"tunewich\"' &>/dev/null"
 				end
-			elsif UNAME == 'Darwin'
-				whisper message, 1
 			end
 		end
 
@@ -2180,7 +2298,9 @@ module Tunewich
 		end
 
 		def determineRelativeSpeed input, track, shouldSetPlayingBPM = false
+			whisper "determineRelativeSpeed: #{input}"
 			relativeSpeed = input.to_f
+			whisper "determineRelativeSpeed: relativeSpeed=#{relativeSpeed}"
 			if input.to_s.match /bpm$/
 				if track.has_key? 'bpm'
 					inputBPM = relativeSpeed
@@ -2576,7 +2696,7 @@ module Tunewich
 			end
 
 			whisper "joining 'update info' threads", 4
-			threads.each { |thr| thr.join }
+			threads.each { |thread| thread.join }
 			print "\n"
 
 			resultTracks
@@ -2749,37 +2869,74 @@ module Tunewich
 				}
 			end
 
-			parser.on("--radio", "TODO: stream to a network radio service", " ") do
-				serviceConfigDir = "#{File.dirname(__FILE__)}/config"
-				isGoodToBeginServingRadio = true
+			parser.on("--radio [SERVER_TYPE]", "TODO: stream to a network radio service (SERVER_TYPE: default 'homebrew' or 'Nicecast'", " ") do |streamingServerType = 'homebrew'|
+				# FIXME: getting properties out of mplayer don't work when targeting "Soundflower (2ch)" (e.g. current time or volume)
+				# FIXME: I think fading worked when using Nicecast
+				serviceConfigDir = "#{$tunewichWorkingDirectory}/config"
+				isRadioConfigured = true
 				if UNAME == "Darwin"
+					whisper "Preparing to start radio (#{streamingServerType}).", 0
+					if streamingServerType == 'homebrew'
+						puts "About to prompt you for your password, so that the darkice server can be run as root."
+						`sudo ls &>/dev/null`
+					end
 					audioDevice = "coreaudio"
-					audioDeviceID = `say -a ? | grep 'Soundflower (2ch)' | perl -pe 's/^\s+(\d+).*$/$1/'`
+					audioDeviceID = `say -a ? | grep 'Soundflower (2ch)'`.sub /^\s*(\d+).*/, '\1'
+					whisper "audioDeviceID: #{audioDeviceID}", 3
 					if audioDeviceID && audioDeviceID.length > 0
-						icecastConfigFile = "#{serviceConfigDir}/icecast.xml"
-						darkiceConfigFile = "#{serviceConfigDir}/darkice.cfg"
+						if streamingServerType == 'homebrew'
+							icecastConfigFile = "#{serviceConfigDir}/icecast.xml"
+							darkiceConfigFile = "#{serviceConfigDir}/darkice.cfg"
 
-						if not File.exist? icecastConfigFile
-							puts "Please create the icecast config file at #{icecastConfigFile}."
-							isGoodToBeginServingRadio = false
-						elsif not File.exist? darkiceConfigFile
-							puts "Please create the darkice config file at #{darkiceConfigFile}."
-							isGoodToBeginServingRadio = false
+							if not File.exist? icecastConfigFile
+								puts "Please create the icecast config file at #{icecastConfigFile}."
+								isRadioConfigured = false
+							elsif not File.exist? darkiceConfigFile
+								puts "Please create the darkice config file at #{darkiceConfigFile}."
+								isRadioConfigured = false
+							end
 						end
 					else
 						puts "Please install Soundflower (https://github.com/mattingalls/Soundflower)"
-						isGoodToBeginServingRadio = false
+						isRadioConfigured = false
 					end
 				else
-					isGoodToBeginServingRadio = false
+					isRadioConfigured = false
 					puts "Radio is currently only implemented on Mac. Want to help fix it for other platforms? Get in touch!"
 				end
 
-				if isGoodToBeginServingRadio
-					@services = []
-					@services << Thread.new { `jackd -d #{audioDevice}` }
-					@services << Thread.new { `icecast -c "#{icecastConfigFile}` }
-					@services << Thread.new { `darkice -v 10 -c "#{darkiceConfigFile}"` }
+				# Currently 2 methods of doing radio:
+				# Both have the same first step, using Soundflower.
+				# a) Rogue Amoeba's Nicecast (functionaly, not free)
+				#		1) mplayer plays to "Soundflower (2ch)" audio device
+				#		2) Nicecast captures "Soundflower (2ch)" and streams with its built-in icecast server
+				#			i) The capture is probably what's being paid for here, since their other capture tools are also paid.
+				# b) jack + darkice + icecast (not currently working)
+				#		1) mplayer plays to "Soundflower (2ch)" audio device
+				#		2) jackd captures audio from "Soundflower (2ch)" (getting errors)
+				# 	3) darkice pushes the jackd audio to the icecast2 server (might be working)
+				# 	4) listeners stream music from the icecast2 server (seems to be working)
+				#
+				# This article from 2012 has some good info, but it may be outdated.
+				# http://dzello.com/blog/2012/11/21/live-stream-audio-from-osx-mountain-lion-with-icecast-and-darkice/
+
+				if isRadioConfigured
+					puts "#" * 40
+					puts "## Open Soundflowerbed and make sure that the volume is all the way up on Soundflower (2ch)."
+					puts "## If you mute your system audio, \"Soundflower (2ch)\" may also be muted, so take care not to do that. Open up Soundflowerbed \"Audio Setup\" and unmute \"Soundflower (2ch)\" if that happens."
+					puts "#" * 40
+					if streamingServerType == 'homebrew'
+						@services = []
+						whisper "starting jackd (to capture audio)", 2
+						@services << Thread.new { `sudo jackd -d #{audioDevice} -d SoundflowerEngine:0` }
+						whisper "starting icecast (to stream audio to listeners)", 2
+						@services << Thread.new { `icecast -c "#{icecastConfigFile}"` }
+						darkiceStartDelay = 5.0
+						whisper "waiting #{darkiceStartDelay} seconds to start darkice", 2
+						sleep darkiceStartDelay
+						whisper "starting darkice (to encode and push audio to streaming server)", 2
+						@services << Thread.new { `sudo darkice -v 10 -c "#{darkiceConfigFile}"` }
+					end
 					@playerOverrideCommands << "-ao #{audioDevice}:device_id=#{audioDeviceID}"
 				end
 			end
@@ -2864,6 +3021,7 @@ module Tunewich
 				else
           urlHTTPHead = `curl -sL --head "#{url}"`
 					urlContentType = urlHTTPHead.lines.keep_if { |line| line.match(/^Content-Type:/i) }.last.chomp.sub /^Content-Type: ([^;]*).*/i, '\1'
+					cookieDomain = urlHTTPHead.lines.keep_if { |line| line.match(/^Set-Cookie:.*domain=/i) }.last.chomp.sub /^Set-Cookie:.*domain=([^;]*).*/i, '\1'
 					whisper "urlContentType: #{urlContentType}", 3
 					if urlContentType.match /^audio\//
 						urlCanBeScraped = false
@@ -2874,6 +3032,11 @@ module Tunewich
 						whisper "track (after matching existing): #{track}", 3
 						tracks << track
 						whisper "added: #{tracks.last}", 3
+					elsif 'text/html' == urlContentType && (cookieDomain == '.bandcamp.com' || url.match(/(https?:\/\/)([^\.]+)\.bandcamp\.com.*/))
+            whisper "WIP: scraping bandcamp page"
+						urlCanBeScraped = false
+						bandcampTracks = loadBandcamp url
+						tracks += bandcampTracks if bandcampTracks
 					elsif ['text/xml', 'application/rss+xml'].include? urlContentType # TODO: application/rss+xml, application/rdf+xml;q=0.8, application/atom+xml;q=0.6, application/xml;q=0.4, text/xml;q=0.4
             whisper "WIP: try to load podcast feed"
 						urlCanBeScraped = false
@@ -2942,6 +3105,38 @@ module Tunewich
 				writeLibraryToFile
 			end
 			podcastTracks.reverse # put the oldest ones first
+		end
+
+		def loadBandcamp url
+			whisper "loadBandcamp #{url}", 3
+			tracks = []
+			open(url) do |handle|
+				handle.each_line { |line|
+					matchResults = line.match /^\s*trackinfo: (.*?),?$/
+					if matchResults
+						whisper "loadBandcamp: found trackinfo: #{matchResults[1]}", 3
+						trackinfo = JSON.parse matchResults[1]
+						if trackinfo
+							whisper "loadBandcamp: trackinfo is valid JSON", 3
+							trackinfo.each { |bandcampTrack|
+								if bandcampTrack.has_key?('file') && bandcampTrack['file'].has_key?('mp3-128')
+									whisper "loadBandcamp: found track file #{bandcampTrack['file']['mp3-128']}", 3
+									fileURL = bandcampTrack['file']['mp3-128']
+									fileURL = "http:#{fileURL}" if fileURL.match(/^\/\//)
+									track = createTrack(fileURL, 'audio/mpeg')
+									track['title'] = bandcampTrack['title'] if bandcampTrack.has_key?('title')
+									if bandcampTrack.has_key?('title_link')
+										urlDomain = url.sub(/((^(https?:)?\/\/)?[^\/]+).*/, '\1')
+										track['link'] = "#{urlDomain}#{bandcampTrack['title_link']}"
+									end
+									tracks << track
+								end
+							}
+						end
+					end
+				}
+			end
+			tracks
 		end
 
 		def encodeOptionParameters hash
@@ -3061,7 +3256,8 @@ module Tunewich
 
 			whisper "waiting for user input on STDIN", 3
 			input = nil
-			while inputCharacter = STDIN.getch
+			commandHistoryIndex = nil
+			while inputCharacter = readCharacter
 				if inputCharacter == "" # control-c character
 					whisper "interrupt character, is that you?", 3
 					@shouldShowPlaybackInfo = true
@@ -3073,10 +3269,13 @@ module Tunewich
 					end
 				elsif inputCharacter == "" # clear line
 					if input
+						@commandInputTyped = nil
 						input = ''
 						printRepeat input
 					end
+					@commandInputTyped = nil
 				elsif /[\n\r]/.match inputCharacter
+					@commandHistory.unshift input
 					@shouldShowPlaybackInfo = true
 					response[:input] = input
 					whisper "received input: #{input}", 3
@@ -3152,7 +3351,44 @@ module Tunewich
 						input = ''
 						@shouldShowPlaybackInfo = false
 					end
-					input += inputCharacter
+
+					if inputCharacter == "\e[A" # up arrow
+						if @commandInputTyped
+							matchingCommands = @commandHistory.select { |command|
+								command.start_with? @commandInputTyped
+							}
+							if matchingCommands && matchingCommands.length > 0
+								input = matchingCommands.last
+							end
+						else
+							commandHistoryIndex = (commandHistoryIndex ? commandHistoryIndex + 1 : 0) % @commandHistory.length
+							input = @commandHistory[commandHistoryIndex]
+						end
+
+						printRepeat input
+					elsif inputCharacter == "\e[B" # down arrow
+						if @commandInputTyped
+							matchingCommands = @commandHistory.select { |command|
+								command.start_with? @commandInputTyped
+							}
+							if matchingCommands && matchingCommands.length > 0
+								input = matchingCommands.first
+							end
+						else
+							commandHistoryIndex = (commandHistoryIndex ? commandHistoryIndex - 1 : 0) % @commandHistory.length
+							input = @commandHistory[commandHistoryIndex]
+						end
+
+						printRepeat input
+					elsif inputCharacter == "\e[C" # right arrow
+						whisper "TODO: move cursor right", 3
+					elsif inputCharacter == "\e[D" # left arrow
+						whisper "TODO: move cursor left", 3
+					else
+						input += inputCharacter
+						@commandInputTyped = input
+					end
+
 					printRepeat input
 				end
 			end
