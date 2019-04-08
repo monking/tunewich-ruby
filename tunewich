@@ -1375,20 +1375,37 @@ module Tunewich
 						'tabComplete' => tagTabComplete
 					},
 					'rm' => {
-						'description' => 'remove selected tracks',
+						'description' => 'Remove selected tracks from the library. You\'ll be prompted to edit the list before they are deleted.',
+						'args' => ['this', 'current', 'all'],
 						'action' => Proc.new { |input, command|
 							inputParts = getCommandInputParts(input)
-							editedTrackList = editTrackList @tracks
-							initialLibraryLength = @library['tracks'].length
-							editedTrackList.each do |track|
-								removeTrackFromLibrary track['id']
+
+							tracks = nil
+
+							case inputParts[:query]
+							when 'this'
+								tracks = [@currentTrack]
+							when 'all'
+								tracks = @library['tracks'].values
+							else
+								tracks = @tracks
 							end
-							checksum = initialLibraryLength - editedTrackList.length == @library['tracks'].length
-							checksumString = "#{initialLibraryLength} - #{editedTrackList.length} == #{@library['tracks'].length}"
-							if checksum
-								writeLibraryToFile
+
+							if tracks && tracks.length > 0
+								tracks = editTrackList tracks
+								initialLibraryLength = @library['tracks'].length
+								tracks.each do |track|
+									removeTrackFromLibrary track['id']
+								end
+								checksum = initialLibraryLength - tracks.length == @library['tracks'].length
+								checksumString = "#{initialLibraryLength} - #{tracks.length} == #{@library['tracks'].length}"
+								if checksum
+									writeLibraryToFile
+								end
+								putsRealtime "#{checksumString} ... #{checksum ? 'OK: changes written' : 'Mismatch: changes not written'}"
+							else
+								putsRealtime "No tracks selected for removal."
 							end
-							putsRealtime "#{checksumString} ... #{checksum ? 'OK: changes written' : 'Mismatch: changes not written'}"
 							{:chainedInput => inputParts[:remainder]}
 						}
 					},
