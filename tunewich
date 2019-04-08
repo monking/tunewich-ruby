@@ -370,6 +370,16 @@ module Tunewich
 						{:chainedInput => input}
 					}
 				},
+				'turn' => {
+					'info' => "Use all this track's tags to populate the track list.",
+					'action' => Proc.new { |input|
+						@trackFilters ||= {}
+						@trackFilters['tag'] = "+#{getTrackTags(@tracks[@trackIndex]).join ' +'}"
+						useEntireLibrary
+						@trackIndex = 1 # next track (current track will almost certainly be at index 0)
+						{:chainedInput => input}
+					}
+				},
 				'more' => {
 					'info' => "Play all tracks on this video's page.",
 					'action' => Proc.new { |input|
@@ -1489,6 +1499,7 @@ module Tunewich
 		end
 
 		def filterTracks tracks, filters, isExcludeFilter = false
+			whisper 'filterTracks'
 			action = isExcludeFilter ? 'delete_if' : 'keep_if'
 
 			if filters.has_key? 'rating'
@@ -1505,15 +1516,25 @@ module Tunewich
 				if filters['tag']
 					# TODO: add a tag fuzzy factor: include tags of tracks that have the current tag (only 1 degree separation to start)
 					selectedTags = []
+					unionTagTracks = []
 					filters['tag'].split(' ').each { |tagName|
+						unionPattern = /^\+/
+						isUnionTag = tagName.match unionPattern
+						tagName.sub!(unionPattern, '') if isUnionTag
 						if @library['tags'][tagName]
-							selectedTags << {:name => tagName, :tag => @library['tags'][tagName]}
+							selectedTags << {:name => tagName, :tag => @library['tags'][tagName], :union => isUnionTag}
+							if isUnionTag
+								unionTagTracks += @library['tags'][tagName]['tracks'];
+							end
 						else
 							@library['tags'].each { |name, libraryTag|
 								if libraryTag['aliases']
 									libraryTag['aliases'].each { |tagAlias|
 										if tagAlias == tagName
-											selectedTags << {:name => name, :tag => libraryTag}
+											selectedTags << {:name => name, :tag => libraryTag, :union => isUnionTag}
+											if isUnionTag
+												unionTagTracks += @library['tags'][tagName]['tracks'];
+											end
 										end
 									}
 								end
@@ -1528,8 +1549,12 @@ module Tunewich
 							if tagInfo[:tag]['aliases'] && tagInfo[:tag]['aliases'].length > 0
 								foundTagName = "#{foundTagName} (aliases \"#{tagInfo[:tag]['aliases'].join '", "'}\")"
 							end
-							tracks.send(action) { |t| tagInfo[:tag]['tracks'].index t['id'] }
+							tracks.send(action) { |t| tagInfo[:tag]['tracks'].index(t['id']) || unionTagTracks.index(t['id']) }
 						}
+
+						if unionTagTracks.length > 0
+							tracks.sort! { |a, b| unionTagTracks.count(b['id']) <=> unionTagTracks.count(a['id']) }
+						end
 					else
 						puts "No matches for \"#{filters['tag']}\". Available tags are: #{listAllTagsWithAliases.join ", "}"
 					end
