@@ -277,6 +277,12 @@ module Tunewich
 						commandRequiresExit = true
 					}
 				},
+				'verbose' => {
+					'info' => 'Toggle Verbose mode.',
+					'action' => Proc.new {
+						@verbose = !@verbose
+					}
+				},
 				'commands' => {
 					'info' => "List #{Player::PLAYER_APPLICATION} commands.",
 					'action' => Proc.new {
@@ -814,9 +820,9 @@ module Tunewich
 					sleep 0.1
 				end
 
-				delayForFileToExist = 5
-				puts "Waiting #{delayForFileToExist} seconds to be sure the file is ready..."
-				sleep delayForFileToExist # FIXME: remove `sleep` in favor of checking if the right file exists yet
+				# delayForFileToExist = 5
+				# puts "Waiting #{delayForFileToExist} seconds to be sure the file is ready..."
+				# sleep delayForFileToExist # FIXME: remove `sleep` in favor of checking if the right file exists yet
 			end
 
 			deleteTempFile downloadFeedbackFileName
