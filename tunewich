@@ -1303,18 +1303,12 @@ module Tunewich
                 if !@forceStreaming && trackFileExists?(track)
                   putsRealtime "This file is already downloaded."
                 else
-                  disablePlaybackInfo
                   downloadTrack track, downloadOptions
-                  enablePlaybackInfo
                 end
               end
 
               {:chainedInput => inputParts[:remainder]}
             }
-            # 'tabComplete' => Proc.new { |input, command|
-            # 	trackTabComplete input.sub(Regexp.new("^(#{command['args'].join('|')}) "), '')
-            # }
-            ## FIXME ^: erroring
           },
           'transcode' => {
             'description' => "[FORMAT] [FFMPEG_OPTIONS]  Transcode downloaded file to another format (default Ogg/Vorbis). This is the same as doing '/format FORMAT /download'.",
@@ -4832,9 +4826,14 @@ module Tunewich
         elsif inputCharacter == " " && (!@commandUserInput || @commandUserInput.length == 0) # first space
           togglePlay
         elsif inputCharacter == "" # control-c character
-          whisper("interrupt character, is that you?", 3)
-          enablePlaybackInfo
           result = false
+          case @userMode
+          when MODES['play']
+            setUserMode MODES['edit']
+            exitPlayerCommand
+          when MODES['edit']
+            kill
+          end
         elsif inputCharacter == "" # backspace
           if @commandUserInput
             @commandUserInput = @commandUserInput[0,@commandUserInput.length - 1]
