@@ -1,6 +1,6 @@
 #!/bin/bash
 
-queueFile="$(ls -t ~/.tunewich/tmp/*-tunewich-command-queue | head -1)"
+queueFile="$(ls -t ~/.tunewich/tmp/tunewich*-command-queue | head -1)"
 
 [[ -z "$queueFile" ]] && {
 	echo "No command queue file found"

@@ -23,22 +23,6 @@ Dir.mkdir $tunewichTmpDirectory if not Dir.exist? $tunewichTmpDirectory
 
 module Tunewich
 
-	class UI
-
-	end
-
-	class Library
-
-	end
-
-	class Playlist
-
-	end
-
-	class YouTubeClient
-
-	end
-
 	class Player
 
 		PROMPT_TIMEOUT_RESPONSE = 'prompt_timeout_response'
@@ -83,16 +67,15 @@ module Tunewich
 			@currentPlayerTime = nil
 			@currentPlayerIndex = 0
 			@speedBeforeRampingOut = 1
-			@playerThreads = [] # Not currently used. For instances of the player class.
 			@inputThread = nil
 			@playerApplicationThreads = []
-			@otherThreads = []
 			@forceStreaming = false
 			@commandHistory = []
 			@streamingServerType = nil
 			@youtubeDLTrackTypes = ['youtube', 'soundcloud']
 			@isPlayerPlaying = false
 			@logFile = nil
+			@tempFiles = {}
 
 			getConfigFiles
 
@@ -119,7 +102,7 @@ module Tunewich
 				end
 			end
 
-			bindOnce 'request_exit', Proc.new {
+			bindOnce 'before_exit', Proc.new {
 				if @services && @services.length > 0
 					whisper("Exiting: killing #{@services.length} services", 1)
 					@services.each { |thread| thread.kill if thread.alive? }
@@ -138,18 +121,107 @@ module Tunewich
 			trigger 'speed_change'
 
 			listenForExternalCommands
-
-			if @userMode == Player::MODES['playing']
-				interactivePlayback
-			else
-				bindingGroupName = 'editingModeBindingGroup'
-				commandPrompt @userMode, getInteractiveCommands([@userMode], bindingGroupName)
-			end
-
-			trigger 'request_exit'
 		end
 
-		private
+		def cleanup
+			@playerApplicationThreads.each { |thread|
+				thread.kill if thread && thread.alive?
+			}
+			@tempFiles.each { |path, nonsense|
+				File.delete(path) if File.exist?(path)
+			}
+		end
+
+		def interactivePlayback
+			bindingGroupName = 'interactivePlayback'
+
+			shouldExitPlayerLoop = false
+			bindOnce 'before_exit', Proc.new {
+				shouldExitPlayerLoop = true
+				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "q\n"
+			}, bindingGroupName
+
+			if @tracks && @tracks.length > 0
+				titleBlock "Playing #{@tracks.length} tracks", '#'
+			else
+				useEntireLibrary
+			end
+
+			# TODO: 1gG4j1
+			playerOutput = nil
+
+			interactiveCommands = getInteractiveCommands [@userMode], bindingGroupName
+
+			# chaptersNotPlayed = []
+
+			while not playerOutput or playerOutput[:exit] do
+				if @trackIndex && @tracks[@trackIndex]
+					@currentTrack = matchExistingLibraryTrack @tracks[@trackIndex]
+
+					titleBlock "[#{@trackIndex + 1}] - #{@currentTrack['title']}"
+
+					nextTrack() # call nextTrack after @trackIndex is announced, but before play, so that the user can see which track will come next.
+
+					if @updateAllPlayedTrackInfo && !@noNetwork
+						printRepeat "Getting latest track information..."
+						updateTrackInfo @currentTrack
+					end
+
+					fileExists = trackFileExists? @currentTrack
+
+					if !fileExists && @noNetwork
+						next
+					end
+
+					playerOutput = play @currentTrack, interactiveCommands
+
+					trackDurationInSeconds = getSecondsFromDurationString(@currentTrack['duration'])
+
+					if trackDurationInSeconds && !@currentTrack['unattached']
+						loadLibrary
+						@currentTrack = matchExistingLibraryTrack(@currentTrack)
+						@currentTrack['playTime'] ||= 0
+						@currentTrack['playTime'] += playerOutput[:playTime].to_i
+						minimumPlayTime = [30, trackDurationInSeconds - 10].min
+						if playerOutput[:playTime] >= minimumPlayTime
+							@currentTrack['lastPlayed'] = playerOutput[:endTime].to_i
+							@currentTrack['playCount'] ||= 0
+							@currentTrack['playCount'] += 1
+							whisper("listened for #{playerOutput[:playTime]} (>= min #{minimumPlayTime}): bumping play count to #{@currentTrack['playCount']}", 1)
+						else
+							@currentTrack['skipCount'] ||= 0
+							@currentTrack['skipCount'] += 1
+							whisper("listened for #{playerOutput[:playTime]} (< min #{minimumPlayTime}): bumping SKIP count to #{@currentTrack['skipCount']}", 1)
+						end
+						writeLibraryToFile
+					end
+				else
+					whisper("Empty tracklist", 3)
+					emptyAction = Proc.new { |input| false } # break command loop after any non-command input
+					commandPrompt "empty", interactiveCommands, emptyAction
+				end
+
+				if shouldExitPlayerLoop
+					whisper("Exiting player loop", 3)
+					break
+				end
+			end
+
+			unbindGroup bindingGroupName
+		end
+
+		def	interactiveEdit
+			commandPrompt @userMode, getInteractiveCommands([@userMode], 'editingModeBindingGroup')
+		end
+
+		def trigger eventName, data = nil
+			if @eventBindings.has_key? eventName
+				whisper("trigger #{eventName}, #{@eventBindings[eventName].length} handlers bound", 5)
+				@eventBindings[eventName].each { |handlerProc| handlerProc.call(data) if handlerProc }
+			else
+				whisper("trigger #{eventName} (no handlers bound)", 5)
+			end
+		end
 
 		def bind eventName, handlerProc, handlerGroup = nil
 			@eventBindings[eventName] ||= []
@@ -199,14 +271,13 @@ module Tunewich
 			end
 		end
 
-		def trigger eventName, data = nil
-			if @eventBindings.has_key? eventName
-				whisper("trigger #{eventName}, #{@eventBindings[eventName].length} handlers bound", 5)
-				@eventBindings[eventName].each { |handlerProc| handlerProc.call(data) if handlerProc }
-			else
-				whisper("trigger #{eventName} (no handlers bound)", 5)
-			end
+		def kill
+			whisper "player.kill" # XXX
+			trigger 'before_exit'
+			cleanup
 		end
+
+		private
 
 		def readCharacter
 			# I think I ripped this from here: https://gist.github.com/acook/4190379
@@ -748,7 +819,6 @@ module Tunewich
 					'add' => {
 						'description' => 'Add a new track to the play queue. Input: <urls> [<tags>] -- urls: comma-separated URLs or YouTube IDs (Some URLs will add multiple tracks, like a bandcamp album); tags: comma-separated tags to add to the tracks.',
 						'action' => Proc.new { |input|
-							whisper("input: '#{input}'", 3) # XXX
 							inputParts = input.match(/^([^ ]*?)( .*?)?( \/.*)?$/)
 							urls = inputParts[1].split ',' if inputParts[1]
 							tags = inputParts[2].split ',' if inputParts[2]
@@ -944,7 +1014,7 @@ module Tunewich
 					'exit' => {
 						'description' => 'Exit tunewich when the current track finishes or is quit.',
 						'action' => Proc.new { |input|
-							trigger 'request_exit'
+							kill
 							{:chainedInput => input}
 						}
 					},
@@ -1540,84 +1610,6 @@ module Tunewich
 			requestedCommandSet
 		end
 
-		def interactivePlayback
-			bindingGroupName = 'interactivePlayback'
-
-			shouldExitPlayerLoop = false
-			bindOnce 'request_exit', Proc.new {
-				shouldExitPlayerLoop = true
-				putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}", "q\n"
-			}, bindingGroupName
-
-			if @tracks && @tracks.length > 0
-				titleBlock "Playing #{@tracks.length} tracks", '#'
-			else
-				useEntireLibrary
-			end
-
-			# TODO: 1gG4j1
-			playerOutput = nil
-
-			interactiveCommands = getInteractiveCommands [@userMode], bindingGroupName
-
-			# chaptersNotPlayed = []
-
-			while not playerOutput or playerOutput[:exit] do
-				if @trackIndex && @tracks[@trackIndex]
-					@currentTrack = matchExistingLibraryTrack @tracks[@trackIndex]
-
-					titleBlock "[#{@trackIndex + 1}] - #{@currentTrack['title']}"
-
-					nextTrack() # call nextTrack after @trackIndex is announced, but before play, so that the user can see which track will come next.
-
-					if @updateAllPlayedTrackInfo && !@noNetwork
-						printRepeat "Getting latest track information..."
-						updateTrackInfo @currentTrack
-					end
-
-					fileExists = trackFileExists? @currentTrack
-
-					if !fileExists && @noNetwork
-						next
-					end
-
-					playerOutput = play @currentTrack, interactiveCommands
-
-					trackDurationInSeconds = getSecondsFromDurationString(@currentTrack['duration'])
-
-					if trackDurationInSeconds && !@currentTrack['unattached']
-						loadLibrary
-						@currentTrack = matchExistingLibraryTrack(@currentTrack)
-						@currentTrack['playTime'] ||= 0
-						@currentTrack['playTime'] += playerOutput[:playTime].to_i
-						minimumPlayTime = [30, trackDurationInSeconds - 10].min
-						if playerOutput[:playTime] >= minimumPlayTime
-							@currentTrack['lastPlayed'] = playerOutput[:endTime].to_i
-							@currentTrack['playCount'] ||= 0
-							@currentTrack['playCount'] += 1
-							whisper("listened for #{playerOutput[:playTime]} (>= min #{minimumPlayTime}): bumping play count to #{@currentTrack['playCount']}", 1)
-						else
-							@currentTrack['skipCount'] ||= 0
-							@currentTrack['skipCount'] += 1
-							whisper("listened for #{playerOutput[:playTime]} (< min #{minimumPlayTime}): bumping SKIP count to #{@currentTrack['skipCount']}", 1)
-						end
-						writeLibraryToFile
-					end
-				else
-					whisper("Empty tracklist", 3)
-					emptyAction = Proc.new { |input| false } # break command loop after any non-command input
-					commandPrompt "empty", interactiveCommands, emptyAction
-				end
-
-				if shouldExitPlayerLoop
-					whisper("Exiting player loop", 3)
-					break
-				end
-			end
-
-			unbindGroup bindingGroupName
-		end
-
 		def getChapterIndexAtTime track, seconds
 			chapterIndex = nil
 			whisper("Finding chapter at #{seconds} seconds on track: #{track['title']}", 5)
@@ -2059,6 +2051,7 @@ module Tunewich
 			@playerApplicationThreads[@currentPlayerIndex] = Thread.new {
 				@isPlayerPlaying = true
 				# TODO 1gnyIc
+				@tempFiles[playerStdoutFile] = true
 				playerCommand = "#{Player::PLAYER_APPLICATION} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '} > #{playerStdoutFile}"
 				whisper(playerCommand, 3)
 				playerStatus = `#{playerCommand} 2> /dev/null`
@@ -2086,7 +2079,7 @@ module Tunewich
 						@currentTrack['chapters'][@currentChapterIndex]['skip'] == true
 					@currentlySkippingChapter = @currentChapterIndex
 					nextNonSkippingChapter = nil
-					whisper(@currentTrack['chapters'].slice(@currentChapterIndex + 1, -1), 3) # XXX
+					whisper(@currentTrack['chapters'].slice(@currentChapterIndex + 1, -1), 3)
 					@currentTrack['chapters'].each_with_index { |chapter, index|
 						if !nextNonSkippingChapter && index > @currentChapterIndex && !chapter.has_key?('skip') || !chapter['skip']
 							nextNonSkippingChapter = index
@@ -2285,7 +2278,7 @@ module Tunewich
 				end
 			}
 			if anyChanges then writeLibraryToFile
-			else whisper("No changes to track titles.", 3) # XXX
+			else whisper("No changes to track titles.", 3)
 			end
 		end
 
@@ -2383,7 +2376,7 @@ module Tunewich
 					match[:density] = query.length.to_f / match[:matchLength].to_f
 					match[:breadth] = match[:matchLength].to_f / match[:value].length.to_f
 					match[:score] = match[:density] * 10 + match[:breadth]
-					whisper("match:score]: #{match}", 3) # XXX
+					whisper("match:score]: #{match}", 3)
 					matches << match
 				end
 
@@ -2599,6 +2592,9 @@ module Tunewich
 
 			if File.exist? path
 				File.delete path
+				if @tempFiles.has_key? path
+					@tempFiles.delete path
+				end
 			end
 		end
 
@@ -2615,7 +2611,13 @@ module Tunewich
 				raise "ERROR: Could not create the stream file (#{path})"
 			end
 
-			File.exist?(path) && path
+			if File.exist?(path)
+				@tempFiles[path] = true
+			else
+				path = nil
+			end
+
+			path
 		end
 
 		alias deleteStream deleteTempFile
@@ -3491,7 +3493,7 @@ module Tunewich
 					@trackIndex = trackQuery.to_i - 1
 				else
 					@trackIndex = findTrackIndex(trackQuery) || nil
-					puts "@trackIndex: #{@trackIndex}" # XXX
+					puts "@trackIndex: #{@trackIndex}"
 				end
 			end
 
@@ -3722,7 +3724,7 @@ module Tunewich
 		def loadSoundcloud url
 			whisper("loadSoundcloud #{url}", 3)
 			tracks = [createTrack(url, 'soundcloud')]
-			whisper("tracks: #{tracks}", 3) # XXX
+			whisper("tracks: #{tracks}", 3)
 			tracks
 		end
 
@@ -3836,7 +3838,8 @@ module Tunewich
 
 		def commandPrompt message = nil, commands = nil, action = nil
 			shouldBreakCommandLoop = false
-			bindOnce 'request_exit', Proc.new {
+			commandLoopExitBinding = bindOnce 'before_exit', Proc.new {
+				whisper "command loop before_exit handler" # XXX
 				shouldBreakCommandLoop = true
 			}
 			whisper("opening command prompt", 3)
@@ -3946,9 +3949,7 @@ module Tunewich
 				handledActionResponse
 			}
 
-			externalCommandHandlerId = bind('external_command', handleInputLine);
-
-			while inputCharacter = readCharacter
+			handleInputCharacter = Proc.new { |inputCharacter|
 				if inputCharacter == "" # control-c character
 					whisper("interrupt character, is that you?", 3)
 					@shouldShowPlaybackInfo = true
@@ -3974,6 +3975,7 @@ module Tunewich
 					end
 					@commandInputTyped = nil
 				elsif /[\n\r]/.match inputCharacter
+					whisper "input character: newline" # XXX
 					@commandHistory.unshift input
 					@shouldShowPlaybackInfo = true
 					response[:input] = input
@@ -4037,11 +4039,19 @@ module Tunewich
 
 					printRepeat input
 				end
+			}
 
+			externalInputHandlerId = bind('external_input', handleInputCharacter);
+			externalCommandHandlerId = bind('external_command', handleInputLine);
+
+			while directInputCharacter = readCharacter
+				handleInputCharacter.call directInputCharacter
 				break if shouldBreakCommandLoop
 			end
 
+			unbind(commandLoopExitBinding)
 			unbind(externalCommandHandlerId)
+			unbind(externalInputHandlerId)
 
 			whisper("closing command \"#{message}\" prompt (response #{response})", 3)
 
@@ -4172,30 +4182,30 @@ module Tunewich
 
 		def listenForExternalCommands # 1gOsMN
 			streamName = 'command-queue'
-			externalCommandStream = makeStream streamName
-			whisper("external command stream: #{externalCommandStream}", 2)
-			externalCommandStreamHandle = nil
 			externalCommandThread = Thread.new {
-				externalCommandStreamHandle = File.open(externalCommandStream, 'r');
-				externalCommand = ""
-				while true do
-					while ($_ = externalCommandStreamHandle.read(1)) do
-						if $_ != "\n"
-							externalCommand << $_
-						else
-							if externalCommand && externalCommand.length > 0
-								trigger 'external_command', externalCommand
-								externalCommand = ""
+				externalCommandStream = makeStream streamName
+				whisper("external command stream: #{externalCommandStream}", 2)
+				File.open(externalCommandStream, 'r') { |externalCommandStreamHandle|
+					externalCommand = ""
+					while true do
+						while ($_ = externalCommandStreamHandle.read(1)) do
+							# trigger 'external_input', $_
+							if $_ != "\n"
+								externalCommand << $_
+							else
+								if externalCommand && externalCommand.length > 0
+									trigger 'external_command', externalCommand
+									externalCommand = ""
+								end
 							end
 						end
 					end
-				end
+				}
 			}
-			bindOnce 'request_exit', Proc.new{
+			bindOnce 'before_exit', Proc.new{
 				if externalCommandThread.alive?
 					externalCommandThread.kill
 				end
-				deleteStream streamName
 			}
 		end
 
@@ -4203,4 +4213,17 @@ module Tunewich
 
 end
 
-Tunewich::Player.new
+player = "test"
+begin
+	player = Tunewich::Player.new
+
+	if player.instance_variable_get(:@userMode) == Tunewich::Player::MODES['playing']
+		player.interactivePlayback
+	else
+		player.interactiveEdit
+	end
+
+	player.kill
+rescue Exception
+	player.cleanup
+end
