@@ -180,6 +180,12 @@ module Tunewich
 						puts "loop: #{@loop ? 'on' : 'off'}"
 					}
 				},
+				'v' => {
+					'info' => "TODO: save current volume relative to default in library.",
+					'action' => Proc.new { |new_rating|
+						puts "not yet implemented"
+					}
+				},
 				'sh' => {
 					'info' => 'Toggle shuffle.',
 					'action' => Proc.new {
@@ -298,9 +304,9 @@ module Tunewich
 				#  d: download
 				playerOutput = play track, chapterIndex, interactiveCommands
 
-				next if commandRequiresNext
-				break if commandRequiresBreak
 				exit if commandRequiresExit
+				break if commandRequiresBreak
+				next if commandRequiresNext
 
 				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
 			end
@@ -375,19 +381,26 @@ module Tunewich
 			inputThread = nil
 			mplayerStatus = nil
 			mplayerAction = Proc.new { |command|
-				if 'f' == command || 'fq' == command
+				fadeCommandMatch = /^f(ade)?(q(uit)?)?( (\d+))?$/.match command
+				if fadeCommandMatch
+					duration = fadeCommandMatch[5] && fadeCommandMatch[5].length > 0 ? fadeCommandMatch[5].to_f : 2.0
 					volume = getMplayerProperty('volume', /^ANS_volume=(.*)$/).to_f
+					volumeFadeInterval = 0.1
+					volumeStep = volume / duration * volumeFadeInterval
 					while volume > 0
-						putInTempFile 'mplayer-input', "volume -1\n"
-						volume -= 1
-						sleep 0.1
+						volume -= volumeStep
+						printRepeat "fade out: #{volume.round()}"
+						putInTempFile 'mplayer-input', "volume #{volume} 1\n"
+						sleep volumeFadeInterval
 					end
-					if 'fq' == command
+					if fadeCommandMatch[2].length
 						putInTempFile 'mplayer-input', "quit\n"
 					end
 				else
 					putInTempFile 'mplayer-input', "#{command}\n"
 				end
+
+				true
 			}
 			fileAlreadyExists = trackFileExists? track
 			streaming = !fileAlreadyExists && !@enableDownload && !chapterIndex
