@@ -486,17 +486,19 @@ module Tunewich
 				input
 			}
 
+			chapterInputPattern = /^([+-][0-9.]+ +)?([^\/]*)(.*)$/
 			chapterTabComplete = Proc.new { |input|
-				inputParts = input.match(/^([^\/]*)(.*)$/)
+				inputParts = input.match(chapterInputPattern)
 
 				if @currentTrack.has_key?('chapters')
-					if inputParts[1] && inputParts[1].length > 0
+					if inputParts[2] && inputParts[2].length > 0
 						chapterNames = @currentTrack['chapters'].map { |c| c['text'] }
-						guessChapterName = firstFuzzyMatchValue(inputParts[1], chapterNames) if inputParts[1].length > 0
+						guessChapterName = firstFuzzyMatchValue(inputParts[2], chapterNames) if inputParts[2].length > 0
 						if guessChapterName && guessChapterName.length > 0
-							input = input.sub!(inputParts[1], guessChapterName)
+							input = input.sub!(inputParts[2], guessChapterName)
 						end
 					else
+						# TODO 1gzoGh: it'd be nice to put in a space if inputParts[1] (offset) is given
 						putsRealtime getFormattedChapterList(@currentTrack['chapters']).join("\n")
 					end
 				else
@@ -1067,7 +1069,7 @@ module Tunewich
 						'description' => 'Skip to a chapter, or show chapter list. Input: [optional seconds offset], number or name of chapter; or "<" or ">" to go back or forward, multiples to go further.',
 						'action' => Proc.new { |input|
 							whisper("chapter command - input: #{input}", 3)
-							inputParts = input.match(/^([+-][0-9.]+ +)?([^\/]*)(.*)$/)
+							inputParts = input.match(chapterInputPattern)
 							if @currentTrack['chapters']
 								if inputParts[2] && inputParts[2].length > 0
 									chapterIndex = getChapterIndexByQuery inputParts[2], @currentTrack['chapters']
