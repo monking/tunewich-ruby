@@ -168,7 +168,7 @@ module Tunewich
 						commandRequiresNext = true
 					}
 				},
-				'quit' => {
+				'search' => {
 					'info' => "<query> Search YouTube.",
 					'action' => Proc.new { |query|
 						useTracks searchYouTube(query), false
