@@ -2880,30 +2880,34 @@ module Tunewich
 						puts "About to prompt you for your password, so that the darkice server can be run as root."
 						`sudo ls &>/dev/null`
 					end
-					audioDevice = "coreaudio"
 					audioDeviceID = `say -a ? | grep 'Soundflower (2ch)'`.sub /^\s*(\d+).*/, '\1'
-					whisper "audioDeviceID: #{audioDeviceID}", 3
-					if audioDeviceID && audioDeviceID.length > 0
-						if streamingServerType == 'homebrew'
-							icecastConfigFile = "#{serviceConfigDir}/icecast.xml"
-							darkiceConfigFile = "#{serviceConfigDir}/darkice.cfg"
-
-							if not File.exist? icecastConfigFile
-								puts "Please create the icecast config file at #{icecastConfigFile}."
-								isRadioConfigured = false
-							elsif not File.exist? darkiceConfigFile
-								puts "Please create the darkice config file at #{darkiceConfigFile}."
-								isRadioConfigured = false
-							end
-						end
-					else
-						puts "Please install Soundflower (https://github.com/mattingalls/Soundflower)"
-						isRadioConfigured = false
-					end
+          if !audioDeviceID || audioDeviceID.length == 0
+            puts "Please install Soundflower (https://github.com/mattingalls/Soundflower)"
+            isRadioConfigured = false
+          end
+					@playerOverrideCommands << "-ao coreaudio:device_id=#{audioDeviceID}"
+          jackAudioDeviceAndOptions = "coreaudio -d SoundflowerEngine:0"
 				else
-					isRadioConfigured = false
-					puts "Radio is currently only implemented on Mac. Want to help fix it for other platforms? Get in touch!"
+          audioDeviceID = 0
+					@playerOverrideCommands << "-ao jack"
+          jackAudioDeviceAndOptions = "jack -d SoundflowerEngine:0"
 				end
+
+        whisper "audioDeviceID: #{audioDeviceID}", 3
+        if audioDeviceID && audioDeviceID.length > 0
+          if streamingServerType == 'homebrew'
+            icecastConfigFile = "#{serviceConfigDir}/icecast.xml"
+            darkiceConfigFile = "#{serviceConfigDir}/darkice.cfg"
+
+            if not File.exist? icecastConfigFile
+              puts "Please create the icecast config file at #{icecastConfigFile}."
+              isRadioConfigured = false
+            elsif not File.exist? darkiceConfigFile
+              puts "Please create the darkice config file at #{darkiceConfigFile}."
+              isRadioConfigured = false
+            end
+          end
+        end
 
 				# Currently 2 methods of doing radio:
 				# Both have the same first step, using Soundflower.
@@ -2928,7 +2932,7 @@ module Tunewich
 					if streamingServerType == 'homebrew'
 						@services = []
 						whisper "starting jackd (to capture audio)", 2
-						@services << Thread.new { `sudo jackd -d #{audioDevice} -d SoundflowerEngine:0` }
+						@services << Thread.new { `sudo jackd -d #{jackAudioDeviceAndOptions}` }
 						whisper "starting icecast (to stream audio to listeners)", 2
 						@services << Thread.new { `icecast -c "#{icecastConfigFile}"` }
 						darkiceStartDelay = 5.0
@@ -2937,7 +2941,6 @@ module Tunewich
 						whisper "starting darkice (to encode and push audio to streaming server)", 2
 						@services << Thread.new { `sudo darkice -v 10 -c "#{darkiceConfigFile}"` }
 					end
-					@playerOverrideCommands << "-ao #{audioDevice}:device_id=#{audioDeviceID}"
 				end
 			end
 
