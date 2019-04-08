@@ -2312,6 +2312,10 @@ module Tunewich
 			end
 
 			loadLibrary
+
+      if not @library
+        raise "Unable to load library from path #{@libraryFilePath}."
+      end
 		end
 
 		def extendHash sourceTrack, overrideTrack
@@ -2650,11 +2654,20 @@ module Tunewich
 		end
 
 		def processLibraryJSON(json)
-			{
+			libraryData = {
 				:json => json,
 				:hash => Digest::MD5.hexdigest(json),
-				:data => JSON.parse(json)
+				:data => nil
 			}
+
+      begin
+        libraryData[:data] = JSON.parse(json)
+      rescue
+        whisper("Invalid JSON.", 0)
+      end
+
+
+      libraryData
 		end
 
 		def addMarkToTrack track, time
@@ -2677,7 +2690,7 @@ module Tunewich
 
 		def loadLibrary
 			libraryInfo = processLibraryJSON File.read(@libraryFilePath)
-			if libraryInfo
+			if libraryInfo && libraryInfo[:data]
 				@library = libraryInfo[:data]
 				@libraryHash = libraryInfo[:hash]
 				if @tracks && @tracks.length > 0
@@ -2699,7 +2712,7 @@ module Tunewich
 				putsRealtime "Sorry! The loaded library has been corrupted. Please restart the player if you want to save any changes to your library."
 				return
 			end
-			libraryOnFile = processLibraryJSON File.read(@libraryFilePath)
+			libraryOnFile = processLibraryJSON File.read(@libraryFilePath) # since we're writing, no need to check for libraryOnFile[:data], right?
 			if @libraryHash == libraryOnFile[:hash] || confirm("Library file has changed since last load. Overwrite?")
 				libraryInfo = processLibraryJSON libraryJSON
 				File.write(@libraryFilePath, libraryJSON)
@@ -4212,7 +4225,6 @@ module Tunewich
 
 end
 
-player = "test"
 begin
 	player = Tunewich::Player.new
 
