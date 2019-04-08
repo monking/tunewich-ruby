@@ -74,17 +74,6 @@ module Tunewich
 		def parseOptions
 			parser = OptionParser.new
 
-			parser.on("-i", "--input-dir DIR", "Directory from which to read the playlist and files. NOTE: when used, this must be the first option. Recommended to define TUNEWICH_DIR instead.") do |inputDir|
-				# FIXME: always process this option first, even if it's provided last
-				setLibraryPath inputDir
-			end
-			parser.on("-t", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).") do |trackQuery|
-				if trackQuery.to_i != 0
-					@trackIndex = trackQuery.to_i - 1
-				else
-					@trackIndex = trackQuery
-				end
-			end
 			parser.on("-a", "--add-track YOUTUBE_URL", "Add a track to the playlist and save.") do |url|
 				# TODO: add multiple by accepting space-separated list of URLs
 				@playlistName = promptForPlaylist if not @playlistName
@@ -93,6 +82,23 @@ module Tunewich
 				addTrackToPlaylist newTrack, @playlistName
 				writeLibraryToFile
 				exit
+			end
+			parser.on("-d", "--enable-download", "Enable downloading files when encountering a playlist file without a cached file already download.") do
+				@enableDownload = true
+			end
+			parser.on("-f", "--filter RULES", "Filter by rules, in the format 'name=value,name=value'. Available rules are: min-rating=[0-5],title=[query],chapters.") do |rules|
+				@trackFilters = parseOptionParameters rules
+			end
+			parser.on("-h", "--help", "Show this help.") do
+				puts parser.help()
+				exit
+			end
+			parser.on("-i", "--input-dir DIR", "Directory from which to read the playlist and files. NOTE: when used, this must be the first option. Recommended to define TUNEWICH_DIR instead.") do |inputDir|
+				# FIXME: always process this option first, even if it's provided last
+				setLibraryPath inputDir
+			end
+			parser.on("-l", "--loop", "Loop, even if a track doesn't have an A/B loop defined.") do
+				@loop = true
 			end
 			parser.on("-p", "--playlist QUERY", "Partial or full name of a playlist.") do |playlistQuery|
 				playlistName = findPlaylistName playlistQuery
@@ -103,43 +109,36 @@ module Tunewich
 					puts "No playlist found to match query #{playlistQuery}."
 				end
 			end
-			parser.on("-P", "--create-playlist NAME", "Create a new playlist. Implies -p of the same playlist.") do |playlistName|
-				createPlaylist playlistName
+			parser.on("-P", "--create-playlist NAME", "Create a new playlist. Implies -p of the same playlist. When used with -w and -q, you may pass an empty string (\"\") to use the search query as the playlist name.") do |playlistName|
+				if !playlistName.empty?
+					createPlaylist playlistName
+					usePlaylist playlistName
+				elsif @youtubeSearch
+					createPlaylist @youtubeSearch
+					usePlaylist @youtubeSearch
+				else
+					puts "Please give a playlist name to -P"
+					exit
+				end
+
 				writeLibraryToFile
-				usePlaylist playlistName
 			end
-			parser.on("-f", "--filter RULES", "Filter by rules, in the format 'name=value,name=value'. Available rules are: min-rating=[0-5],title=[query].") do |rules|
-				@trackFilters = {}
-				rules.split(',').each { |clump|
-					pair = clump.split '='
-					@trackFilters[pair[0]] = pair[1]
-				}
-			end
-			parser.on("-d", "--enable-download", "Enable downloading files when encountering a playlist file without a cached file already download.") do
-				@enableDownload = true
+			parser.on("-q", "--query QUERY", "Search YouTube for a video.") do |query|
+				@youtubeSearch = query
+				@tracks = searchYouTube @youtubeSearch
 			end
 			parser.on("-s", "--shuffle", "Enable shuffle.") do
 				@shuffle = true
 			end
-			parser.on("-l", "--loop", "Loop, even if a track doesn't have an A/B loop defined.") do
-				@loop = true
-			end
-			parser.on("-q", "--query QUERY", "Search YouTube for a video.") do |query|
-				@tracks = searchYouTube query
-			end
-			parser.on("-Q", "--save-query QUERY", "Same as -q, but also create a playlist taking the query as a name. Use with -w to save to this playlist.") do |query|
-				createPlaylist query
-				usePlaylist query
-				@youtubeSearchPage = 1
-				@youtubeSearchQuery = query
-				@tracks = searchYouTube @youtubeSearchQuery
+			parser.on("-t", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).") do |trackQuery|
+				if trackQuery.to_i != 0
+					@trackIndex = trackQuery.to_i - 1
+				else
+					@trackIndex = trackQuery
+				end
 			end
 			parser.on("-w", "--write-after TIME", "Save tracks to the playlist (from -p or -P) when played for the given number of seconds. Use with -q.") do |time|
 				@playthroughThreshold = time.to_f
-			end
-			parser.on("-h", "--help", "Show this help.") do
-				puts parser.help()
-				exit
 			end
 
 			@mplayerOverrideCommands = parser.parse(ARGV)
@@ -286,12 +285,6 @@ module Tunewich
 		end
 
 		def play(track, chapterIndex)
-			if track['get_info']
-				track.delete 'get_info'
-				puts "Getting track title and description. This may take a moment."
-				track = updateTrackInfo track
-			end
-
 			titleBlock "[#{@trackIndex + 1}] - #{track['title']}"
 
 			mplayerCommands = []
@@ -302,7 +295,7 @@ module Tunewich
 			if track['chapters']
 				if chapterIndex
 					if not streaming
-						titleBlock "Chapter: #{track['chapters'][chapterIndex]['name']}"
+						titleBlock "Chapter #{chapterIndex + 1}: #{track['chapters'][chapterIndex]['name']}"
 						offsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex]['time']
 						mplayerCommands.push("-ss #{offsetSeconds}")
 						if chapterIndex < track['chapters'].length - 1
@@ -453,24 +446,19 @@ module Tunewich
 
 		def applyTrackFilters filters
 			if filters['min-rating']
-				filterTracksByRating filters['min-rating'].to_i
+				@tracks.keep_if { |track| track['rating'] && track['rating'] >= rating }
 			end
 			if filters['title']
-				filterTracksByTitle filters['title']
+				matches = fuzzyStringSearchInList(filters['title'], getTrackTitles)
+				oldTracks = @tracks
+				@tracks = []
+				matches.each { |match|
+					@tracks.push oldTracks[match[:index]]
+				}
 			end
-		end
-
-		def filterTracksByRating rating
-			@tracks.keep_if { |track| track['rating'] && track['rating'] >= rating }
-		end
-
-		def filterTracksByTitle query
-			matches = fuzzyStringSearchInList(query, getTrackTitles)
-			oldTracks = @tracks
-			@tracks = []
-			matches.each { |match|
-				@tracks.push oldTracks[match[:index]]
-			}
+			if filters.has_key? 'chapters'
+				@tracks.keep_if { |track| track.has_key? 'chapters' }
+			end
 		end
 
 		def createPlaylist name, tracks = [], description = ''
@@ -483,17 +471,11 @@ module Tunewich
 		end
 
 		def getTrackInfo id
-
+			info = `youtube-dl --get-title --get-description -- #{id}`.chomp.lines
 			track = {
-				'title' => `youtube-dl --get-title -- #{id}`.chomp
+				'title' => info.shift.chomp,
+				'description' => info.join("\n").chomp
 			}
-
-			if track['title'].empty?
-				track['title'] = 'Unknown'
-				puts "Video not found. Cannot get title."
-			else
-				track['description'] = `youtube-dl --get-description -- #{id}`.chomp
-			end
 
 			track
 		end
@@ -586,10 +568,9 @@ module Tunewich
 			end
 
 			resultTracks = []
-			queryResultIds.slice(0, count).each do |id|
-				track = createTrack id, false
-				track['title'] = "Search '#{query}': (#{id})"
-				track['get_info'] = true
+			queryResultIds.slice(0, count).each_with_index do |id, index|
+				puts "Getting track information (#{index + 1}/#{count})"
+				track = createTrack id
 				resultTracks.push track
 			end
 
@@ -607,6 +588,17 @@ module Tunewich
 			}
 
 			seconds
+		end
+
+		def parseOptionParameters serialized
+			hash = {}
+
+			serialized.split(',').each { |clump|
+				pair = clump.split '='
+				hash[pair[0]] = pair[1]
+			}
+
+			hash
 		end
 
 		alias deleteStream deleteTempFile
