@@ -336,6 +336,16 @@ module Tunewich
 						output
 					}
 				},
+				'wait' => {
+					'info' => 'Wait to execute chained commands',
+					'action' => Proc.new { |input|
+            chunks = input.split ' '
+            if chunks.length > 0 && chunks[0].match(/^[0-9.]+$/)
+              sleep chunks.shift.to_f
+            end
+            {:chainedInput => chunks.join(' ')}
+					}
+				},
 				'list' => {
 					'info' => "Load a playlist. (not chainable)",
 					'action' => Proc.new { |playlistQuery|
