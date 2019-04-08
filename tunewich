@@ -4178,7 +4178,6 @@ module Tunewich
 				externalCommandStreamHandle = File.open(externalCommandStream, 'r');
 				externalCommand = ""
 				while true do
-					whisper("starting new loop to read #{externalCommandStream}", 2)
 					while ($_ = externalCommandStreamHandle.read(1)) do
 						if $_ != "\n"
 							externalCommand << $_
