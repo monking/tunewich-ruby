@@ -201,8 +201,10 @@ module Tunewich
 							duration = rampCommandMatch[2] && rampCommandMatch[2].length > 0 ? rampCommandMatch[2].to_f : 0.3
 							followingCommand = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].strip : nil
 							speed = getCurrentMplayerSpeed
-							# mplayer limits to 0.125 and 4 anyway, so make it explicit to use correct timing
-							targetRampSpeed = [[rampCommandMatch[1].to_f, 0.125].max, 4].min
+							# min- and maxSpeed really depend on the system, and seems limitless when using `-af scaletempo[=speed=tempo]`
+							minSpeed = 0.125
+							maxSpeed = 4
+							targetRampSpeed = [[rampCommandMatch[1].to_f, minSpeed].max, maxSpeed].min
 							if targetRampSpeed == 'out'
 								targetRampSpeed = 0
 								speedBeforeRampingOut = speed
@@ -351,7 +353,17 @@ module Tunewich
 						filtersList ||= []
 						instructions = "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}\n\nAvailable tags: #{listAllTagsWithAliases.join ', '}"
 						@trackFilters = parseOptionParameters editListInVim(filtersList, instructions).join ','
-						useTracks @tracks, false
+						filterTracksOnDeck
+					}
+				},
+				'exclude' => {
+					'info' => 'Edit exclude filters.',
+					'action' => Proc.new { |query|
+						filtersList = @trackExcludeFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackExcludeFilters
+						filtersList ||= []
+						instructions = "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}\n\nAvailable tags: #{listAllTagsWithAliases.join ', '}"
+						@trackExcludeFilters = parseOptionParameters editListInVim(filtersList, instructions).join ','
+						filterTracksOnDeck
 					}
 				},
 				'exit' => {
@@ -670,7 +682,7 @@ module Tunewich
 
 			mplayerCommands.each { |command|
 				if command.include? 'volume'
-					mplayerConfigVolume = command.match(/.*-volume ([0-9]+)$/)[1].to_f
+					mplayerConfigVolume = command.match(/.*-volume ([0-9.]+)/)[1].to_f
 				end
 			}
 
@@ -1213,8 +1225,8 @@ module Tunewich
 			puts "Cleanup finished."
 		end
 
-		def filterTracks tracks, filters, invert = false
-			action = invert ? 'delete_if' : 'keep_if'
+		def filterTracks tracks, filters, isExcludeFilter = false
+			action = isExcludeFilter ? 'delete_if' : 'keep_if'
 
 			if filters['rating']
 				tracks.send(action) { |track| track['rating'] && track['rating'] == filters['rating'].to_i }
@@ -1264,11 +1276,18 @@ module Tunewich
 
 			if filters['title']
 				matches = fuzzyStringSearchInList(filters['title'], getTrackTitles(tracks))
+				matches.sort! { |a,b| b[:density] <=> a[:density] }
 				matchedIds = []
+				matchesByTrackTitle = {}
 				matches.each { |match|
-					matchedIds << tracks[match[:index]]['id']
+					track = tracks[match[:index]]
+					matchedIds << track['id']
+					matchesByTrackTitle[track['title']] = match
 				}
 				tracks.send(action) { |t| matchedIds.include? t['id'] }
+				if !isExcludeFilter
+					tracks.sort! { |a,b| matchesByTrackTitle[b['title']][:density] <=> matchesByTrackTitle[a['title']][:density] }
+				end
 			end
 
 			if filters['last']
