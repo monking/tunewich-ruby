@@ -995,6 +995,20 @@ module Tunewich
 							{:chainedInput => inputParts[2]}
 						}
 					},
+					'skipchapter' => {
+						'description' => "Mark the current chapter as to be skipped every time.",
+						'action' => Proc.new { |input|
+							inputParts = input.match(/^([^\/]*)(.*)$/)
+							chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
+							if chapterIndex
+								@currentTrack['chapters'][chapterIndex]['skip'] = true
+								writeLibraryToFile
+								seekToNextPlayableChapterOrSkip @currentTrack['chapters'], @currentChapterIndex
+							end
+
+							{:chainedInput => inputParts[2]}
+						}
+					},
 					'editchapters' => {
 						'description' => "Edit all the chapters for the current track (using vim).",
 						'action' => Proc.new { |input|
@@ -1948,6 +1962,33 @@ module Tunewich
 			@library['tags'].delete tagName if @library['tags'].has_key? tagName
 		end
 
+		def getNextPlayableChapterIndex chapters, fromIndex
+			nextChapterIndex = nil
+			chapters.each_with_index { |chapter, index|
+				if index > fromIndex && (!chapter.has_key?('skip') || !chapter['skip'])
+					nextChapterIndex = index
+					break
+				end
+			}
+
+			nextChapterIndex
+		end
+
+		def seekToNextPlayableChapterOrSkip chapters, fromIndex
+			nextChapterIndex = getNextPlayableChapterIndex @currentTrack['chapters'], fromIndex
+
+			if nextChapterIndex
+				chapter = chapters[nextChapterIndex]
+				seekSeconds = getSecondsFromDurationString chapter['time']
+				whisper("Skipping chapter #{fromIndex + 1}, to #{nextChapterIndex + 1} (#{chapter['time']}, #{seekSeconds}).", 0)
+				seek seekSeconds, 0.5, 0.25
+			else
+				whisper("Skipping chapter #{fromIndex + 1}; no more playable chapters; skipping track.", 0)
+				fadeVolume 'out', 0.25, @currentPlayerIndex
+				sendPlayerCommand "q"
+			end
+		end
+
 		def play(track, interactiveCommands)
 			fileAlreadyExists = !@forceStreaming && trackFileExists?(track) # TODO: 1gG4j4: I shouldn't need to check twice
 			liveStreaming = doesTrackHaveTag(track, 'live-radio') # TODO: 1gSke5
@@ -2117,23 +2158,9 @@ module Tunewich
 						@currentTrack['chapters'][@currentChapterIndex].has_key?('skip') &&
 						@currentTrack['chapters'][@currentChapterIndex]['skip'] == true
 					@currentlySkippingChapter = @currentChapterIndex
-					nextChapterIndex = nil
-					@currentTrack['chapters'].each_with_index { |chapter, index|
-						if index > @currentChapterIndex && (!chapter.has_key?('skip') || !chapter['skip'])
-							nextChapterIndex = index
-							break
-						end
-					}
-					if nextChapterIndex
-						chapter = @currentTrack['chapters'][nextChapterIndex]
-						seekSeconds = getSecondsFromDurationString chapter['time']
-						whisper("Skipping chapter #{@currentChapterIndex + 1}, to #{nextChapterIndex + 1} (#{chapter['time']}, #{seekSeconds}).", 0)
-						seek seekSeconds, 0.5, 0.25
-					else
-						whisper("Skipping chapter #{@currentChapterIndex + 1}; no more playable chapters; skipping track.", 0)
-						fadeVolume "out", 0.25, @currentPlayerIndex
-						sendPlayerCommand "q"
-					end
+
+					seekToNextPlayableChapterOrSkip @currentTrack['chapters'], @currentlySkippingChapter
+
 					bindOnce('chapter_change', Proc.new {
 						@currentlySkippingChapter = nil
 					})
@@ -2207,7 +2234,7 @@ module Tunewich
 
 				# show current chapter name
 				if @currentTrack.has_key?('chapters')
-					if @currentChapterIndex
+					if @currentChapterIndex && @currentTrack['chapters'][@currentChapterIndex]
 						playbackInfo << "#{unicodeChars[:openBook]}	#{@currentTrack['chapters'][@currentChapterIndex]['text']}" # undefined method `[]' for nil:NilClass (NoMethodError)
 					end
 				else

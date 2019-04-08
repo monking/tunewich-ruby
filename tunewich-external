@@ -10,6 +10,9 @@ OPTIONS:
 
 queueFile="$(ls -t ~/.tunewich/tmp/tunewich*-command-queue | head -1)"
 commitMode=char
+commandHistory=()
+historyIndex=
+inputLine=
 
 while getopts l flag; do
   case $flag in
@@ -22,6 +25,29 @@ done
 [[ -z "$queueFile" ]] && {
 	echo "No command queue file found"
 	exit 2
+}
+
+getOffsetCommand() {
+	offset="$1"
+	if [[ ${#commandHistory[@]} -gt 0 ]]; then
+		[[ -z $historyIndex ]] && historyIndex=${#commandHistory[@]}
+		historyIndex=$((historyIndex + $offset))
+		if [[ $historyIndex -lt 0 ]]; then
+			historyIndex=$((${#commandHistory[@]} - 1))
+		fi
+		if [[ $historyIndex -ge ${#commandHistory[@]} ]]; then
+			historyIndex=0
+		fi
+		inputLine="${commandHistory[$historyIndex]}"
+	fi
+}
+
+getLastCommand() {
+	getOffsetCommand -1
+}
+
+getNextCommand() {
+	getOffsetCommand 1
 }
 
 if [[ -n "$@" ]]; then
@@ -39,19 +65,30 @@ else
 	echo
 
 	prompt='tunewich $ '
-	inputLine=
 	1>&2 echo -n "$prompt"
+	escape_char=""
 	while IFS= read -s -r -n1 ch; do
+
+		isMultibyteChar=false
+		if [[ $ch == $escape_char ]]; then
+			read -rsn2 -t 1 ch # read 2 more chars
+			[[ -n $ch ]] && isMultibyteChar=true
+		fi
+
 		case "$ch" in
 			'')
 				# surely other things will also come across as empty, besides newline?
-        [[ $commitMode = line ]] && echo -e "$inputLine" > "$queueFile"
+				[[ $commitMode = line ]] && echo -e "$inputLine" > "$queueFile"
+				commandHistory+=("$inputLine")
+				historyIndex=
 				inputLine=
 				ch=$'\n'
 				echo -ne "$ch";;
+			$'[A') getLastCommand;;
+			$'[B') getNextCommand;;
 			"") inputLine=;;
 			"") [[ ${#inputLine} -gt 0 ]] && inputLine="${inputLine:0:$((${#inputLine} - 1))}";;
-			*) inputLine+="$ch";;
+			*) [[ $isMultibyteChar != true ]] && inputLine+="$ch";;
 		esac
 		1>&2 echo -ne "\r${prompt}${inputLine}"
 		[[ $commitMode = char ]] && echo -ne "$ch" > "$queueFile"
