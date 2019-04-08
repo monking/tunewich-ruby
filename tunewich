@@ -521,6 +521,13 @@ module Tunewich
       findTrackFiles(track).length > 0
 		end
 
+		def getIdFromFileName(fileName)
+			id = fileName.gsub(/^tunewich-([A-Za-z0-9_-]{11}).*$/) {
+				$1
+			}
+			id != fileName ? id : false
+		end
+
 		def getFilePrefixFromId(id)
 			"#{@fileDirectory}/tunewich-#{id}"
 		end
@@ -840,6 +847,39 @@ module Tunewich
 						end
 
 						puts "Tags: \n  #{@library['tags'].keys.sort.join(", ")}" if not success
+					}
+				},
+				'rmfile' => {
+					'info' => 'Remove files not referenced in the library.',
+					'action' => Proc.new {
+						filesToDelete = []
+						filesToIgnore = ['.', '..']
+						Dir.entries(@fileDirectory).each { |file|
+							if !filesToIgnore.include? file
+								id = getIdFromFileName file
+								if !id || !@library['library'][id]
+									filesToDelete << file
+								end
+							end
+						}
+						if filesToDelete.length > 0
+							deleteTempFile 'cleanup-rmfile'
+							fileDirections = "##\n# remove any files you don't want to delete\n##\n\n"
+							putInTempFile 'cleanup-rmfile', fileDirections + filesToDelete.join("\n")
+							system "vim #{getTempFilePath 'cleanup-rmfile'}"
+							filesToDelete = readTempFile('cleanup-rmfile').lines
+							filesToDelete.delete_if { |line| # remove empty and comment lines from the list
+								line.match(/^(#.*|\s*)$/)
+							}
+							deleteTempFile 'cleanup'
+
+							filesToDelete.each { |file|
+								File.delete "#{@fileDirectory}/#{file.chomp}"
+							}
+							puts "#{filesToDelete.length} files deleted."
+						else
+							puts "No orphaned files found."
+						end
 					}
 				},
 				'rmlist' => {
