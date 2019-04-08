@@ -123,6 +123,37 @@ module Tunewich
 						end
 					}
 				},
+				'g' => {
+					'info' => "Go to a track in the current list.",
+					'action' => Proc.new { |trackIndex|
+						if trackIndex.is_a? String and trackIndex != '0'
+							@trackIndex = findTrackIndex trackIndex
+						else
+							@trackIndex = trackIndex.to_i
+						end
+					}
+				},
+				'p' => {
+					'info' => "Load a playlist.",
+					'action' => Proc.new { |playlistQuery|
+						puts "playlistQuery: #{playlistQuery}" # XXX
+						playlistNames = @library['playlists'].keys
+						if playlistQuery && playlistQuery.length > 0
+							match = firstFuzzyMatch optionsOutput[:playlistQuery], playlistNames
+
+							if match && match[:score] > 1 # FIXME: what's a good baseline score for a playlist match?
+								playlistName = match[:value]
+							end
+						end
+
+						if playlistName
+							usePlaylist playlistName, true
+						else
+							puts playlistNames.join "\n"
+						end
+						commandRequiresNext = true
+					}
+				},
 				'm' => {
 					'info' => "Play all tracks on this video's page.",
 					'action' => Proc.new {
@@ -141,7 +172,32 @@ module Tunewich
 						commandRequiresNext = true
 					}
 				},
-				'list' => {
+				'l' => {
+					'info' => 'Toggle loop.',
+					'action' => Proc.new {
+						@loop = !@loop
+						commandRequiresNext = true if @loop
+						puts "loop: #{@loop ? 'on' : 'off'}"
+					}
+				},
+				'sh' => {
+					'info' => 'Toggle shuffle.',
+					'action' => Proc.new {
+						@shuffle = !@shuffle
+						puts "shuffle: #{@shuffle ? 'on' : 'off'}"
+					}
+				},
+				'download' => {
+					'info' => "Download the current track for faster play in the future.",
+					'action' => Proc.new {
+						if not trackFileExists? @tracks[@trackIndex]
+							downloadTrack @tracks[@trackIndex]
+						else
+							puts "This file is already downloaded."
+						end
+					}
+				},
+				'add' => {
 					'info' => '<playlistName> add this to a playlist.',
 					'action' => Proc.new { |playlistQuery|
 						if playlistQuery && playlistQuery.length > 0
@@ -173,21 +229,6 @@ module Tunewich
 						instructions = "#{Player::FILTER_HELP_1}\n#{Player::FILTER_HELP_2}\n#{Player::FILTER_HELP_3}"
 						@trackFilters = parseOptionParameters editListInVim(filtersList, instructions).join ','
 						useTracks @tracks, false
-					}
-				},
-				'l' => {
-					'info' => 'Toggle loop.',
-					'action' => Proc.new {
-						@loop = !@loop
-						commandRequiresNext = true if @loop
-						puts "loop: #{@loop ? 'on' : 'off'}"
-					}
-				},
-				'sh' => {
-					'info' => 'Toggle shuffle.',
-					'action' => Proc.new {
-						@shuffle = !@shuffle
-						puts "shuffle: #{@shuffle ? 'on' : 'off'}"
 					}
 				},
 				'x' => {
@@ -334,10 +375,9 @@ module Tunewich
 			mplayerStatus = nil
 			mplayerAction = Proc.new { |command|
 				if 'f' == command || 'fq' == command
-					count = 7
+					count = getDefaultMplayerVolume
 					while count > 0
-						printRepeat count
-						putInTempFile 'mplayer-input', "volume -2\n"
+						putInTempFile 'mplayer-input', "volume -1\n"
 						sleep 0.1
 						count -= 1
 					end
@@ -421,12 +461,7 @@ module Tunewich
 			mplayerStartupOptions += @mplayerOverrideCommands
 
 			if track['volume']
-				mplayerCurrentVolume = 25.0
-				mplayerStartupOptions.each { |command|
-					if command.include? 'volume'
-						mplayerCurrentVolume = command.match(/.*-volume ([0-9]+)$/)[1].to_f
-					end
-				}
+				mplayerCurrentVolume = getDefaultMplayerVolume
 				mplayerStartupOptions += ["-volume #{(mplayerCurrentVolume / track['volume']).round}"]
 			end
 
@@ -463,6 +498,21 @@ module Tunewich
 			response[:exit] = mplayerStatus
 			response[:playtime] = mplayerPlayTime
 			response
+		end
+
+		def getDefaultMplayerVolume
+			mplayerCommands = []
+			mplayerCommands += @mplayerOverrideCommands
+			mplayerCommands += [@mplayerDefaultOptions] if @mplayerDefaultOptions
+			mplayerCurrentVolume = 25.0 # factory default
+
+			mplayerCommands.each { |command|
+				if command.include? 'volume'
+					mplayerCurrentVolume = command.match(/.*-volume ([0-9]+)$/)[1].to_f
+				end
+			}
+
+			mplayerCurrentVolume.to_f
 		end
 
 		def nextTrack
@@ -1470,6 +1520,7 @@ module Tunewich
 					prompt.call
 				elsif action
 					break if not action.call input
+					prompt.call
 				else
 					break
 				end
