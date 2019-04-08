@@ -15,3 +15,9 @@ Now call tunewich with `tw`.
 ## usage
 
 `tw -h` for help
+
+## radio (in-progress)
+
+- Install [Soundflower](https://github.com/mattingalls/Soundflower).
+- Install `darkice`, `icecast`, and `jack`.
+	- Mac: `brew install darkice icecast jack`
