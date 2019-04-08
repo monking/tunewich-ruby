@@ -4171,7 +4171,8 @@ module Tunewich
 		end
 
 		def listenForExternalCommands # 1gOsMN
-			externalCommandStream = makeStream 'tunewich-command-queue'
+			streamName = 'command-queue'
+			externalCommandStream = makeStream streamName
 			whisper("external command stream: #{externalCommandStream}", 2)
 			externalCommandStreamHandle = nil
 			externalCommandThread = Thread.new {
@@ -4192,9 +4193,9 @@ module Tunewich
 			}
 			bindOnce 'request_exit', Proc.new{
 				if externalCommandThread.alive?
-					externalCommandStreamHandle.close
 					externalCommandThread.kill
 				end
+				deleteStream streamName
 			}
 		end
 

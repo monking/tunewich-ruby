@@ -8,7 +8,7 @@ queueFile="$(ls -t ~/.tunewich/tmp/*-tunewich-command-queue | head -1)"
 }
 
 if [[ -n "$@" ]]; then
-	echo "$@" > "$queueFile"
+	echo "$@" > "$queueFile" &
 else
 	echo "Beginning interactive input"
 	echo "Run 'tunewich --help' to see the list of interactive commands."
