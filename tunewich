@@ -1697,16 +1697,15 @@ module Tunewich
             'tabComplete' => tagTabComplete
           },
           'jointag' => {
-            'description' => '(USAGE: /jointag A B...) Join tracks from two tags, making tag(s) B an alias of tag A',
+            'description' => '(USAGE: /jointag A... B) Make tag(s) A aliases of tag B.',
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
-              success = false
 
               if inputParts[:query].length > 0
-                tags = inputParts[:query].split(TAG_INPUT_SPLIT)
-                if tags.length > 1
-                  success = combineTags tags
-                  if success
+                tagNames = inputParts[:query].split(TAG_INPUT_SPLIT)
+                if tagNames.length > 1
+                  mergedTag = combineTags tagNames
+                  if mergedTag
                     writeLibraryToFile
                   else
                     putsRealtime "There was a problem with combining the tags. Your changes were not saved."
@@ -1716,7 +1715,6 @@ module Tunewich
                 end
               end
 
-              putsRealtime "Tags: \n	#{@library['tags'].keys.sort.join(", ")}" if not success
               {:chainedInput => inputParts[:remainder]}
             },
             'tabComplete' => tagTabComplete
@@ -2632,31 +2630,31 @@ module Tunewich
     end
 
     def combineTags(tagNames)
-      firstTagName = tagNames.shift
-      firstTag = findTag firstTagName
+      baseTagName = tagNames.pop
+      baseTag = findTag baseTagName
 
-      if firstTag && tagNames.length > 0
-        whisper("merging #{tagNames.join ', '} into #{firstTagName}", 3)
+      if baseTag && tagNames.length > 0
+        whisper("merging #{tagNames.join ', '} into #{baseTagName}", 3)
         tagNames.each { |collapsingTagName|
           collapsingTag = findTag collapsingTagName
-          if collapsingTag && collapsingTag != firstTag
-            firstTag['aliases'] ||= []
-            firstTag['aliases'] << collapsingTagName
+          if collapsingTag && collapsingTag != baseTag
+            baseTag['aliases'] ||= []
+            baseTag['aliases'] << collapsingTagName
             if collapsingTag['tracks'] && collapsingTag['tracks'].length > 0
-              firstTag['tracks'] ||= []
-              firstTag['tracks'].concat collapsingTag['tracks']
+              baseTag['tracks'] ||= []
+              baseTag['tracks'].concat collapsingTag['tracks']
             end
             deleteTag collapsingTagName
           end
         }
 
-        firstTag['aliases'].uniq!
-        firstTag['tracks'].uniq!
+        baseTag['aliases'].uniq!
+        baseTag['tracks'].uniq!
       else
         putsRealtime "provide 2 or more tags to join together"
       end
 
-      firstTag
+      baseTag
     end
 
     def createTag(tagName)
