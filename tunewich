@@ -158,7 +158,18 @@ module Tunewich
 
 		def sendPlayerCommand command, playerIndex = nil
 			playerIndex ||= @currentPlayerIndex
+			if playerIndex == @currentPlayerIndex
+				if /play/.match command
+					@isPlayerPlaying = true
+				elsif /pause/.match command
+					@isPlayerPlaying = false
+				end
+			end
 			putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
+		end
+
+		def togglePlay
+			sendPlayerCommand @isPlayerPlaying ? 'pause' : 'play'
 		end
 
 		def interactivePlayback
@@ -433,6 +444,15 @@ module Tunewich
 				end
 			end
 			ratio
+		end
+
+		def addChapter track, newChapter
+			if not track['chapters']
+				track['chapters'] = []
+			end
+
+			track['chapters'] << newChapter
+			track['chapters'] = sortChapters track['chapters']
 		end
 
 		def editChapters chapters, emphasizeChapterIndex = nil
@@ -1080,19 +1100,19 @@ module Tunewich
 						'description' => "Make a chapter, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing). Input: name.",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							newChapter = {
-								'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime),
-								'text' => inputParts[1]
-							}
 
-							if not @currentTrack['chapters']
-								@currentTrack['chapters'] = []
-							end
+							loadLibrary
+							@currentTrack = matchExistingLibraryTrack @currentTrack
 
-							@currentTrack['chapters'] << newChapter
-							@currentTrack['chapters'] = sortChapters @currentTrack['chapters']
+							addChapter(
+								@currentTrack,
+								{
+									'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime),
+									'text' => inputParts[1]
+								}
+							)
+
 							writeLibraryToFile
-							whisper("New chapter written to library file", 3)
 
 							{:chainedInput => inputParts[2]}
 						}
@@ -1673,11 +1693,12 @@ module Tunewich
 							@loop = getToggledValueByInput.call(@loop, inputParts[1])
 							sendPlayerCommand "loop #{@loop ? '0' : '-1'}"
 							putsRealtime "loop: #{@loop ? 'on' : 'off'}"
-							{:chainedInput => input}
+							{:chainedInput => inputParts[2]}
 						}
 					},
 					'seek' => {
 						'description' => 'Seek to a time code. Prefix with "+" or "-" to seek relative to current play position. use "/seek mark" to seek to a time marked with the "/mark" command."',
+						'args' => ['mark'],
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
@@ -2166,11 +2187,6 @@ module Tunewich
 			playerStartupOptions = ["-slave -quiet -input file=#{playerInputFile}"]
 			playerStatus = nil
 			playerAction = Proc.new { |command|
-				if /play/.match command
-					@isPlayerPlaying = true
-				elsif /pause/.match command
-					@isPlayerPlaying = false
-				end
 				sendPlayerCommand command
 				true
 			}
@@ -2186,6 +2202,29 @@ module Tunewich
 
 			if @loop && track['loop'].kind_of?(Array)
 				whisper("This track has has an A/B loop (#{track['loop'].join(" - ")}. This will deprecated in favor of looping notes; for now, use looping chapters instead.", 0)
+				if false && confirm("Change this track's A/B loop to looping chapters?") # disabled
+					loadLibrary
+					track = matchExistingLibraryTrack track
+
+					addChapter(
+						track,
+						{
+							'time' => getDurationStringFromSeconds(track['loop'][0]),
+							'text' => 'a'
+						}
+					)
+					addChapter(
+						track,
+						{
+							'time' => getDurationStringFromSeconds(track['loop'][1]),
+							'text' => 'b',
+							'loop_target' => 'a'
+						}
+					)
+					track.delete 'loop'
+
+					writeLibraryToFile
+				end
 			end
 
 			if track['mark'] && !liveStreaming
@@ -2277,7 +2316,7 @@ module Tunewich
 			@inputThread.kill if @inputThread
 			@inputThread = Thread.new {
 				whisper("commandPrompt start (opening input thread)", 4)
-				commandPrompt Player::PLAYER_APPLICATION, interactiveCommands, playerAction
+				commandPrompt '', interactiveCommands, playerAction
 				whisper("commandPrompt end", 4)
 			}
 			if @playerTemporaryInteractiveCommands.length > 0
@@ -2403,7 +2442,7 @@ module Tunewich
 				playbackInfo << "#{unicodeChars[:speaker]} #{volumeIndication}"
 
 				# show playback position
-				timeMessage = "#{unicodeChars[:timer]}	#{getDurationStringFromSeconds @currentPlayerTime}"
+				timeMessage = "#{unicodeChars[:timer]}	#{getDurationStringFromSeconds @currentPlayerTime, 0}"
 				timeMessage += "/#{@currentTrack['duration']}" if @currentTrack.has_key?('duration')
 				timeMessage += "(#{(@currentSpeed * 10).round / 10.0}x)" if @currentSpeed != 1
 				playbackInfo << timeMessage
@@ -3298,7 +3337,7 @@ module Tunewich
 
 			trackInfo = JSON.parse(json)
 			track['title'] = trackInfo['fulltitle']
-			track['duration'] = getDurationStringFromSeconds(trackInfo['duration'])
+			track['duration'] = getDurationStringFromSeconds(trackInfo['duration']), 0
 			track['description'] = trackInfo['description']
 			track['link'] = trackInfo['webpage_url'] || "https://youtu.be/#{youtubeVideoID}"
 			track['type'] = trackInfo['extractor']
@@ -3535,12 +3574,13 @@ module Tunewich
 		# Utility Methods
 		##
 
-		def getDurationStringFromSeconds inputSeconds
-			inputSeconds = inputSeconds.to_i
-			seconds = inputSeconds % 60
-			minutes = inputSeconds / 60 % 60
-			hours = inputSeconds / 3600 % 24
-			days = inputSeconds / 86400
+		def getDurationStringFromSeconds inputSeconds, roundDigits = 2
+			inputSeconds = inputSeconds.to_f
+			wholeSeconds = inputSeconds.to_i
+			seconds = (inputSeconds % 60).truncate(roundDigits)
+			minutes = wholeSeconds / 60 % 60
+			hours = wholeSeconds / 3600 % 24
+			days = wholeSeconds / 86400
 
 			outputString = ''
 			outputString += "#{days}" if days > 0
@@ -3768,7 +3808,11 @@ module Tunewich
 					@trackIndex = trackQuery.to_i - 1
 				else
 					@trackIndex = findTrackIndex(trackQuery) || nil
-					whisper("@trackIndex: #{@trackIndex}", 3)
+					if @trackIndex
+						whisper("Going to track #{@trackIndex + 1}.", 2)
+					else
+						whisper("Could not find track by query '#{trackQuery}'.", 0)
+					end
 				end
 			end
 
@@ -4205,7 +4249,19 @@ module Tunewich
 		def handleInputCharacter inputCharacter, prompt, commands, leftoverAction
 			result = true
 
-			if inputCharacter == "" # control-c character
+			if /[\n\r]/.match inputCharacter
+				inputLine = @commandUserInput
+				@commandUserInput = nil
+				actionResponse = handleInputLine(inputLine, commands, leftoverAction) if inputLine
+
+				if actionResponse
+					prompt.call
+				else
+					result = false
+				end
+			elsif inputCharacter == " " && (!@commandUserInput || @commandUserInput.length == 0) # first space
+				togglePlay
+			elsif inputCharacter == "" # control-c character
 				whisper("interrupt character, is that you?", 3)
 				enablePlaybackInfo
 				result = false
@@ -4228,16 +4284,6 @@ module Tunewich
 					printRepeat @commandUserInput
 				end
 				@commandInputTyped = nil
-			elsif /[\n\r]/.match inputCharacter
-				inputLine = @commandUserInput
-				@commandUserInput = nil
-				actionResponse = handleInputLine(inputLine, commands, leftoverAction) if inputLine
-
-				if actionResponse
-					prompt.call
-				else
-					result = false
-				end
 			else
 				if not @commandUserInput
 					@commandUserInput = ''

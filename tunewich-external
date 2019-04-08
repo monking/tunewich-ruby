@@ -1,5 +1,21 @@
 #!/bin/bash
 
+printN() {
+	local count=$1
+	local fill="$2"
+	local i=0
+	while [[ $i -lt $count ]]; do
+		i=$((i+1))
+		echo -ne "$2"
+	done
+}
+
+clearN() {
+	printN $1 "\r" # back up
+	printN $1 " " # overwrite blank
+	printN $1 "\r" # back up again
+}
+
 showHelp() {
 echo "
 OPTIONS:
@@ -86,9 +102,9 @@ else
 				echo -ne "$ch";;
 			$'[A') getLastCommand;;
 			$'[B') getNextCommand;;
-			"") inputLine=;;
-			"") [[ ${#inputLine} -gt 0 ]] && inputLine="${inputLine:0:$((${#inputLine} - 1))}";;
-			*) [[ $isMultibyteChar != true ]] && inputLine+="$ch";;
+			"") clearN $((${#prompt}+${#inputLine})); inputLine=;;
+			"") [[ ${#inputLine} -gt 0 ]] && { clearN 1; inputLine="${inputLine:0:$((${#inputLine} - 1))}"; } ;; # backspace
+			*) [[ $isMultibyteChar != true && ( "$ch" != " " || ${#inputLine} -gt 0 ) ]] && inputLine+="$ch";;
 		esac
 		1>&2 echo -ne "\r${prompt}${inputLine}"
 		[[ $commitMode = char ]] && echo -ne "$ch" > "$queueFile"
