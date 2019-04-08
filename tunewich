@@ -721,8 +721,8 @@ module Tunewich
 								tagNames = getTrackTags track
 
 								outputMessageLines = []
+								info = {}
 								if !alreadyHas[:title] || !alreadyHas[:duration] || track['title'].length == 0
-									info = {}
 									if track['type'] === 'youtube'
 										info = getYouTubeTrackInfo track['src']
 									elsif track['type'] === 'soundcloud'
