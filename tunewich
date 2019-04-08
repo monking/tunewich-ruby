@@ -1824,38 +1824,41 @@ module Tunewich
 
 							{:chainedInput => inputParts[:remainder]}
 						}
-					}
-				},
-				'kill' => {
-				},
-				'edit' => {
-				},
-				'play' => {
-					'' => {
-						'description' => "Chainable player commands (empty command, i.e. '/').",
-						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
-							output = {
-								:chainedInput => inputParts[:remainder]
-							}
-							if inputParts[:query] && inputParts[:query].length > 0
-								whisper("Running player action (#{input})", 3)
-								output[:action] = inputParts[:query]
+					},
+					'loop' => {
+						'description' => '/loop [COUNT]: Set the loop limit, or toggle looping off/on, or toggle only inner loops, or \'reset\' the loop counters.',
+						'args' => ['off', 'on', 'inner', 'reset'],
+						'showStatus' => Proc.new {
+							statusMessage = "Looping: #{@loop ? 'on' : 'off'} #{getLoopLimitStatusMessage}"
+							statusExtras = []
+							if @breakLoop
+								statusExtras << "breaking current loop"
+							end
+							if @innerLoopsOnly
+								statusExtras << "inner loops only"
 							end
 
-							output
-						},
-						'inputOptions' => Proc.new { |input, command|
-							`#{PLAYER_APPLICATION} -input cmdlist`.split("\n")
-						}
-					},
-					'stop' => {
-						'description' => 'Stop playing (enter "edit" mode).',
-						'action' => Proc.new { |input, command|
-							setUserMode MODES['edit']
-							exitPlayerCommand
+							statusMessage += " (#{statusExtras.join('; ')})" if statusExtras.length > 0
 
-							false
+							putsRealtime statusMessage
+						},
+						'action' => Proc.new { |input, command|
+							inputParts = getCommandInputParts(input)
+							if inputParts[:query].match(/^[0-9]+$/)
+								loopLimit = inputParts[:query].to_i
+								@loop = true
+								@loopLimit = loopLimit
+							elsif inputParts[:query] == 'reset'
+								@loopHistory = {}
+							elsif inputParts[:query] == 'inner'
+								@innerLoopsOnly = getToggledValueByInput.call(@innerLoopsOnly, inputParts[:query])
+							else
+								@loop = getToggledValueByInput.call(@loop, inputParts[:query])
+							end
+
+							command['showStatus'].call
+
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'shuffle' => {
@@ -1869,73 +1872,6 @@ module Tunewich
 							@shuffle = getToggledValueByInput.call(@shuffle, inputParts[:query])
 							shuffleIndex() if @shuffle
 							command['showStatus'].call
-							{:chainedInput => inputParts[:remainder]}
-						}
-					},
-					'noteOld' => {
-						'description' => "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing).",
-						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
-							notesChanged = false;
-
-							loadLibrary
-							@currentTrack = matchExistingLibraryTrack @currentTrack
-
-							# TODO 1gor9z: when typing `/note` and there are no existing notes, begin creating a note
-							if !inputParts[:query] || inputParts[:query].length < 1
-								if @currentTrack.has_key? 'notes'
-									notesList = @currentTrack['notes'].map { |note| "#{note['time']} - #{note['text']}" }
-									editedNotesList = editListInVim notesList
-									if editedNotesList.length > 0
-										editedNotes = []
-										editedNotesList.each_with_index { |editedLine, index|
-											lineMatches = editedLine.match(/^([0-9:]+) - (.*)( \(([0-9-]{10}T[0-9]{8}[Z0-9-]+)\))?/)
-											if lineMatches
-												editedNote = {
-													'time' => lineMatches[1],
-													'text' => lineMatches[2]
-												}
-												if lineMatches[4] && lineMatches[4].length > 0
-													editedNote['datetime'] = lineMatches[4]
-												end
-												editedNotes << editedNote
-											else
-												editedNotes.last['text'] += "\n#{editedLine}"
-											end
-										}
-										@currentTrack['notes'] = editedNotes
-									else
-										@currentTrack.delete('notes')
-									end
-									notesChanged = true
-								else
-									putsRealtime "No notes on the current track."
-								end
-							else
-								@currentTrack['notes'] ||= []
-								note = {
-									'text' => inputParts[:query],
-									'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime)
-								}
-								liveStreaming = doesTrackHaveTag(@currentTrack, 'live-radio') # TODO: 1gSke5
-								if liveStreaming
-									note['datetime'] = Time.now.iso8601
-								end
-								if note['text'].length < 1
-									note['text'] = editListInVim([], 'Write your note').join "\n"
-								end
-								@currentTrack['notes'] << note
-								notesChanged = true
-							end
-
-							if notesChanged
-								if @currentTrack.has_key?('notes')
-									@currentTrack['notes'].sort! { |a, b| getSecondsFromDurationString(a['time']) <=> getSecondsFromDurationString(b['time']) } # TODO: 1gG4hJ
-								end
-								addTrackToLibrary @currentTrack if @currentTrack['unattached']
-								writeLibraryToFile
-							end
-
 							{:chainedInput => inputParts[:remainder]}
 						}
 					},
@@ -2041,6 +1977,63 @@ module Tunewich
 						},
 						'inputOptionsLabel' => 'EQ presets'
 					},
+					'brightness' => generateVisualCommand.call('brightness'),
+					'contrast' => generateVisualCommand.call('contrast'),
+					'saturation' => generateVisualCommand.call('saturation'),
+					'hue' => generateVisualCommand.call('hue'),
+					'logarithmic' => {
+						'description' => 'Toggle logarithmic volume scale.',
+						'action' => Proc.new { |input, command|
+							@isVolumeAlreadyLogarithmic= !@isVolumeAlreadyLogarithmic
+							putsRealtime "logarithmic volume scale: #{@isVolumeAlreadyLogarithmic ? 'off' : 'on'}"
+							{:chainedInput => input}
+						}
+					},
+					'again' => {
+						'description' => "Play this track again, next.",
+						'action' => Proc.new { |input, command|
+							@trackIndex = @tracks.index @currentTrack
+							if !@trackIndex
+								useTracks [@currentTrack]
+								@trackIndex = @tracks.length - 1
+								# TODO 1gG4iz: add @currentTrack to queue
+							end
+							{:chainedInput => input}
+						}
+					}
+				},
+				'kill' => {
+				},
+				'edit' => {
+				},
+				'play' => {
+					'' => {
+						'description' => "Chainable player commands (empty command, i.e. '/').",
+						'action' => Proc.new { |input, command|
+							inputParts = getCommandInputParts(input)
+							output = {
+								:chainedInput => inputParts[:remainder]
+							}
+							if inputParts[:query] && inputParts[:query].length > 0
+								whisper("Running player action (#{input})", 3)
+								output[:action] = inputParts[:query]
+							end
+
+							output
+						},
+						'inputOptions' => Proc.new { |input, command|
+							`#{PLAYER_APPLICATION} -input cmdlist`.split("\n")
+						}
+					},
+					'stop' => {
+						'description' => 'Stop playing (enter "edit" mode).',
+						'action' => Proc.new { |input, command|
+							setUserMode MODES['edit']
+							exitPlayerCommand
+
+							false
+						}
+					},
 					'fade' => {
 						'description' => '/fade VOLUME [DURATION]; VOLUME can be "out" or "in", which will fade from or to the last explicit volume set.',
 						'args' => ['out', 'in'],
@@ -2099,10 +2092,6 @@ module Tunewich
 							output
 						}
 					},
-					'brightness' => generateVisualCommand.call('brightness'),
-					'contrast' => generateVisualCommand.call('contrast'),
-					'saturation' => generateVisualCommand.call('saturation'),
-					'hue' => generateVisualCommand.call('hue'),
 					'glide' => {
 						'description' => '/glide DURATION [DELAY] - Set BPM "glide" period. Default 0 (i.e. off). If changing between two tracks with tempo information, the second track will begin playing to match the tempo of the first, and then "glide" for DURATION (after DELAY) back to the configured global speed.',
 						'action' => Proc.new { |input, command|
@@ -2147,43 +2136,6 @@ module Tunewich
 							{:chainedInput => inputParts[:remainder]}
 						}
 					},
-					'loop' => {
-						'description' => '/loop [COUNT]: Set the loop limit, or toggle looping off/on, or toggle only inner loops, or \'reset\' the loop counters.',
-						'args' => ['off', 'on', 'inner', 'reset'],
-						'showStatus' => Proc.new {
-							statusMessage = "Looping: #{@loop ? 'on' : 'off'}"
-							statusExtras = []
-							if @breakLoop
-								statusExtras << "breaking current loop"
-							end
-							if @innerLoopsOnly
-								statusExtras << "inner loops only"
-							end
-							statusExtras << getLoopLimitStatusMessage
-
-							statusMessage += " (#{statusExtras.join('; ')})"
-
-							putsRealtime statusMessage
-						},
-						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
-							if inputParts[:query].match(/^[0-9]+$/)
-								loopLimit = inputParts[:query].to_i
-								@loop = true
-								@loopLimit = loopLimit
-							elsif inputParts[:query] == 'reset'
-								@loopHistory = {}
-							elsif inputParts[:query] == 'inner'
-								@innerLoopsOnly = getToggledValueByInput.call(@innerLoopsOnly, inputParts[:query])
-							else
-								@loop = getToggledValueByInput.call(@loop, inputParts[:query])
-							end
-
-							command['showStatus'].call
-
-							{:chainedInput => inputParts[:remainder]}
-						}
-					},
 					'seek' => {
 						'description' => 'Seek to a time code. Prefix with "+" or "-" to seek relative to current play position. use "/seek mark" to seek to a time marked with the "/mark" command."',
 						'args' => ['mark'],
@@ -2194,26 +2146,6 @@ module Tunewich
 							seekTimeInSeconds = parseRelativeTime seekInput
 							seek seekTimeInSeconds, 0.5, 0.5
 							{:chainedInput => inputParts[:remainder]}
-						}
-					},
-					'logarithmic' => {
-						'description' => 'Toggle logarithmic volume scale.',
-						'action' => Proc.new { |input, command|
-							@isVolumeAlreadyLogarithmic= !@isVolumeAlreadyLogarithmic
-							putsRealtime "logarithmic volume scale: #{@isVolumeAlreadyLogarithmic ? 'off' : 'on'}"
-							{:chainedInput => input}
-						}
-					},
-					'again' => {
-						'description' => "Play this track again, next.",
-						'action' => Proc.new { |input, command|
-							@trackIndex = @tracks.index @currentTrack
-							if !@trackIndex
-								useTracks [@currentTrack]
-								@trackIndex = @tracks.length - 1
-								# TODO 1gG4iz: add @currentTrack to queue
-							end
-							{:chainedInput => input}
 						}
 					}
 				}
@@ -2876,7 +2808,7 @@ module Tunewich
 						targetNoteIndex = getNoteIndexByQuery loopTarget, @currentTrack[noteType]
 						isLooping = true
 						if targetNoteIndex
-							whisper("\nLoop ##{getLoopLimitStatusMessage}", 1)
+							whisper("\nLoop #{getLoopLimitStatusMessage}", 1)
 							seekTime = @currentTrack[noteType][targetNoteIndex]['time']
 							seekSeconds = getSecondsFromDurationString seekTime
 							seek seekSeconds
@@ -2956,8 +2888,11 @@ module Tunewich
 		end
 
 		def getLoopLimitStatusMessage
-			# FIXME: @loopHistory appears like an empty object always, though loop limits are working, so @loopHistory is obviously non-empty
-			"#{JSON.generate(@loopHistory)}/#{@loopLimit == 0 ? "∞" : "#{@loopLimit} times"}"
+			status = "(limit: #{@loopLimit == 0 ? "∞" : "#{@loopLimit}"})"
+			loopHistory = @loopHistory.map { |k,v| "#{k} - #{v}" }.join("\n")
+			status += "\n#{loopHistory}" if loopHistory && loopHistory.length > 0
+
+			status
 		end
 
 		def showPlaybackInfo
@@ -4235,14 +4170,16 @@ module Tunewich
 			timecodeRegExpPattern = /^[0-9:.]+$/
 
 			if durationString
-				if durationString.kind_of?(String) && durationString.length > 0 && durationString.match(timecodeRegExpPattern)
-					seconds = 0
-					factor = 1
-					factors = [1.0, 60.0, 60.0, 24.0]
-					durationString.split(':').reverse.each_with_index { |unit, index|
-						factor *= factors[index]
-						seconds += unit.to_f * factor
-					}
+				if durationString.kind_of?(String)
+					if durationString.length > 0 && durationString.match(timecodeRegExpPattern)
+						seconds = 0
+						factor = 1
+						factors = [1.0, 60.0, 60.0, 24.0]
+						durationString.split(':').reverse.each_with_index { |unit, index|
+							factor *= factors[index]
+							seconds += unit.to_f * factor
+						}
+					end
 				else
 					seconds = durationString.to_f
 				end
