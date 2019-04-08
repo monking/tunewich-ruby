@@ -1131,10 +1131,18 @@ module Tunewich
 			@library['playlists'][name] = newPlaylist
 		end
 
-		def createTrack id
+		def createTrack url, type = 'youtube'
+			if type == 'youtube'
+				src = looksLikeAYouTubeID?(url) ? url : getYoutubeIdFromUrl(url)
+				id = src
+			elsif type == 'ocremix'
+				src = getOCRemixSource url
+				id = getIDFromOCRemixURL url
+			end
 			{
 				'id' => id,
-				'src' => id, # NOTE: assuming ID is a YouTube video ID, so that it's also the "src"
+				'type' => type,
+				'src' => src,
 				'unattached' => true
 			}
 		end
@@ -1247,7 +1255,7 @@ module Tunewich
 			printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
 
 			queryResultIds.each_with_index do |id, index|
-				track = matchExistingLibraryTrack createTrack id
+				track = matchExistingLibraryTrack createTrack id, 'youtube'
 				resultTracks << track
 				threads << Thread.new {
 					if not updateTrackInfo track
@@ -1262,6 +1270,26 @@ module Tunewich
 			print "\n"
 
 			resultTracks
+		end
+
+		def getOCRemixSource(url)
+			source = nil
+
+			open(url) do |handle|
+				sourcePattern = /^.*href="(https?:\/\/ocrmirror.org[^"]+)".*$/
+				sourceLine = handle.lines.grep(sourcePattern)
+				if sourceLine && sourceLine.length > 0
+					match = sourceLine[0].match sourcePattern
+					source = match[1]
+					puts "source: #{source}" # XXX
+				end
+			end
+
+			source
+		end
+
+		def getIDFromOCRemixURL(url)
+			url.sub(/^.*\/remix\/([^\/?]+).*/, '\1')
 		end
 
 		##
@@ -1293,14 +1321,17 @@ module Tunewich
       parser.on("-a", "--add-track YOUTUBE_URLS", "Add tracks to the library, and to a playlist, if specified. Takes a comma-separated list of YouTube URLs or IDs.", " ") do |urls|
 				output[:newTracks] = []
 				urls.split(',').each { |url|
-					if looksLikeAYouTubeID? url
+					if url.match(/ocremix\.org\/remix/)
+						output[:newTracks] << createTrack(url, 'ocremix')
+            puts "This URL contains an OC Remix ID. Adding."
+					elsif looksLikeAYouTubeID? url
 						youtubeId = url
 					else
 						youtubeId = getYoutubeIdFromUrl url
 					end
 
           if youtubeId
-            output[:newTracks] << updateTrackInfo(createTrack(youtubeId))
+            output[:newTracks] << updateTrackInfo(createTrack(youtubeId, 'youtube'))
             puts "This URL contains a YouTube ID. Adding."
           end
 
