@@ -133,7 +133,7 @@ module Tunewich
 							tagsToRemove = []
 							tagsToAdd.each { |tagName|
 								if /^-/.match tagName
-									tagsToRemove << tagName.sub(/^-/, '')
+									tagsToRemove << tagName.gsub(/^-/, '')
 									tagsToAdd.delete tagName
 								end
 							}
@@ -1280,31 +1280,32 @@ module Tunewich
 			end
 
 			if filters['tag']
-				filters['tag'] = filters['tag']
 				# TODO: add a tag fuzzy factor: include tags of tracks that have the current tag (only 1 degree separation to start)
-				tag = nil
-				if @library['tags'][filters['tag']]
-					foundTagName = filters['tag']
-					tag = @library['tags'][filters['tag']]
-				else
-					@library['tags'].each { |name, libraryTag|
-						if libraryTag['aliases']
-							libraryTag['aliases'].each { |tagAlias|
-								if tagAlias == filters['tag']
-									foundTagName = name
-									tag = libraryTag
-								end
-							}
-						end
-					}
-				end
-
-				if tag
-					foundTagName = "\"#{foundTagName}\""
-					if tag['aliases'] && tag['aliases'].length > 0
-						foundTagName = "#{foundTagName} (aliases \"#{tag['aliases'].join '", "'}\")"
+				selectedTags = []
+				filters['tag'].split(' ').each { |tagName|
+					if @library['tags'][tagName]
+						selectedTags << {:name => tagName, :tag => @library['tags'][tagName]}
+					else
+						@library['tags'].each { |name, libraryTag|
+							if libraryTag['aliases']
+								libraryTag['aliases'].each { |tagAlias|
+									if tagAlias == tagName
+										selectedTags << {:name => name, :tag => libraryTag}
+									end
+								}
+							end
+						}
 					end
-					tracks.send(action) { |t| tag['tracks'].index t['id'] }
+				}
+
+				if selectedTags.length > 0
+					selectedTags.each { |tagInfo|
+						foundTagName = "\"#{tagInfo[:name]}\""
+						if tagInfo[:tag]['aliases'] && tagInfo[:tag]['aliases'].length > 0
+							foundTagName = "#{foundTagName} (aliases \"#{tagInfo[:tag]['aliases'].join '", "'}\")"
+						end
+						tracks.send(action) { |t| tagInfo[:tag]['tracks'].index t['id'] }
+					}
 				else
 					puts "No matches for \"#{filters['tag']}\". Available tags are: #{listAllTagsWithAliases.join ", "}"
 				end
