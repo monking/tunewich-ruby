@@ -646,7 +646,7 @@ module Tunewich
 					}
 				},
 				'stream' => {
-          'description' => "Ignore downloaded files.",
+					'description' => "Ignore downloaded files.",
 					'action' => Proc.new { |input|
 						@forceStreaming = !@forceStreaming
 						puts "force streaming: #{@forceStreaming ? 'on' : 'off'}"
@@ -2647,11 +2647,11 @@ module Tunewich
 
 		def printRepeat message
 			message = message.to_s if message.respond_to? 'to_s'
-      outputMessage = "  #{message}"
-      shellColumnWidth = (`tput cols` || 80).to_i
-      if outputMessage.length > shellColumnWidth
-        outputMessage = "#{outputMessage[0,shellColumnWidth - 3]}..."
-      end
+			outputMessage = "  #{message}"
+			shellColumnWidth = (`tput cols` || 80).to_i
+			if outputMessage.length > shellColumnWidth
+				outputMessage = "#{outputMessage[0,shellColumnWidth - 3]}..."
+			end
 			print "#{outputMessage}#{$clearLineCharacter}\r"
 			@printRepeatMessage = message.match(/\n/) ? nil : message
 		end
