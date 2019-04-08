@@ -504,7 +504,7 @@ module Tunewich
 											trigger waitEvent
 										}
 									else
-										availableWaitEvents = [
+										availableWaitEvents = [ # @refactor store 1 copy only
 											'chapter_change',
 											'play_start',
 											'play_end',
@@ -532,6 +532,39 @@ module Tunewich
 							end
 
 							output
+						},
+						'availableWaitEvents' => [
+							'chapter_change',
+							'play_start',
+							'play_end',
+							'fade_start',
+							'fade_end',
+							'speed_ramp_start',
+							'speed_ramp_end',
+							'download_success'
+						],
+						'tabAction' => Proc.new { |input|
+							inputParts = input.match(/^([^\/]*)(.*)$/)
+							availableWaitEvents = [ # @refactor store 1 copy only
+								'chapter_change',
+								'play_start',
+								'play_end',
+								'fade_start',
+								'fade_end',
+								'speed_ramp_start',
+								'speed_ramp_end',
+								'download_success'
+							]
+							whisper("/wait '#{inputParts[1]}'", 2) # XXX
+							if inputParts[1] && inputParts[1].length > 0
+								guessWaitEvent = firstFuzzyMatchValue(inputParts[1], availableWaitEvents)
+								if guessWaitEvent && guessWaitEvent.length > 0
+									input = input.sub!(inputParts[1], guessWaitEvent)
+								end
+							else
+								putsRealtime "Available events: #{availableWaitEvents.join ', '}"
+							end
+							input
 						}
 					},
 					'clear' => {
@@ -4249,10 +4282,8 @@ module Tunewich
 									commandName = newCommandName if newCommandName
 								end
 
-								commandInput = inputParts[3]
+								commandInput = inputParts[3] || ''
 								if (
-									commandInput &&
-									commandInput.length > 0 &&
 									commands.has_key?(commandName) &&
 									commands[commandName].has_key?('tabAction')
 								)
