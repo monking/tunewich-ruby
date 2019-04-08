@@ -1198,7 +1198,8 @@ module Tunewich
 						}
 					},
 					'format' => {
-						'description' => 'Choose the file format to download (e.g. "mp4"; default "m4a").',
+						'description' => 'Choose the file format to download/stream (e.g. "mp4"; default "m4a").',
+						'args' => ['m4a', 'mp4', 'bestaudio', 'bestvideo', '[height=720]'],
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1].length > 0
@@ -1214,24 +1215,6 @@ module Tunewich
 						'action' => Proc.new { |input|
 							system "#{Player::PLAYER_APPLICATION} -input cmdlist"
 							{:chainedInput => input}
-						}
-					},
-					'rm' => {
-						'description' => 'remove selected tracks',
-						'action' => Proc.new { |input|
-							inputParts = input.match(/^([^\/]*)(.*)$/)
-							editedTrackList = editTrackList @tracks
-							initialLibraryLength = @library['tracks'].length
-							editedTrackList.each do |track|
-								removeTrackFromLibrary track['id']
-							end
-							checksum = initialLibraryLength - editedTrackList.length == @library['tracks'].length
-							checksumString = "#{initialLibraryLength} - #{editedTrackList.length} == #{@library['tracks'].length}"
-							if checksum
-								writeLibraryToFile
-							end
-							putsRealtime "#{checksumString} ... #{checksum ? 'OK: changes written' : 'Mismatch: changes not written'}"
-							{:chainedInput => inputParts[2]}
 						}
 					},
 					'jointag' => {
@@ -1255,6 +1238,24 @@ module Tunewich
 							end
 
 							putsRealtime "Tags: \n	#{@library['tags'].keys.sort.join(", ")}" if not success
+							{:chainedInput => inputParts[2]}
+						}
+					},
+					'rm' => {
+						'description' => 'remove selected tracks',
+						'action' => Proc.new { |input|
+							inputParts = input.match(/^([^\/]*)(.*)$/)
+							editedTrackList = editTrackList @tracks
+							initialLibraryLength = @library['tracks'].length
+							editedTrackList.each do |track|
+								removeTrackFromLibrary track['id']
+							end
+							checksum = initialLibraryLength - editedTrackList.length == @library['tracks'].length
+							checksumString = "#{initialLibraryLength} - #{editedTrackList.length} == #{@library['tracks'].length}"
+							if checksum
+								writeLibraryToFile
+							end
+							putsRealtime "#{checksumString} ... #{checksum ? 'OK: changes written' : 'Mismatch: changes not written'}"
 							{:chainedInput => inputParts[2]}
 						}
 					},
@@ -2606,7 +2607,7 @@ module Tunewich
 		end
 
 		def findTrackIndex(query)
-			firstFuzzyMatchIndex query, getTrackTitles(@tracks)
+			@tracks.index(query) || firstFuzzyMatchIndex(query, getTrackTitles(@tracks))
 		end
 
 		def findPlaylistName(query)
