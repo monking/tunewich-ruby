@@ -274,16 +274,33 @@ module Tunewich
 								targetFadeVolume = targetFadeVolume.to_f
 							end
 							volumeFadeInterval = 0.02
-							volumeFadeStepCount = duration / volumeFadeInterval
-							volumeStep = (targetFadeVolume - volume) / duration * volumeFadeInterval
+							volumeFadeStepCount = (duration / volumeFadeInterval).to_i
+							whisper ">volumeFadeStepCount: #{volumeFadeStepCount}"
 							whisper "about to fade volume"
-							for stepIndex in 1..volumeFadeStepCount
-								volume += volumeStep
-								printRepeat "fading: #{volume.round()}"
-								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{volume} 1\n"
-								sleep volumeFadeInterval
+							volumeSpan = targetFadeVolume - volume
+							whisper ">volumeSpan: #{volumeSpan}"
+							lowerVolume = [volume, targetFadeVolume].min
+							if volumeSpan != 0
+								absoluteVolumeSmap = volumeSpan.abs
+								setLogarithmicVolumeByStep = Proc.new { |stepIndex|
+									whisper ">stepIndex: #{stepIndex}"
+									volume = 10**(Math.log10(volumeSpan.abs) / volumeFadeStepCount * stepIndex) + lowerVolume
+									whisper ">volume: #{volume}"
+									whisper volume
+									printRepeat "fading: #{volume.round()}"
+									putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{volume} 1\n"
+									sleep volumeFadeInterval
+								}
+								if volumeSpan > 0
+									# 1.upto(volumeFadeStepCount) setLogarithmicVolumeByStep # would this work?
+									1.upto(volumeFadeStepCount - 1) { |stepIndex| setLogarithmicVolumeByStep.call stepIndex }
+								else
+									(volumeFadeStepCount - 1).downto(1) { |stepIndex| setLogarithmicVolumeByStep.call stepIndex }
+								end
+								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{targetFadeVolume} 1\n"
+							else
+								whisper "fading to the same volume: doing nothing"
 							end
-							putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{targetFadeVolume} 1\n"
 						end
 						output
 					}
