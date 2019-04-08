@@ -32,8 +32,10 @@ module Tunewich
 			if @tracks
 				titleBlock "Playing #{@tracks.length} tracks", '#'
 			else
-				usePlaylist promptForPlaylist
-				titleBlock "Playlist: #{@playlistName} (#{@tracks.length})", '#'
+				if selectedListName = promptForPlaylist
+					usePlaylist selectedListName
+					titleBlock "Playlist: #{@playlistName} (#{@tracks.length})", '#'
+				end
 			end
 
 			if @trackIndex == nil
@@ -138,7 +140,7 @@ module Tunewich
 			selectedListName = nil
 			while !selectedListName do
 				playlistQuery = STDIN.gets.chomp
-				if not playlistQuery
+				if not playlistQuery or playlistQuery.length === 0
 					useEntireLibrary
 					break
 				end
