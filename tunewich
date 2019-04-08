@@ -63,8 +63,12 @@ module Tunewich
 			while playbackSuccessful do
 				break if not @tracks[@trackIndex]
 
+				titleBlock "[#{@trackIndex + 1}] - #{@tracks[@trackIndex]['title']}"
+
 				chapterIndex = @tracks[@trackIndex]['chapters'] ? promptForChapterIndex(@tracks[@trackIndex]['chapters']) : nil
+
 				playbackSuccessful = play @tracks[@trackIndex], chapterIndex
+
 				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
 			end
 		end
@@ -285,8 +289,6 @@ module Tunewich
 		end
 
 		def play(track, chapterIndex)
-			titleBlock "[#{@trackIndex + 1}] - #{track['title']}"
-
 			mplayerCommands = []
 
 			fileExists = fileExistsFromID? track['src']
@@ -510,7 +512,7 @@ module Tunewich
 
 			if trackInfo['description']
 				chapters = getChaptersFromDescription trackInfo['description'].lines
-				track['chapters'] = chapters if chapters
+				track['chapters'] = chapters if chapters && chapters.length > 0
 			end
 
 			track
@@ -521,7 +523,7 @@ module Tunewich
 				matches = line.match(/^(.*?)[ (]*([0-9]+:[0-9:.]+)[ )]*(.*)$/)
 				{
 					'time' => matches[2],
-					'name' => "#{matches[1]} #{matches[3]}".strip
+					'name' => "#{matches[1]} #{matches[3]}".gsub(/^[^0-z]/, '').strip
 				}
 			end
 		end
@@ -569,10 +571,11 @@ module Tunewich
 
 			resultTracks = []
 			queryResultIds.slice(0, count).each_with_index do |id, index|
-				puts "Getting track information (#{index + 1}/#{count})"
+				print "Getting track information (#{index + 1}/#{count})    \r"
 				track = createTrack id
 				resultTracks.push track
 			end
+			print "\n"
 
 			resultTracks
 		end
