@@ -1861,7 +1861,7 @@ module Tunewich
 						}
 					},
 					'again' => {
-						'description' => "Play the last track again.",
+						'description' => "Play this track again, next.",
 						'action' => Proc.new { |input, command|
 							@trackIndex = @tracks.index @currentTrack
 							if !@trackIndex
