@@ -173,7 +173,7 @@ module Tunewich
 				playerOutput = play track, chapterIndex
 
 				if (@playthroughThreshold && playerOutput[:playtime] > @playthroughThreshold)
-					puts "Played more than #{@playthroughThreshold}s, saving to library"
+					puts "Played more than #{@playthroughThreshold}s, saving to library."
 					loadLibrary
 					track = matchExistingLibraryTrack track
 					track['played'] = Time.now.to_i
@@ -299,7 +299,7 @@ module Tunewich
 			if streaming
 				deleteStream streamName
 			elsif !fileAlreadyExists && track['unattached'] && !@keepUnattachedDownload
-				deleteFileById track['src']
+				deleteFileById track['id']
 				titleBlock "UNATTACHED DOWNLOAD DELETED", 'X'
 			end
 
@@ -437,7 +437,7 @@ module Tunewich
 		end
 
 		def findTrackFiles(track)
-      Dir.glob("#{getFilePrefixFromId track['src']}*")
+      Dir.glob("#{getFilePrefixFromId track['id']}*")
 		end
 
 		def trackFileExists?(track)
@@ -784,7 +784,7 @@ module Tunewich
 			if filters['tag']
 				taggedPlaylistTrackIds = []
 				@library['playlists'].each { |name, p| taggedPlaylistTrackIds += p['tracks'] if p['tags'] && p['tags'].find_index(filters['tag']) }
-				tracks.send(action) { |t| taggedPlaylistTrackIds.find_index(t['src']) }
+				tracks.send(action) { |t| taggedPlaylistTrackIds.find_index t['id'] }
 
 				if tracks.length === 0 # list available tags if no matches
 					allTags = []
@@ -804,10 +804,10 @@ module Tunewich
 
 			if filters['last']
 				now = Time.now.to_i
-				watershed = now - getSecondsFromDurationString(filters['last'])
+				watershed = now - getSecondsFromDurationString(filters['last']).to_i
 				puts "watershed: #{watershed}" # XXX
 				tracks.send(action) { |t|
-					t['played'] ? Time.now.to_i - t['played'] < watershed.to_i : false
+					t['played'] ? t['played'].to_i >= watershed : false
 				}
 			end
 
@@ -856,7 +856,7 @@ module Tunewich
 		end
 
 		def updateTrackInfo track
-			trackInfo = getTrackInfo track['src']
+			trackInfo = getTrackInfo track['id']
 			return false if !trackInfo
 
 			track['title'] = trackInfo['title']
@@ -915,9 +915,12 @@ module Tunewich
 			page = (offset.to_f / resultsPerPage.to_f).to_i + 1
 			queryParameter = URI::encode(query)
 			queryUrl="https://www.youtube.com/results?search_query=#{queryParameter}&page=#{page}"
+			getYoutubeIdFromUrl queryUrl
+		end
 
+		def getYouTubeTracksFromPage url
 			queryResultIds = []
-			open(queryUrl) do |handle|
+			open(url) do |handle|
 				html = []
 				handle.each_line { |line| html << line }
 
