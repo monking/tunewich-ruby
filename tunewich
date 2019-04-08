@@ -63,8 +63,9 @@ module Tunewich
 			@trackExcludeFilters = nil
 			@networkEnabled = true
 			@playlistName = nil
-			@volume = 25
-			@currentVolume = 25
+			@volume = 25 # volume stored as state (the "intended" volume)
+			@actualVolume = 25 # actual volume heard (change during fading, or changing track loudness)
+			@volumeMultipliers = []
 			@bpmGlideDuration = 0
 			@bpmGlideDelay = 0
 			@enableDownload = false
@@ -124,7 +125,7 @@ module Tunewich
 
 			@volume = getMplayerConfigNumericProperty('volume')
 			whisper("@volume: #{@volume}", 3)
-			@currentVolume = @volume
+			@actualVolume = @volume
 			trigger 'volume_change'
 			@speed = getMplayerConfigNumericProperty('speed', 1.0)
 			whisper("@speed: #{@speed}", 3)
@@ -815,7 +816,7 @@ module Tunewich
 								outputMessageLines << "      link : #{info['link']}" if info
 
 								outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
-								outputMessageLines << "    volume : #{@currentVolume}/100" if track == @currentTrack
+								outputMessageLines << "    volume : #{@actualVolume}/100" if track == @currentTrack
 
 								if @configuredVerbosity > 1 && tagNames.length > 0
 									whisper("about to loop through tagNames", 4)
@@ -871,8 +872,9 @@ module Tunewich
 					'net' => {
 						'description' => 'Toggle "no-network".',
 						'action' => Proc.new { |input|
+							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1] && inputParts[1].length > 0
-								@networkEnabled = !!(inputParts[1].match(/^(y(es)?|o(n|[^f]))/i))
+								@networkEnabled = inputParts[1].match(/^(y(es)?|o(n|[^f]))/i)
 							else
 								@networkEnabled = !@networkEnabled
 							end
@@ -1515,8 +1517,10 @@ module Tunewich
 					'unmark' => {
 						'description' => 'Remove a "mark" from a track.',
 						'action' => Proc.new { |input|
-							removeMarkFromTrack @currentTrack
+							loadlibrary
 							@currentTrack = matchExistingLibraryTrack @currentTrack
+							removeMarkFromTrack @currentTrack
+							writeLibraryToFile
 							{:chainedInput => input}
 						}
 					},
@@ -1636,13 +1640,19 @@ module Tunewich
 							{:chainedInput => input}
 						}
 					},
-					'defvolume' => {
-						'description' => "FIXME 1gpapS: save current volume relative to default in library.",
+					'loudness' => { # TODO 1gzQHH
+						'description' => "Save current volume relative to default in library.",
 						'action' => Proc.new { |input|
-							loadLibrary
-							@currentTrack['loudness'] = getMplayerConfigNumericProperty('volume') / @currentVolume
-							writeLibraryToFile
-							{:chainedInput => input}
+							inputParts = input.match(/^([^\/]*)(.*)$/)
+							loudness = inputParts[1].to_f
+							if loudness > 0.0
+								loadLibrary
+								@currentTrack = matchExistingLibraryTrack @currentTrack
+								@currentTrack['loudness'] = loudness
+								@volumeMultipliers['track_loudness'] = loudness
+								writeLibraryToFile
+							end
+							{:chainedInput => inputParts[2]}
 						}
 					},
 					'again' => {
@@ -1834,9 +1844,24 @@ module Tunewich
 			return bpm
 		end
 
+		def getMultipliedVolume newVolume
+			@volumeMultipliers.each { |m|
+				newVolume *= m
+			}
+
+			newVolume
+		end
+
+		def setActualVolume newVolume
+			@volume = newVolume
+			@actualVolume = getMultipliedVolume newVolume
+			sendPlayerCommand "volume #{@actualVolume} 1", @currentPlayerIndex
+		end
+
 		def fadeVolume targetFadeVolume, duration, playerIndex
 			whisper("fadeVolume(targetFadeVolume:#{targetFadeVolume}, duration:#{duration}, playerIndex:#{playerIndex})", 4)
-			transitionVolume = @currentVolume
+			# @volumeMultipliers['fade'] ||= 1 # TODO 1gzQHH: I haven't worked this out yet
+			transitionVolume = @actualVolume
 			if targetFadeVolume == 'out'
 				whisper("fading out volume", 4)
 				targetFadeVolume = 0
@@ -1872,7 +1897,7 @@ module Tunewich
 				stepFade = Proc.new { |stepIndex|
 					volumeStepStrategy.call(stepIndex)
 					sendPlayerCommand "volume #{transitionVolume} 1", playerIndex
-					@currentVolume = transitionVolume
+					@actualVolume = transitionVolume
 					trigger 'volume_change'
 					sleep volumeFadeInterval
 				}
@@ -1882,7 +1907,7 @@ module Tunewich
 					(volumeFadeStepCount - 1).downto(1) { |stepIndex| stepFade.call stepIndex }
 				end
 				sendPlayerCommand "volume #{targetFadeVolume} 1", playerIndex
-				@currentVolume = targetFadeVolume
+				@actualVolume = targetFadeVolume
 				trigger 'volume_change'
 			else
 				whisper("fading to the same volume: doing nothing", 4)
@@ -2181,17 +2206,27 @@ module Tunewich
 				speed = @speed * @playingBPM / @currentTrack['bpm']
 			end
 
+			## TODO 1gzQHH
+			# if track.has_key?('loudness') && track['loudness']
+			#   @volumeMultipliers['track_loudness'] = track['loudness']
+			# elsif @volumeMultipliers.has_key? 'track_loudness'
+			#   @volumeMultipliers.delete 'track_loudness'
+			# end
+			# 
+			# newVolume = getMultipliedVolume @volume
+			# if @actualVolume != newVolume
+			# 	@actualVolume = newVolume # they may differ, but at this point, only @volume matters
+			# 	trigger 'volume_change'
+			# end
+
 			if @currentVolume != @volume
 				@currentVolume = @volume # they may differ, but at this point, only @volume matters
 				trigger 'volume_change'
 			end
+
 			playerStartupOptions += @playerOverrideCommands
 			playerStartupOptions << "-volume #{@volume}"
 			playerStartupOptions << "-speed #{speed}"
-
-			if track['loudness']
-				playerStartupOptions << "-volume #{(getMplayerConfigNumericProperty('volume') / track['loudness']).round}"
-			end
 
 			response[:startTime] = Time.now.to_f
 
@@ -2296,7 +2331,7 @@ module Tunewich
 				playbackInfo << "#{@shuffle ? unicodeChars[:crossArrows] : unicodeChars[:parallelArrows]}"
 
 				# show volume
-				volumeIndication = "█" * (@currentVolume / 10).to_i + ["", "▁", "▂", "▃", "▄", "▅", "▆", "▇"][(@currentVolume % 10 / 1.25).to_i]
+				volumeIndication = "█" * (@actualVolume / 10).to_i + ["", "▁", "▂", "▃", "▄", "▅", "▆", "▇"][(@actualVolume % 10 / 1.25).to_i]
 				volumeIndication = "[#{volumeIndication}#{" " * (10 - volumeIndication.length)}]"
 				playbackInfo << "#{unicodeChars[:speaker]} #{volumeIndication}"
 

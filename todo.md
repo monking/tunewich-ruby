@@ -64,7 +64,6 @@
 - [ ] FIXME 1gpaoe: always process this option first, even if it's provided last
 - [ ] FIXME 1gpaoq: what's a good baseline score for a playlist match?
 - [ ] FIXME 1gpapK: can I target `af_clr` at _just_ `equalizer`? I don't want to also remove scaletempo, for instance
-- [ ] FIXME 1gpapS: save current volume relative to default in library.
 - [ ] 1gpapl: killing the @inputThread if it's truthy. overkill?
 - [ ] TODO 1gparD: output youtube-dl error messages to user
 	- e.g. `ERROR: requested format not available`
@@ -97,6 +96,12 @@
           - But :shrug:, maybe it'll be useful one day. I think my real fear here is that my data structure is not efficient, and complicating it futher will slow down the operation of my player. But when considering how the app should work, I shouldn't be concerned so much with that. Let the desired feature be a pressure to make the data store more efficient.
 
 @ruby 1gzG6x; Is `guessTag` initialized in the "else" of this case? `guessTag = ... if lastInputToken...`
+
+- [ ] 1gzQHH set volume with multipliers, enabling track loudness and fade
+	- [ ] implementation plan:
+		- when should the state @volume change?
+		- make sure that sequential volume operations are cohesive
+			- how to handle interrupting /fade operations?
 
 ## notes
 
