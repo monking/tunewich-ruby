@@ -730,7 +730,7 @@ module Tunewich
 					# 		end
 					# 	end
 					# end
-					break if output.match(/#{track['src']}|100(\.0)?%/)
+					break if output.match(/#{track['src']}|100(\.0)?%|ERROR/)
 					printRepeat "(#{cliRotate}) #{output}"
 					sleep 0.1
 				end
