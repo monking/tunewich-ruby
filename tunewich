@@ -31,6 +31,7 @@ module Tunewich
 		FILTER_HELP_2 = "Available rules are: [min-,max-]rating=<#0-5>,title=<query>,tag=<tag>,chapters,last=<[[[DD:]HH:]MM:]SS>."
 		FILTER_HELP_3 = "Prepend an 'x-' to your rule to add it to the exclusion filters."
 		TAG_INPUT_SPLIT = /[,\s]+/
+		PLAYER_APPLICATION = 'mplayer'
 		MPLAYER_STDOUT_BUFFER_NAME = 'mplayer-stdout'
 		MPLAYER_INPUT_FIFO_NAME = 'mplayer-input'
 
@@ -253,7 +254,7 @@ module Tunewich
 				'?' => {
 					'info' => 'List mplayer commands.',
 					'action' => Proc.new {
-						system 'mplayer -input cmdlist'
+						system "#{Player::PLAYER_APPLICATION} -input cmdlist"
 					}
 				}
 			}
@@ -497,7 +498,8 @@ module Tunewich
 				commandPrompt "commands: ", interactiveCommands, mplayerAction
 			}
 			mplayerThread = Thread.new {
-				mplayerStatus = system "mplayer \"#{mediaFilePath}\" #{mplayerStartupOptions.join ' '} &> #{mplayerStdoutFile}"
+				mplayerCommand = "#{Player::PLAYER_APPLICATION} \"#{mediaFilePath}\" #{mplayerStartupOptions.join ' '} &> #{mplayerStdoutFile}"
+				mplayerStatus = system mplayerCommand
 				inputThread.kill if inputThread
 			}
 			mplayerThread.join
@@ -750,7 +752,8 @@ module Tunewich
 					sleep 0.1
 				end
 
-				sleep 1 # FIXME: remove `sleep` in favor of checking if the right file exists yet
+				puts "Waiting 5 seconds to be sure the file is ready..."
+				sleep 5 # FIXME: remove `sleep` in favor of checking if the right file exists yet
 			end
 
 			deleteTempFile downloadFeedbackFileName
@@ -821,7 +824,7 @@ module Tunewich
 				raise "ERROR: Could not create the stream file (#{path})"
 			end
 
-			File.exist? path && path
+			File.exist?(path) && path
 		end
 
 		alias deleteStream deleteTempFile
@@ -1257,7 +1260,7 @@ module Tunewich
 				html = []
 				handle.each_line { |line| html << line }
 
-				queryResultIds = html.grep(/href="\/watch/).map! do |line|
+				queryResultIds = html.grep(/href="(.*youtube.*)?\/watch/).map! do |line|
 					line.sub!(/^.*watch\?v=([^\"&<]+).*\n/, '\1')
 				end
 
