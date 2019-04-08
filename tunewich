@@ -1103,7 +1103,11 @@ module Tunewich
       parser.on("-a", "--add-track YOUTUBE_URLS", "Add tracks to the library, and to a playlist, if specified. Takes a comma-separated list of YouTube URLs or IDs.", " ") do |urls|
 				output[:newTracks] = []
 				urls.split(',').each { |url|
-          youtubeId = getYoutubeIdFromUrl url
+					if looksLikeAYouTubeID? url
+						youtubeId = url
+					else
+						youtubeId = getYoutubeIdFromUrl url
+					end
 
           if youtubeId
             output[:newTracks] << updateTrackInfo(createTrack(youtubeId))
