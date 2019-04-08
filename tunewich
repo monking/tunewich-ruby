@@ -138,7 +138,8 @@ module Tunewich
 				@playlistName = promptForPlaylist if not @playlistName
 				id = getYoutubeIdFromUrl url
 				newTrack = createTrack id
-				addTrackToPlaylist newTrack, @playlistName
+				trackReference = addTrackToLibrary updateTrackInfo newTrack
+				addTrackReferenceToPlaylist trackReference, @playlistName
 				writeLibraryToFile
 				exit
 			end
@@ -206,7 +207,7 @@ module Tunewich
 			parser.on("-u", "--update-track-info", "Fetch updated track information for every track played.") do
 				@updateAllPlayedTrackInfo = true
 			end
-			parser.on("-w", "--write-after TIME", "Save tracks to the playlist (from -p or -P) when played for the given number of seconds. Use with -q.") do |time|
+			parser.on("-w", "--write-after TIME", "Save tracks to the library when played for the given number of seconds. Use with -q. If a playlist is specified, it will also be added to that playlist.") do |time|
 				@playthroughThreshold = time.to_f
 			end
 
@@ -427,8 +428,9 @@ module Tunewich
 
 			mplayerPlayTime = mplayerEndTime - mplayerStartTime
 			if (@playthroughThreshold && mplayerPlayTime > @playthroughThreshold)
-				puts "Played more than #{@playthroughThreshold}s, adding to playlist '#{@playlistName}'."
-				addTrackToPlaylist track, @playlistName if @playlistName
+				puts "Played more than #{@playthroughThreshold}s, adding to #{@playlistName ? "playlist '#{@playlistName}'" : 'library'}."
+				trackReference = addTrackToLibrary track
+				addTrackReferenceToPlaylist trackReference, @playlistName if @playlistName
 				writeLibraryToFile
 			end
 
@@ -618,17 +620,11 @@ module Tunewich
 			@library['playlists'][name] = newPlaylist
 		end
 
-		def createTrack id, getInfo = true
-			track = {
+		def createTrack id
+			{
 				'src' => id,
 				'unattached' => true
 			}
-
-			if getInfo
-				track = updateTrackInfo track
-			end
-
-			track
 		end
 
 		def getTrackInfo id
@@ -674,9 +670,7 @@ module Tunewich
 			trackReference
 		end
 
-		def addTrackToPlaylist track, playlistName
-			trackReference = addTrackToLibrary track
-
+		def addTrackReferenceToPlaylist trackReference, playlistName
 			tracks = @library['playlists'][playlistName]['tracks']
 			if not tracks.index trackReference
 				tracks.push trackReference
@@ -709,12 +703,20 @@ module Tunewich
 				queryResultIds.uniq!
 			end
 
+			threads = []
 			resultTracks = []
-			queryResultIds.slice(0, count).each_with_index do |id, index|
-				printRepeat "Getting track information (#{index + 1}/#{count})"
+			receivedCount = 0
+			printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
+			queryResultIds.each do |id|
 				track = createTrack id
 				resultTracks.push track
+				threads << Thread.new {
+					updateTrackInfo track
+					receivedCount += 1
+					printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
+				}
 			end
+			threads.each { |thr| thr.join }
 			print "\n"
 
 			resultTracks
@@ -746,6 +748,7 @@ module Tunewich
 						putInTempFile 'cleanup', listTrackTitles(tracksToDelete)
 						system "vim #{getTempFilePath 'cleanup'}"
 						tracksToDelete = getTracksFromTitleList readTempFile('cleanup')
+						deleteTempFile 'cleanup'
 						puts listTrackTitles tracksToDelete
 					}
 				}
