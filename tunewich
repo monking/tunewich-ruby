@@ -520,7 +520,7 @@ module Tunewich
 						putsRealtime "\n#{heading}\n================\n#{matchingTitlesAndIds.slice(0, 10).join("\n")}"
 					end
 				rescue Exception => e
-					whisper(e.message, 2) # XXX
+					whisper(e.message, 3)
 				end
 
 				input
@@ -638,21 +638,21 @@ module Tunewich
 					},
 					'clear' => {
 						'description' => 'Clear current tracklist',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							@useTracks []
 							{:chainedInput => input}
 						}
 					},
 					'all' => {
 						'description' => "Load entire library.",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							useEntireLibrary
 							{:chainedInput => input}
 						}
 					},
 					'rate' => {
 						'description' => "Rate this track + or -, or give it an explicit number.",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							newRating = inputParts[1] if (inputParts[1].length > 0) && (inputParts[1].match(/^[+-]?[0-9]*/))
 							oldRating = @currentTrack['rating']
@@ -743,7 +743,7 @@ module Tunewich
 					},
 					'tagall' => {
 						'description' => "Tag all tracks in the current tracklist.",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1] && inputParts[1].length > 0
 								tagsToAdd = inputParts[1].split(/[, ]+/)
@@ -768,7 +768,7 @@ module Tunewich
 					},
 					'list' => {
 						'description' => "Load a playlist. (not chainable)",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							# TODO: 1gG4gW
 							whisper("playlistQuery: #{input}", 4)
 							playlistNames = @library['playlists'].keys
@@ -790,7 +790,7 @@ module Tunewich
 					},
 					'tracks' => {
 						'description' => 'Edit playing tracklist in Vim.',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							editedTrackList = editTrackList @tracks
 							# writeTitleChangesInTrackList editedTrackList # TODO 1gSlF1: Do this only if the list being edited is not already the canonical library track list, in which case we cannot determine if there was a change
 							# writeLibraryToFile # TODO 1gSlF1
@@ -801,7 +801,7 @@ module Tunewich
 					},
 					'go' => {
 						'description' => "Go to a track in the current list.",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1] && inputParts[1].length > 0
 								@trackIndex = findTrackIndex inputParts[1]
@@ -812,7 +812,7 @@ module Tunewich
 					},
 					'more' => {
 						'description' => "Play all tracks on this video's page.",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							if @currentTrack['type'] == 'youtube'
 								disablePlaybackInfo
 								tracks = getYouTubeTracksFromPage(@currentTrack['link'] || @currentTrack['src'])
@@ -836,7 +836,7 @@ module Tunewich
 					},
 					'info' => {
 						'description' => "Show track info. Track is: without input = currently playing track; with '>' = the track that will play next; with numeric input = the track at that position in the track list; any other input = the track with the title that best matches that input",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							track = nil
 							trackIndex = nil
@@ -931,7 +931,7 @@ module Tunewich
 					},
 					'search' => {
 						'description' => "<query> Search YouTube. (not chainable)",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							if input and input.length > 1
 								disablePlaybackInfo
 								searchedTracks = searchYouTube(input)
@@ -967,7 +967,7 @@ module Tunewich
 						'showStatus' => Proc.new {
 							putsRealtime "network: #{@networkEnabled ? 'on' : 'off'}"
 						},
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
 							@networkEnabled = getToggledValueByInput.call(@networkEnabled, inputParts[1])
@@ -980,7 +980,7 @@ module Tunewich
 					'download' => {
 						'description' => "Download the current track for faster play in the future. Optional 'get' parameter prints the download shell command instead.",
 						'args' => ['get'],
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
 							options = inputParts[1].length > 0 ? inputParts[1].split(/\s+/) : []
@@ -1024,7 +1024,7 @@ module Tunewich
 					},
 					'add' => {
 						'description' => 'Add a new track to the play queue. Input: <URL>[,<URL>,...] [<TAG>[,<TAG>,...]] -- URLs: comma-separated URLs or YouTube IDs (Some URLs will add multiple tracks, like a bandcamp album (or TODO: YouTube playliist); tags: comma-separated tags to add to the tracks.',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^ ]*?)( .*?)?( \/.*)?$/)
 							urls = inputParts[1].split ',' if inputParts[1]
 							tags = inputParts[2].split ',' if inputParts[2]
@@ -1046,7 +1046,7 @@ module Tunewich
 					},
 					'feed' => {
 						'description' => 'Load a feed that has been saved with /add (currently only podcasts).',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^(.*?)( \/.*)?$/)
 
 							feed = nil
@@ -1084,7 +1084,7 @@ module Tunewich
 					},
 					'chapter' => {
 						'description' => 'Skip to a chapter, or show chapter list. Input: [optional seconds offset], number or name of chapter; or "<" or ">" to go back or forward, multiples to go further.',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							whisper("chapter command - input: #{input}", 3)
 							inputParts = input.match(chapterInputPattern)
 							if @currentTrack['chapters']
@@ -1124,7 +1124,7 @@ module Tunewich
 					},
 					'mkchapter' => {
 						'description' => "Make a chapter, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing). Input: name.",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
 							loadLibrary
@@ -1145,7 +1145,7 @@ module Tunewich
 					},
 					'rmchapter' => {
 						'description' => "Remove the current chapter.",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							# TODO 1gzTHg: take input to choose a chapter
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
@@ -1164,7 +1164,7 @@ module Tunewich
 					},
 					'skipchapter' => {
 						'description' => "Mark the current chapter as to be skipped every time.",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
 							if chapterIndex > -1
@@ -1181,7 +1181,7 @@ module Tunewich
 					},
 					'editchapters' => {
 						'description' => "Edit all the chapters for the current track (using vim).",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
 							loadLibrary
@@ -1268,7 +1268,7 @@ module Tunewich
 					},
 					'exit' => {
 						'description' => 'Exit tunewich when the current track finishes or is quit.',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							kill
 							{:chainedInput => input}
 						}
@@ -1294,7 +1294,7 @@ module Tunewich
 							putsRealtime "preferred file format: #{@preferredFileFormat}"
 						},
 						'args' => ['m4a', 'mp4', 'bestaudio', 'bestvideo', '[height=720]'],
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1].length > 0
 								@preferredFileFormat = inputParts[1].chomp
@@ -1306,14 +1306,14 @@ module Tunewich
 					},
 					'commands' => {
 						'description' => "List #{Player::PLAYER_APPLICATION} commands.",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							system "#{Player::PLAYER_APPLICATION} -input cmdlist"
 							{:chainedInput => input}
 						}
 					},
 					'relatetags' => {
 						'description' => '(USAGE: /relatetags A B...) Make tag A a child of tag(s) B...',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							success = false
 
@@ -1339,7 +1339,7 @@ module Tunewich
 					},
 					'jointag' => {
 						'description' => '(USAGE: /jointag A B...) Join tracks from two tags, making tag(s) B an alias of tag A',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							success = false
 
@@ -1364,7 +1364,7 @@ module Tunewich
 					},
 					'rm' => {
 						'description' => 'remove selected tracks',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							editedTrackList = editTrackList @tracks
 							initialLibraryLength = @library['tracks'].length
@@ -1445,7 +1445,7 @@ module Tunewich
 					},
 					'rmlist' => {
 						'description' => '<playlistName> remove a playlist.',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1] && inputParts[1].length > 0
 								playlistName = findPlaylistName inputParts[1]
@@ -1464,7 +1464,7 @@ module Tunewich
 					},
 					'refresh' => {
 						'description' => 'Load the latest version of the media library.',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							loadLibrary
 							@currentTrack = matchExistingLibraryTrack @currentTrack
@@ -1477,7 +1477,7 @@ module Tunewich
 				'playing' => {
 					'' => {
 						'description' => "Chainable player commands (empty command, i.e. '/').",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							output = {
 								:chainedInput => inputParts[2]
@@ -1492,7 +1492,7 @@ module Tunewich
 					},
 					'note' => {
 						'description' => "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing).",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							notesChanged = false;
 
@@ -1560,7 +1560,7 @@ module Tunewich
 					'eq' => {
 						'description' => 'Set EQ, or save a new preset (/eq [PRESET | save NEW_NAME]). If no preset is given, a list of presets is shown, along with an interactive EQ display, which can by changed using the arrow keys.',
 						'args' => ['save'],
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							loadLibrary
 							@library['player'] ||= {}
@@ -1674,7 +1674,7 @@ module Tunewich
 					'fade' => {
 						'description' => '/fade VOLUME [DURATION]; VOLUME can be "out" or "in", which will fade from or to the last explicit volume set.',
 						'args' => ['out', 'in'],
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							output = nil
 							fadeCommandMatch = /^(out|in|[0-9.]+x?)( [0-9.]+)?[^\/]*(.*)$/.match input
 							if fadeCommandMatch
@@ -1697,7 +1697,7 @@ module Tunewich
 					},
 					'ramp' => {
 						'description' => '/ramp SPEED [DURATION] - Ramp speed',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							output = nil
 							rampCommandMatch = /^(out|in|[0-9.]*(bpm)?)( [0-9.]+)?[^\/]*(.*)$/.match input
 							#                    1              2      3                4
@@ -1734,7 +1734,7 @@ module Tunewich
 					},
 					'glide' => {
 						'description' => '/glide DURATION [DELAY] - Set BPM "glide" period. Default 0 (i.e. off). If changing between two tracks with tempo information, the second track will begin playing to match the tempo of the first, and then "glide" for DURATION (after DELAY) back to the configured global speed.',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							output = nil
 							glideCommandMatch = /^([0-9.]+)( [0-9.]+)?[^\/]*(.*)$/.match input
 							#                     1        2                3
@@ -1748,7 +1748,7 @@ module Tunewich
 					},
 					'mark' => {
 						'description' => 'Mark the point at which to play this track next time. Pass any argument to remove an existing mark',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
 							loadLibrary
@@ -1766,7 +1766,7 @@ module Tunewich
 					'turn' => {
 						# TODO: 1gG4hV
 						'description' => "Use all this track's tags to populate the track list.",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							trackTags = getTrackTags @currentTrack
 							if trackTags.length > 0
 								putsRealtime "Playing tracks with similar tags: #{trackTags.join ', '}"
@@ -1827,7 +1827,7 @@ module Tunewich
 					'seek' => {
 						'description' => 'Seek to a time code. Prefix with "+" or "-" to seek relative to current play position. use "/seek mark" to seek to a time marked with the "/mark" command."',
 						'args' => ['mark'],
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
 							seekInput = inputParts[1].strip
@@ -1838,7 +1838,7 @@ module Tunewich
 					},
 					'logarithmic' => {
 						'description' => 'Toggle logarithmic volume scale.',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							@isVolumeAlreadyLogarithmic= !@isVolumeAlreadyLogarithmic
 							putsRealtime "logarithmic volume scale: #{@isVolumeAlreadyLogarithmic ? 'off' : 'on'}"
 							{:chainedInput => input}
@@ -1846,7 +1846,7 @@ module Tunewich
 					},
 					'loudness' => { # TODO 1gzQHH
 						'description' => "Save current volume relative to default in library.",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							loudness = inputParts[1].to_f
 							if loudness > 0.0
@@ -1862,7 +1862,7 @@ module Tunewich
 					},
 					'again' => {
 						'description' => "Play the last track again.",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							@trackIndex = @tracks.index @currentTrack
 							if !@trackIndex
 								useTracks [@currentTrack]
@@ -1874,7 +1874,7 @@ module Tunewich
 					},
 					'stream' => {
 						'description' => "Ignore downloaded files. This is useful if you want to play a different format than the one downloaded (e.g. audio vs. video).",
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							@forceStreaming = !@forceStreaming
 							putsRealtime "force streaming: #{@forceStreaming ? 'on' : 'off'}"
 							{:chainedInput => input}
@@ -1882,7 +1882,7 @@ module Tunewich
 					},
 					'player' => {
 						'description' => 'Define player startup options. Takes effect on the next track being played',
-						'action' => Proc.new { |input|
+						'action' => Proc.new { |input, command|
 							samplePlayerCommands = [];
 							samplePlayerCommands << 'Some sample options:';
 							samplePlayerCommands << 'small video window in the corner: -geometry 100%:100% -xy 150';
@@ -1892,7 +1892,7 @@ module Tunewich
 						}
 					},
 					'mono' => {
-						'description' => 'Toggle downmixing to mono.',
+						'description' => 'Toggle downmixing to mono. If mono is enabled before the track starts, toggling will have no effect until the player starts again (e.g. `/again / q`).',
 						'showStatus' => Proc.new {
 							putsRealtime "downmix to mono: #{@downmixMono ? 'on' : 'off'}"
 						},
@@ -4457,15 +4457,19 @@ module Tunewich
 			@commandHistory.unshift inputLine
 			enablePlaybackInfo
 
-			whisper("received input: #{inputLine}", 3)
-			if commands
-				inputLine = processCommandsWithInput(inputLine, commands, leftoverAction)
-			end
+			begin
+				whisper("received input: #{inputLine}", 3)
+				if commands
+					inputLine = processCommandsWithInput(inputLine, commands, leftoverAction)
+				end
 
-			handledActionResponse = true
-			if leftoverAction && inputLine && inputLine.length > 0
-				whisper("input left over after commands: passing to action (#{inputLine})", 3)
-				handledActionResponse = leftoverAction.call inputLine
+				handledActionResponse = true
+				if leftoverAction && inputLine && inputLine.length > 0
+					whisper("input left over after commands: passing to action (#{inputLine})", 3)
+					handledActionResponse = leftoverAction.call inputLine
+				end
+			rescue Exception => e
+				whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 3)
 			end
 
 			handledActionResponse
@@ -4622,7 +4626,7 @@ module Tunewich
 					printRepeat @commandUserInput
 				end
 			rescue Exception => e
-				puts "Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}"
+				whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 3)
 			end
 
 			result
