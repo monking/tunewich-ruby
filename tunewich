@@ -720,10 +720,19 @@ module Tunewich
 								tagNames = getTrackTags track
 
 								outputMessageLines = []
-								outputMessageLines << "		 index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
-								outputMessageLines << "		volume : #{@currentVolume}/100"
+								outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
+								outputMessageLines << "    volume : #{@currentVolume}/100" if track == @currentTrack
 								outputMessageLines << "------------------------------"
-								outputMessageLines << "		 title : #{track['title']}" if alreadyHas[:title]
+								if !alreadyHas[:title] || !alreadyHas[:duration] || track['title'].length == 0
+									info = {}
+									if track['type'] === 'youtube'
+										info = getYouTubeTrackInfo track['src']
+									elsif track['type'] === 'soundcloud'
+										info = getSoundcloudTrackInfo track['src']
+									end
+									updateTrackInfo track, info
+								end
+								outputMessageLines << "     title : #{track['title']}" if track.has_key? 'title'
 								if track == @currentTrack
 									timeMessage = "			time : #{getDurationStringFromSeconds @currentPlayerTime}"
 									if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
@@ -744,38 +753,23 @@ module Tunewich
 								else
 									outputMessageLines << "	duration : #{track['duration']}" if alreadyHas[:duration]
 								end
-								outputMessageLines << "			tags : #{tagNames.join ', '}" if tagNames.length > 0
-								outputMessageLines << "		rating : #{track['rating']}" if track['rating']
-								outputMessageLines << "			 bpm : #{track['bpm']}" if alreadyHas[:bpm]
+								outputMessageLines << "      tags : #{tagNames.join ', '}" if tagNames.length > 0
+								outputMessageLines << "sourceTags : #{info['sourceTags']}" if info && info.has_key?('sourceTags')
+								outputMessageLines << "    rating : #{track['rating']}" if track['rating']
+								outputMessageLines << "       bpm : #{track['bpm']}" if alreadyHas[:bpm]
 								outputMessageLines << "downloaded : #{trackFileExists? track}"
-								outputMessageLines << "==============================\n#{track['description']}" if alreadyHas[:description]
-								putsRealtime outputMessageLines.join "\n"
-
-								outputMessageLines = []
-								if !alreadyHas[:title] || !alreadyHas[:duration] || track['title'].length == 0 || @configuredVerbosity > 0
-									info = nil
-									if track['type'] === 'youtube'
-										info = getYouTubeTrackInfo track['src']
-									elsif track['type'] === 'soundcloud'
-										info = getSoundcloudTrackInfo track['src']
-									end
-									updateTrackInfo track, info
-
-									outputMessageLines << "		 title : #{track['title']}" if !alreadyHas[:title]
-									outputMessageLines << "	duration : #{track['duration']}" if !alreadyHas[:duration]
-									outputMessageLines << "sourceTags : #{info['sourceTags']}" if info && info.has_key?('sourceTags')
-									outputMessageLines << "==============================\n#{track['description']}" if !alreadyHas[:description] && track['description']
-								end
-								if not info
-									info = {'link' => track['link'] || track['src']}
+								outputMessageLines << "=============================="
+								outputMessageLines << "#{track['description']}" if track.has_key?('description')
+								if !info.has_key? 'link'
+									info['link'] = track['link'] || track['src']
 									if track['type'] === 'youtube'
 										info['link'] = "http://youtu.be/#{track['src']}"
 									end
 								end
 
-								outputMessageLines << "			link : #{info['link']}" if info
+								outputMessageLines << "      link : #{info['link']}" if info
 
-								if @configuredVerbosity > 0 && tagNames.length > 0
+								if @configuredVerbosity > 1 && tagNames.length > 0
 									whisper("about to loop through tagNames", 4)
 									tagNames.each { |tagName|
 										whisper("digging up ancestors of #{tagName}", 4)
@@ -786,6 +780,7 @@ module Tunewich
 
 								outputMessageLines << "------------------------------"
 								putsRealtime outputMessageLines.join "\n"
+								notify outputMessageLines.join "\n"
 							else
 								putsRealtime "Cannot show info. No track found."
 							end
