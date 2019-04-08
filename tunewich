@@ -86,6 +86,8 @@ module Tunewich
 			@youtubeDLTrackTypes = ['youtube', 'soundcloud']
 			@isPlayerPlaying = false
 			@tempFiles = {}
+			@loop = false
+			@breakLoop = false
 
 			getConfigFiles
 
@@ -1651,6 +1653,13 @@ module Tunewich
 							{:chainedInput => input}
 						}
 					},
+					'breakloop' => {
+						'description' => 'Play the current track to the end, and on to the next, while keeping looping enabled.',
+						'action' => Proc.new { |input|
+							@breakLoop = true
+							{:chainedInput => input}
+						}
+					},
 					'loop' => {
 						'description' => 'Toggle loop.',
 						'action' => Proc.new { |input|
@@ -2298,7 +2307,8 @@ module Tunewich
 			bind('chapter_change', Proc.new {
 				# check if we need to skip this chapter
 				if (
-						@loop &&
+						@loop  &&
+						!@breakLoop  &&
 						!@currentlySkippingChapter &&
 						@currentTrack['chapters'][@currentChapterIndex] &&
 						@currentTrack['chapters'][@currentChapterIndex].has_key?('loop_target')
@@ -2330,6 +2340,7 @@ module Tunewich
 					})
 				end
 			}, bindingGroupName)
+
 			while @playerApplicationThreads[@currentPlayerIndex].alive?
 				playerResponseDelay = 0.1
 				playerTimeResponse = getMplayerProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(.*?)(\?)?$/, playerResponseDelay)
@@ -2338,6 +2349,9 @@ module Tunewich
 					trigger 'time_update'
 				end
 			end
+
+			@breakLoop = false
+
 			# @playerApplicationThreads[@currentPlayerIndex].join
 			whisper("killing user input thread (again)", 4)
 			@inputThread.kill if @inputThread # FIXME 1gpapl: overkill?
