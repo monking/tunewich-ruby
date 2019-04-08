@@ -1,5 +1,6 @@
 #!/usr/bin/env ruby
 
+# TODO: fix /edit swapping first and last tracks
 # TODO: fix inability to pause with @configuredVerbosity > -1
 
 require "io/console" # STDIN.getch
@@ -14,11 +15,14 @@ $clearLineCharacter = "\033[0K"
 $disableWrapCharacter = "\033[?7l"
 $enableWrapCharacter = "\033[?7h"
 $tunewichWorkingDirectory = "#{ENV['HOME']}/.tunewich"
+$tunewichTmpDirectory = "#{$tunewichWorkingDirectory}/tmp"
 
 # Go to .tunewich directory so that any temp files are stored there.
 # FIXME: don't allow youtube-dl to create --Frag files, or clean them up
 Dir.mkdir $tunewichWorkingDirectory if not Dir.exist? $tunewichWorkingDirectory
 Dir.chdir $tunewichWorkingDirectory
+
+Dir.mkdir $tunewichTmpDirectory if not Dir.exist? $tunewichTmpDirectory
 
 module Tunewich
 
@@ -72,12 +76,13 @@ module Tunewich
 			@playerOverrideCommands = []
 			@currentPlayerIndex = 0
 			@speedBeforeRampingOut = 1
-			@playerThreads = []
+			@playerThreads = [] # Not currently used. For instances of the player class.
 			@inputThread = nil
 			@playerApplicationThreads = []
 			@otherThreads = []
 			@forceStreaming = false
 			@commandHistory = []
+			@streamingServerType = nil
 
 			getEnvironmentConfig
 
@@ -1093,6 +1098,8 @@ module Tunewich
 
 					titleBlock "[#{@trackIndex + 1}] - #{@currentTrack['title']}"
 
+					updateRadioMetadata @currentTrack['title']
+
 					nextTrack() # call nextTrack after @trackIndex is announced, but before play, so that the user can see which track will come next.
 
 					if @updateAllPlayedTrackInfo && !@noNetwork
@@ -1134,7 +1141,8 @@ module Tunewich
 					next if commandRequiresNext
 				else
 					whisper "Empty tracklist", 3
-					commandPrompt "empty", interactiveCommands
+					emptyAction = Proc.new { |input| false } # break command loop after any non-command input
+					commandPrompt "empty", interactiveCommands, emptyAction
 				end
 			end
 		end
@@ -1239,7 +1247,6 @@ module Tunewich
 				stepFade = Proc.new { |stepIndex|
 					volumeStepStrategy.call(stepIndex)
 					@currentVolume = volume
-					# showPlaybackInfo true
 					putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "volume #{volume} 1\n"
 					sleep volumeFadeInterval
 				}
@@ -1541,8 +1548,8 @@ module Tunewich
 			response
 		end
 
-		def showPlaybackInfo force = false
-			if force || (@shouldShowPlaybackInfo && @configuredVerbosity > -1)
+		def showPlaybackInfo
+			if @shouldShowPlaybackInfo && @configuredVerbosity > -1 && @configuredVerbosity < 4
 				playbackInfo = []
 				unicodeChars = {
 					:speaker => "🔈",
@@ -1583,6 +1590,11 @@ module Tunewich
 				if @currentTrack.has_key?('chapters')
 					chapterIndex = getChapterIndexAtTime @currentTrack, currentPlayerTimePosition
 					if chapterIndex
+						# TODO: check if chapter has changed
+						hasChapterChanged = false
+						if hasChapterChanged
+							updateRadioMetadata "#{@currentTrack['title']} (#{@currentTrack['chapters'][chapterIndex]['name']})"
+						end
 						playbackInfo << "#{unicodeChars[:openBook]}  #{@currentTrack['chapters'][chapterIndex]['name']}"
 					end
 				end
@@ -1594,7 +1606,7 @@ module Tunewich
 				end
 
 				# check again if realtime output has been disabled while were doing all this stuff
-				if force || (@shouldShowPlaybackInfo && @configuredVerbosity > -1)
+				if @shouldShowPlaybackInfo && @configuredVerbosity > -1 && @configuredVerbosity < 4
 					printRepeat(playbackInfo.join(' '), true)
 				end
 			end
@@ -1960,6 +1972,17 @@ module Tunewich
 			notify message
 		end
 
+		def updateRadioMetadata metadata
+			if @streamingServerType == 'homebrew'
+				serverUsername = 'admin'
+				serverPassword = 'hackme'
+				serverHost = 'localhost:8000'
+				serverMountName = 'radio'
+				# ruby 2.3.1 `open` doesn't support userinfo (user:password@host)
+				`curl -s "http://#{serverUsername}:#{serverPassword}@#{serverHost}/admin/metadata?mount=/#{serverMountName}&mode=updinfo&song=#{URI::encode metadata}"`
+			end
+		end
+
 		##
 		# File Methods
 		##
@@ -1968,7 +1991,7 @@ module Tunewich
 			nameSegments = ["tunewich"]
 			nameSegments << @sessionID if shouldIncludeSessionID
 			nameSegments << name
-			"/tmp/#{nameSegments.join '-'}"
+			"#{$tunewichTmpDirectory}/#{nameSegments.join '-'}"
 		end
 
 		def createTempFile(name)
@@ -2873,6 +2896,7 @@ module Tunewich
         if !streamingServerType || streamingServerType.length == 0
           streamingServerType = 'homebrew'
         end
+				@streamingServerType = streamingServerType
         whisper "streamingServerType: #{streamingServerType}", 2
 				# FIXME: getting properties out of mplayer don't work when targeting "Soundflower (2ch)" (e.g. current time or volume)
 				# FIXME: I think fading worked when using Nicecast
@@ -2884,7 +2908,7 @@ module Tunewich
           `sudo ls &>/dev/null`
         end
 				if UNAME == "Darwin"
-					audioDeviceID = `say -a ? | grep 'Soundflower (2ch)'`.sub /^\s*(\d+).*/, '\1'
+					audioDeviceID = `say -a ? | grep 'Soundflower (2ch)'`.chomp.sub /^\s*(\d+).*/, '\1'
           if audioDeviceID && audioDeviceID.length > 0
             @playerOverrideCommands << "-ao coreaudio:device_id=#{audioDeviceID}"
             jackAudioDeviceAndOptions = "coreaudio -d SoundflowerEngine:0"
@@ -2953,7 +2977,7 @@ module Tunewich
 						whisper "waiting #{darkiceStartDelay} seconds to start darkice", 2
 						sleep darkiceStartDelay
 						whisper "starting darkice (to encode and push audio to streaming server)", 2
-						@services << Thread.new { `echo "hi there"; sudo darkice -v 10 -c "#{darkiceConfigFile}"` }
+						@services << Thread.new { `sudo darkice -v 10 -c "#{darkiceConfigFile}"` }
           else
             whisper "continue to Nicecast server", 2
 					end
@@ -3288,6 +3312,9 @@ module Tunewich
 						input = input[0,input.length - 1]
 						printRepeat input
 					end
+				elsif inputCharacter == "" # stop job
+					Process.kill("STOP", Process.pid)
+					# TODO: also stop mplayer
 				elsif inputCharacter == "" # clear line
 					if input
 						@commandInputTyped = nil
@@ -3345,7 +3372,7 @@ module Tunewich
 								whisper "command info: #{commandInfo}", 3
 								if commandInfo[:output] && commandInfo[:output][:action]
 									whisper "chained command calling action (#{commandInfo[:output][:action]})", 3
-									action.call commandInfo[:output][:action]
+									actionResponse = action.call commandInfo[:output][:action]
 								end
 								if commandInfo[:output] && commandInfo[:output][:chainedInput] && commandInfo[:output][:chainedInput].length > 0
 									whisper "chained input: #{commandInfo[:output][:chainedInput]}", 3
@@ -3362,10 +3389,16 @@ module Tunewich
 
 					if action && input && input.length > 0
 						whisper "input left over after commands: passing to action (#{input})", 3
-						action.call input
+						actionResponse = action.call input
 					end
 
 					input = nil
+
+					if actionResponse == false
+						whisper "action returned false: breaking command loop", 3
+						break
+					end
+
 					prompt.call
 				else
 					if not input
@@ -3414,7 +3447,7 @@ module Tunewich
 				end
 			end
 
-			whisper "closing command prompt (response #{response})", 3
+			whisper "closing command \"#{message}\" prompt (response #{response})", 3
 
 			response
 		end
@@ -3466,7 +3499,8 @@ module Tunewich
 
 			while not selectedChapterIndex do
 				puts prePromptMessage
-				chapterQuery = commandPrompt(promptMessage, commands)[:input]
+				emptyAction = Proc.new { |input| false }
+				chapterQuery = commandPrompt(promptMessage, commands, emptyAction)[:input]
 				break if not chapterQuery or chapterQuery.length === 0
 
 				selectedChapter = firstFuzzyMatch chapterQuery, chapterList
