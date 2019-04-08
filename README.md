@@ -7,7 +7,7 @@ A shell script to play music with `youtube-dl` and `mplayer`
 add this to your `~/.profile` (or similar) file:
 ```
 export TUNEWICH_DIR="<path/to/your/music/directory>"
-alias tw="<path/to/tunewich"
+alias tw="<path/to/tunewich>"
 ```
 
 Now call tunewich with `tw`.
@@ -25,11 +25,10 @@ alias tw='tunewich --exclude-filter --player-opts "-volume 50 -novideo"
 ```
 
 It's a good idea to include `--player-opts "-novideo"`, if you want to only
-listen. By default, `youtube-dl` picks the video with the best audio, which may
-be a video file. This is made an option so that you can use `tunewich` as a
-video player, too.
+listen. By default, `youtube-dl` picks the file with the best audio, which may
+still contain a video channel.
 
-## radio (in-progress)
+## radio (in-progress/broken)
 
 - Install [Soundflower](https://github.com/mattingalls/Soundflower).
 - Install `darkice`, `icecast`, and `jack`.
