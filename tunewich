@@ -463,8 +463,31 @@ module Tunewich
 
 		def getInteractiveCommands modes = [], bindingGroupName
 
+			trackTabComplete = Proc.new { |input|
+				inputParts = input.match(/^([^\/]*)(.*)$/)
+
+				if inputParts[1] && inputParts[1].length > 0
+					begin
+						trackTitlesAndIds = []
+						@tracks.each { |t|
+							trackTitlesAndIds << t['title'] if t.has_key?('title')
+							trackTitlesAndIds << t['id']
+						}
+						guessTrackTitle = firstFuzzyMatchValue(inputParts[1], trackTitlesAndIds) if inputParts[1].length > 0
+						if guessTrackTitle && guessTrackTitle.length > 0
+							input = input.sub!(inputParts[1], guessTrackTitle)
+						end
+					rescue Exception => e
+						whisper(e.message, 2) # XXX
+					end
+				end
+
+				input
+			}
+
 			chapterTabComplete = Proc.new { |input|
 				inputParts = input.match(/^([^\/]*)(.*)$/)
+
 				if @currentTrack.has_key?('chapters')
 					if inputParts[1] && inputParts[1].length > 0
 						chapterNames = @currentTrack['chapters'].map { |c| c['text'] }
@@ -478,11 +501,13 @@ module Tunewich
 				else
 					putsRealtime "No chapters on the current track."
 				end
+
 				input
 			}
 
 			tagTabComplete = Proc.new { |input|
 				inputParts = input.match(/^([^\/]*)(.*)$/)
+
 				if inputParts[1] && inputParts[1].length > 0
 					lastInputToken = inputParts[1].sub(/^.* /, '')
 					if lastInputToken[0] == '-'
@@ -500,7 +525,17 @@ module Tunewich
 						input = input.sub!(lastInputToken, guessTagName)
 					end
 				end
+
 				input
+			}
+
+			getToggledValueByInput = Proc.new { |value, input|
+				if input && input.length > 0
+					value = !!(input.match(/^(y(es)?|o(n|[^f]))/i))
+				else
+					value = !value
+				end
+				value
 			}
 
 			# TODO: 1gG4fU @refactor
@@ -767,7 +802,8 @@ module Tunewich
 								@trackIndex = newTrackIndex if newTrackIndex
 							end
 							{:chainedInput => inputParts[2]}
-						}
+						},
+						'tabComplete' => trackTabComplete
 					},
 					'more' => {
 						'description' => "Play all tracks on this video's page.",
@@ -917,11 +953,7 @@ module Tunewich
 						'description' => 'Toggle shuffle.',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							if inputParts[1] && inputParts[1].length > 0
-								@shuffle = !!(inputParts[1].match(/^(y(es)?|o(n|[^f]))/i))
-							else
-								@shuffle = !@shuffle
-							end
+							@shuffle = getToggledValueByInput.call(@shuffle, inputParts[1])
 							shuffleIndex() if @shuffle
 							putsRealtime "shuffle: #{@shuffle ? 'on' : 'off'}" if @configuredVerbosity >= 1
 							{:chainedInput => inputParts[2]}
@@ -931,11 +963,7 @@ module Tunewich
 						'description' => 'Toggle network enabled.',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							if inputParts[1] && inputParts[1].length > 0
-								@networkEnabled = !!(inputParts[1].match(/^(y(es)?|o(n|[^f]))/i))
-							else
-								@networkEnabled = !@networkEnabled
-							end
+							@networkEnabled = getToggledValueByInput.call(@networkEnabled, inputParts[1])
 							putsRealtime "network: #{@networkEnabled ? 'on' : 'off'}"
 							{:chainedInput => input}
 						}
@@ -1624,7 +1652,8 @@ module Tunewich
 					'loop' => {
 						'description' => 'Toggle loop.',
 						'action' => Proc.new { |input|
-							@loop = !@loop
+							inputParts = input.match(/^([^\/]*)(.*)$/)
+							@loop = getToggledValueByInput.call(@loop, inputParts[1])
 							sendPlayerCommand "loop #{@loop ? '0' : '-1'}"
 							putsRealtime "loop: #{@loop ? 'on' : 'off'}"
 							{:chainedInput => input}
@@ -1700,7 +1729,7 @@ module Tunewich
 							{:chainedInput => inputParts[2]}
 						}
 					},
-					'log' => {
+					'logarithmic' => {
 						'description' => 'Toggle logarithmic volume scale.',
 						'action' => Proc.new { |input|
 							@isVolumeAlreadyLogarithmic= !@isVolumeAlreadyLogarithmic
@@ -2345,6 +2374,24 @@ module Tunewich
 			bind('chapter_change', Proc.new {
 				# check if we need to skip this chapter
 				if (
+						@loop &&
+						!@currentlySkippingChapter &&
+						@currentTrack['chapters'][@currentChapterIndex] &&
+						@currentTrack['chapters'][@currentChapterIndex].has_key?('loop_target')
+				)
+					whisper("jumping to target chapter '#{@currentTrack['chapters'][@currentChapterIndex]['loop_target']}'", 2)
+					@currentlySkippingChapter = @currentChapterIndex
+
+					targetChapterIndex = getChapterIndexByQuery @currentTrack['chapters'][@currentChapterIndex]['loop_target'], @currentTrack['chapters']
+					if targetChapterIndex
+						fadeInterval = 0.0
+						seekToChapter targetChapterIndex, fadeInterval, fadeInterval
+					end
+
+					bindOnce('chapter_change', Proc.new {
+						@currentlySkippingChapter = nil
+					})
+				elsif (
 						!@currentlySkippingChapter &&
 						@currentTrack['chapters'][@currentChapterIndex] &&
 						@currentTrack['chapters'][@currentChapterIndex].has_key?('skip') &&
@@ -4322,7 +4369,10 @@ module Tunewich
 									!commands.has_key?(commandName)
 								)
 									newCommandName = firstFuzzyMatchValue commandName, commandKeys
-									commandName = newCommandName if newCommandName
+									if newCommandName
+										printRepeat "\n#{newCommandName}: #{commands[newCommandName]['description']}"
+										commandName = newCommandName 
+									end
 								end
 
 								commandInput = inputParts[3] || ''
