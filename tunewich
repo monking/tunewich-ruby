@@ -510,15 +510,20 @@ module Tunewich
 								@shouldShowPlaybackInfo = false
 								tracks = getYouTubeTracksFromPage(@currentTrack['link'] || @currentTrack['src'])
 								@shouldShowPlaybackInfo = true
-								if tracks
-									tracks.shift # remove the first track, which will be the main video on the page
-									@trackIndex = @tracks.length
-									@trackFilters = nil
-									useTracks tracks, true # and set track index to the first
-								end
+							elsif @currentTrack['type'] == 'soundcloud'
+								@shouldShowPlaybackInfo = false
+								tracks = getSoundcloudRecommendations(@currentTrack['link'] || @currentTrack['src'])
+								@shouldShowPlaybackInfo = true
 							else
-								putsRealtime "The /more currently only supports YouTube tracks."
+								putsRealtime "The /more currently only supports YouTube and Soundcloud tracks."
 							end
+
+              if tracks
+                tracks.shift # remove the first track, which will be the main video on the page
+                @trackIndex = @tracks.length
+                @trackFilters = nil
+                useTracks tracks, true # and set track index to the first
+              end
 							{:chainedInput => input}
 						}
 					},
@@ -2983,6 +2988,51 @@ module Tunewich
 					end
 					receivedCount += 1
 					printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
+				}
+			end
+
+			whisper "joining 'update info' threads", 4
+			threads.each { |thread| thread.join }
+			print "\n"
+
+			resultTracks
+		end
+
+		def getSoundcloudRecommendations url
+			if @noNetwork
+				puts "no getSoundcloudRecommendations --no-network"
+				return false
+			end
+			url = "#{url}/recommended"
+			queryResultURLs = []
+			open(url) do |handle|
+				html = []
+				handle.each_line { |line| html << line }
+
+				queryResultURLs = html.grep(/<h2.*itemprop="url"/).map! do |line|
+          line.sub!(/^.*<h2.*itemprop="url".*href="([^\"]+)".*\n/, 'https://soundcloud.com\1')
+				end
+
+				queryResultURLs.uniq!
+			end
+
+      # FIXME: seems to be skipping the first recommended track
+
+			threads = []
+			resultTracks = []
+			receivedCount = 0
+			printRepeat "Getting track information (#{receivedCount}/#{queryResultURLs.length})"
+
+			queryResultURLs.each_with_index do |recommendedURL, index|
+				track = matchExistingLibraryTrack createTrack(recommendedURL, 'soundcloud')
+				resultTracks << track
+				whisper "starting a new thread to get track info for #{track['src']}", 4
+				threads << Thread.new {
+					if not updateTrackInfo track
+						resultTracks.delete track
+					end
+					receivedCount += 1
+					printRepeat "Getting track information (#{receivedCount}/#{queryResultURLs.length})"
 				}
 			end
 
