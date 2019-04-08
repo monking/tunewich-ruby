@@ -920,13 +920,6 @@ module Tunewich
               input
             }
           },
-          'clear' => {
-            'description' => 'Clear current tracklist',
-            'action' => Proc.new { |input, command|
-              useTracks []
-              {:chainedInput => input}
-            }
-          },
           'all' => {
             'description' => "Load entire library.",
             'action' => Proc.new { |input, command|
@@ -1138,13 +1131,20 @@ module Tunewich
           },
           'tracks' => {
             'description' => 'Edit playing tracklist in Vim.',
+            'args' => ['clear'],
             'action' => Proc.new { |input, command|
-              editedTrackList = editTrackList @tracks
-              # writeTitleChangesInTrackList editedTrackList # TODO 1gSlF1: Do this only if the list being edited is not already the canonical library track list, in which case we cannot determine if there was a change
-              # writeLibraryToFile # TODO 1gSlF1
+              inputParts = getCommandInputParts(input)
+
+              editedTrackList = []
+              if inputParts[:query] != 'clear'
+                editedTrackList = editTrackList @tracks
+                # writeTitleChangesInTrackList editedTrackList # TODO 1gSlF1: Do this only if the list being edited is not already the canonical library track list, in which case we cannot determine if there was a change
+                # writeLibraryToFile # TODO 1gSlF1
+              end
+
               useTracks editedTrackList, false
               putsRealtime "#{@tracks.length} tracks selected"
-              {:chainedInput => input}
+              {:chainedInput => inputParts[:remainder]}
             }
           },
           'go' => {
