@@ -112,16 +112,14 @@ module Tunewich
 					'info' => "Rate this track.",
 					'action' => Proc.new { |input|
 						chunks = input.split ' '
-						if chunks[0].match /^[0-9]/
-							newRating = chunks.shift
-							if !newRating || newRating.length < 1
-								puts "current rating: #{@tracks[@trackIndex]['rating']}"
-							else
-								@tracks[@trackIndex]['rating'] = newRating.to_i
-								if !@tracks[@trackIndex]['unattached'] || @tracks[@trackIndex]['rating'] > 0
-									addTrackToLibrary @tracks[@trackIndex] if @tracks[@trackIndex]['unattached']
-									writeLibraryToFile true
-								end
+						newRating = chunks.shift if (chunks.length > 0) && (chunks[0].match /^[0-9]/)
+						if !newRating || newRating.length < 1
+							puts "current rating: #{@tracks[@trackIndex]['rating']}"
+						else
+							@tracks[@trackIndex]['rating'] = newRating.to_i
+							if !@tracks[@trackIndex]['unattached'] || @tracks[@trackIndex]['rating'] > 0
+								addTrackToLibrary @tracks[@trackIndex] if @tracks[@trackIndex]['unattached']
+								writeLibraryToFile true
 							end
 						end
 						{:chainedInput => chunks.join(' ')}
@@ -377,6 +375,7 @@ module Tunewich
 						@trackFilters['tag'] = "+#{getTrackTags(@tracks[@trackIndex]).join ' +'}"
 						useEntireLibrary
 						@trackIndex = 1 # next track (current track will almost certainly be at index 0)
+						commandRequiresNext = true
 						{:chainedInput => input}
 					}
 				},
