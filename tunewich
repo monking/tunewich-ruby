@@ -2672,6 +2672,9 @@ module Tunewich
 							commandName = possibleCommands[0]
 						elsif possibleCommands.length > 1
 							puts "Did you mean #{possibleCommands.join ", or "}?"
+						else
+							puts "No commands matching '/#{commandName}'; type '/?' to see all commands."
+							break
 						end
 					end
 
@@ -2691,9 +2694,6 @@ module Tunewich
 							input = nil
 							break
 						end
-					else
-						puts "Invalid command '#{commandName}'; available commands: #{commands.keys.join ', '}"
-						break
 					end
 				end
 				whisper "end command while loop", 4
