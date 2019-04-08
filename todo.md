@@ -84,6 +84,17 @@
 					from tunewich:4157:in `new'
 					from tunewich:4157:in `<main>'
 	```
+- [ ] 1gpzVv: change tags to map with key of track ID, and value of score\*, default 1
+  - \*or object containing score, if that doesn't explode data size too much
+  - add 1 to the score of this track's association with the tag (`tags.focus.tracks[currentTrackId].score`)
+    - times 2^(# of +/- preceding tag name)
+    - e.g. `/tag focus` = focus + 1
+    - e.g. `/tag ++work-music verbal-sample` = focus + 4, verbal-sample + 1
+      - maybe this association could be used to gently override some excluded tags. For instance, if I filter out the "distracting" tag, and thus all tags associated with it (including "verbal", and "verbal-sample"), I may want to let a track squeak through that has a very low "verbal-sample" score (i.e. maybe it only happens once or twice in the background, and so I want to describe the track without affecting its filtering much)
+      - On this point, what does it mean for a track to have zero or negative affiliation with a tag?
+        - Zero would seem to fit what I'm describing here: neglible in terms of filtering, but descriptive only.
+        - I think negative would imply some other tag that would be better suited. It could reverse the filter effect, also: if I'm filtering to include only "focus" things, I may want to exclude things that have negative "focus" scores. In that case, it would be a placeholder for something more descriptive, so I think I would discourage using negative scores.
+          - But :shrug:, maybe it'll be useful one day. I think my real fear here is that my data structure is not efficient, and complicating it futher will slow down the operation of my player. But when considering how the app should work, I shouldn't be concerned so much with that. Let the desired feature be a pressure to make the data store more efficient.
 
 ## notes
 
