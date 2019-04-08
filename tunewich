@@ -56,6 +56,7 @@ module Tunewich
 			@trackIndex = 0
 			@tracks = []
 			@configuredVerbosity = 0
+			@verbosityBoost = 0
 			@logVerbosity = nil
 			@shouldShowPlaybackInfo = true
 			@trackFilters = nil
@@ -348,14 +349,15 @@ module Tunewich
 			# 3: errors
 			# 4: debug
 			formattedMessage = "	#{"-" * verbosity} #{message}"
-			if @configuredVerbosity >= verbosity
+			effectiveVerbosity = verbosity - @verbosityBoost
+			if @configuredVerbosity >= effectiveVerbosity
 				if @shouldShowPlaybackInfo
 					STDERR.print "#{formattedMessage}\n"
 				else
 					STDERR.puts formattedMessage
 				end
 			end
-			if $logFilePath && (!@logVerbosity || @logVerbosity >= verbosity)
+			if $logFilePath && (!@logVerbosity || @logVerbosity >= effectiveVerbosity)
 				open($logFilePath, 'a') { |f|
 					f.puts formattedMessage
 				}
@@ -2897,7 +2899,6 @@ module Tunewich
 			action = isExcludeFilter ? 'delete_if' : 'keep_if'
 
 			if filters.has_key? 'local'
-				whisper("filtering to local files", 3)
 				tracks.send(action) { |t|
 					trackFileExists? t
 				}
@@ -2952,7 +2953,7 @@ module Tunewich
 
 					whisper("expanded filter tag list with descendants: #{selectedTags}", 4)
 					if selectedTags.length > 0
-						# TODO: 1gG4jP
+						# TODO 1gG4jP: make a list of IDs and filter tracks against it once, rather than filtering separately for each tag @performance
 						selectedTags.each { |tagInfo|
 							tracks.send(action) { |t| tagInfo[:tag]['tracks'] && tagInfo[:tag]['tracks'].index(t['id']) || unionTagTracks.index(t['id']) }
 						}
