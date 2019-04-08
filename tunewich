@@ -175,6 +175,8 @@ module Tunewich
 				playerOutput = play track, chapterIndex
 
 				if playerOutput
+					loadLibrary
+
 					if (@writeAfterSecondsPlayed && playerOutput[:playtime] > @writeAfterSecondsPlayed)
 						puts "Played more than #{@writeAfterSecondsPlayed}s, saving to library."
 						loadLibrary
