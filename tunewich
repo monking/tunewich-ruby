@@ -69,7 +69,7 @@ module Tunewich
 			if ENV.key? 'TUNEWICH_PLAYER_OPTS'
 				@mplayerDefaultOptions = ENV['TUNEWICH_PLAYER_OPTS']
 				@volume = getMplayerConfigNumericProperty('volume')
-        @speed = getMplayerConfigNumericProperty('speed', 1.0)
+				@speed = getMplayerConfigNumericProperty('speed', 1.0)
 			else
 				puts "You can add `export TUNEWICH_PLAYER_OPTS=\"<player options>\"` to your ~/.profile or similar file. Default player is #{Player::PLAYER_APPLICATION}."
 			end
@@ -277,27 +277,29 @@ module Tunewich
 							end
 							volumeFadeInterval = 0.02
 							volumeFadeStepCount = (duration / volumeFadeInterval).to_i
-							whisper ">volumeFadeStepCount: #{volumeFadeStepCount}"
-							whisper "about to fade volume"
 							volumeSpan = targetFadeVolume - volume
-							whisper ">volumeSpan: #{volumeSpan}"
 							lowerVolume = [volume, targetFadeVolume].min
 							if volumeSpan != 0
 								absoluteVolumeSmap = volumeSpan.abs
-								setLogarithmicVolumeByStep = Proc.new { |stepIndex|
-									whisper ">stepIndex: #{stepIndex}"
-									volume = 10**(Math.log10(volumeSpan.abs + 1) / volumeFadeStepCount * stepIndex) + lowerVolume - 1
-									whisper ">volume: #{volume}"
-									whisper volume
-									printRepeat "fading: #{volume.round()}"
+								if @isVolumeAlreadyLogarithmic
+									volumeStepStrategy = Proc.new { |stepIndex|
+										volume = lowerVolume + volumeSpan.abs * (stepIndex.to_f / volumeFadeStepCount)
+									}
+								else
+									volumeStepStrategy = Proc.new { |stepIndex|
+										volume = lowerVolume + 10**(Math.log10(volumeSpan.abs + 1) / volumeFadeStepCount * stepIndex) - 1
+									}
+								end
+								stepFade = Proc.new { |stepIndex|
+									volumeStepStrategy.call(stepIndex)
+									printRepeat "fading: #{volume.round()} [#{stepIndex}]"
 									putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{volume} 1\n"
 									sleep volumeFadeInterval
 								}
 								if volumeSpan > 0
-									# 1.upto(volumeFadeStepCount) setLogarithmicVolumeByStep # would this work?
-									1.upto(volumeFadeStepCount - 1) { |stepIndex| setLogarithmicVolumeByStep.call stepIndex }
+									1.upto(volumeFadeStepCount - 1) { |stepIndex| stepFade.call stepIndex }
 								else
-									(volumeFadeStepCount - 1).downto(1) { |stepIndex| setLogarithmicVolumeByStep.call stepIndex }
+									(volumeFadeStepCount - 1).downto(1) { |stepIndex| stepFade.call stepIndex }
 								end
 								putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{targetFadeVolume} 1\n"
 							else
@@ -326,9 +328,9 @@ module Tunewich
 								elsif targetRampSpeed == 'in'
 									targetRampSpeed = speedBeforeRampingOut
 								else
-                  targetRampSpeed = targetRampSpeed.to_f
-                  @speed = targetRampSpeed
-                  # does this work? # @speed = targetRampSpeed.to_f!
+									targetRampSpeed = targetRampSpeed.to_f
+									@speed = targetRampSpeed
+									# does this work? # @speed = targetRampSpeed.to_f!
 								end
 								speedRampInterval = 0.02
 								speedRampStepCount = duration / speedRampInterval
@@ -355,11 +357,11 @@ module Tunewich
 				'wait' => {
 					'info' => 'Wait to execute chained commands',
 					'action' => Proc.new { |input|
-            chunks = input.split ' '
-            if chunks.length > 0 && chunks[0].match(/^[0-9.]+$/)
-              sleep chunks.shift.to_f
-            end
-            {:chainedInput => chunks.join(' ')}
+						chunks = input.split ' '
+						if chunks.length > 0 && chunks[0].match(/^[0-9.]+$/)
+							sleep chunks.shift.to_f
+						end
+						{:chainedInput => chunks.join(' ')}
 					}
 				},
 				'list' => {
@@ -504,10 +506,10 @@ module Tunewich
 					}
 				},
 				'fixbpm' => {
-          'info' => "TODO: [Toggle ON/off] Change next track's playback speed to BPM of a current track. If either track does not have BPM metadata, then the curent playback speed is maintained.",
+					'info' => "TODO: [Toggle ON/off] Change next track's playback speed to BPM of a current track. If either track does not have BPM metadata, then the curent playback speed is maintained.",
 					'action' => Proc.new { |input|
-            @fixbpm = !@fixbpm
-            puts "TODO: fixbpm #{@fixbpm ? "on" : "off"}"
+						@fixbpm = !@fixbpm
+						puts "TODO: fixbpm #{@fixbpm ? "on" : "off"}"
 						{:chainedInput => input}
 					}
 				},
@@ -916,7 +918,7 @@ module Tunewich
 
 			if streaming
 				deleteStream streamName
-			elsif !fileAlreadyExists && track['unattached'] && !@keepUnattachedDownload
+			elsif !@keepUnattachedDownload && !fileAlreadyExists && track['unattached']
 				deleteTrackFile track
 				titleBlock "UNATTACHED DOWNLOAD DELETED", 'X'
 			end
@@ -949,7 +951,7 @@ module Tunewich
 			getMplayerProperty('speed', /^(ANS_speed=|.*Speed: )(.*?)(\?)?$/).to_f
 		end
 
-    def getMplayerConfigNumericProperty(propertyName, defaultValue = 0.0)
+		def getMplayerConfigNumericProperty(propertyName, defaultValue = 0.0)
 			mplayerCommands = []
 			mplayerCommands += @mplayerOverrideCommands if @mplayerOverrideCommands
 			mplayerCommands += [@mplayerDefaultOptions] if @mplayerDefaultOptions
@@ -1772,6 +1774,7 @@ module Tunewich
 		def addTrackToLibrary track
 			track.delete 'unattached' if track.has_key? 'unattached'
 			trackReference = track['id']
+			track['dateAdded'] = Time.now.to_i
 			@library['library'][trackReference] ||= track
 
 			trackReference
