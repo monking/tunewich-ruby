@@ -13,6 +13,7 @@ $clearLineCharacter = "\033[0K"
 $disableWrapCharacter = "\033[?7l"
 $enableWrapCharacter = "\033[?7h"
 $tunewichWorkingDirectory = "#{ENV['HOME']}/.tunewich"
+$hostname = ENV.has_key?('TENT_HOSTNAME') ? ENV['TENT_HOSTNAME'] : ENV['HOSTNAME']
 $tunewichTmpDirectory = "#{$tunewichWorkingDirectory}/tmp"
 $serviceConfigDir = "#{$tunewichWorkingDirectory}/config"
 $uniqueId = 0
@@ -1880,6 +1881,11 @@ module Tunewich
 		end
 
 		def addTrackToTags(track, tagNames)
+			# TODO 1gtzi6: for tags containing ':' colons, add the tag as-is, and set
+			# its parents to the list resulting from splitting on ':' colon (e.g.
+			# 'composer:vangelis' will create/add to the tag of that name, and assign
+			# that tags parents to be 'composer' and 'vangelis', creating those tags
+			# as necessary).
 			whisper("adding tags (input): #{tagNames}", 3)
 			tagNames.each { |tagName|
 				whisper("about to add to tag '#{tagName}'", 4)
@@ -2517,6 +2523,11 @@ module Tunewich
 				Thread.new {
 					downloadPid = system(downloadCommand) # system: blocking
 					if trackFileExists? track
+						loadLibrary
+						@library['x.hosts'][$hostname] ||= {'hostname' => ENV['HOSTNAME']}
+						@library['x.hosts'][$hostname]['downloaded'] ||= []
+						@library['x.hosts'][$hostname]['downloaded'] << track['id']
+						writeLibraryToFile
 						trigger 'download_success', track
 					else
 						trigger 'download_fail', track
