@@ -93,6 +93,7 @@ module Tunewich
 			@isPlayerPlaying = false
 			@tempFiles = {}
 			@loop = false
+			@innerLoopsOnly = false
 			@loopHistory = {};
 			@loopLimit = 0
 			@breakLoop = false
@@ -2675,7 +2676,7 @@ module Tunewich
 			end
 
 			if !streamName
-				playerStartupOptions << "-loop #{@loopLimit}" if @loop && !doesTrackHaveLoopingChapters?(@currentTrack)
+				playerStartupOptions << "-loop #{@loopLimit}" if @loop && !@innerLoopsOnly && !doesTrackHaveLoopingChapters?(@currentTrack)
 			end
 
 			@speed = 1 if @speed < 0.01
@@ -4152,6 +4153,11 @@ module Tunewich
 
 			parser.on("-l [COUNT]", "--loop [COUNT]", "Loop tracks COUNT times (indefinitely if COUNT is 0 or missing). A track may contain chapters which loop, in which case each loop will be repeated COUNT times.", " ") do |count = 0|
 				@loopLimit = count.to_i
+				@loop = true
+			end
+
+			parser.on("--inner-loop", "Only loop internally on tracks with notes/chapters having \"loop targets\" defined.", " ") do
+				@innerLoopsOnly = true
 				@loop = true
 			end
 
