@@ -49,7 +49,7 @@ module Tunewich
 			@libraryHash = nil
 			@sessionID = Random.rand(1024)
 			@currentTrack = nil
-			@trackIndex = nil
+			@trackIndex = 0
 			@tracks = []
 			@configuredVerbosity = 0
 			@shouldShowPlaybackInfo = true
@@ -166,18 +166,6 @@ module Tunewich
 				titleBlock "Playing #{@tracks.length} tracks", '#'
 			else
 				useEntireLibrary
-			end
-
-			if @trackIndex == nil
-				if @shuffle
-					shuffleIndex()
-				else
-					@trackIndex = 0
-				end
-			elsif @trackIndex.is_a? String and @trackIndex != '0'
-				@trackIndex = findTrackIndex @trackIndex
-			else
-				@trackIndex = @trackIndex.to_i
 			end
 
 			# TODO: catch SIGINT (ctrl+c) & prompt for playlist again
@@ -480,17 +468,24 @@ module Tunewich
 					}
 				},
 				'info' => {
-					'description' => "Show track info",
+					'description' => "Show track info. Track is: without input = currently playing track; with '>' = the track that will play next; with numeric input = the track at that position in the track list; any other input = the track with the title that best matches that input",
 					'action' => Proc.new { |input|
 						inputParts = input.match(/^([^\/]*)(.*)$/)
 						index = inputParts[1]
+						track = nil
+						trackIndex = nil
 						if inputParts[1] && inputParts[1].length > 0
-							if inputParts[1].to_i == 0
-								track = @tracks[findTrackIndex(inputParts[1])]
+							if inputParts[1] == '>'
+								trackIndex = @trackIndex
+							elsif inputParts[1].to_i == 0
+								trackIndex = findTrackIndex(inputParts[1])
 							else
-								track = @tracks[inputParts[1].to_i - 1]
+								trackIndex = inputParts[1].to_i - 1
 							end
+							track = @tracks[trackIndex]
 						else
+							# the user may have altered the track list, so that it no longer includes the currently playing track
+							trackIndex = @trackIndex if @tracks[@trackIndex] === @currentTrack
 							track = @currentTrack
 						end
 
@@ -503,6 +498,7 @@ module Tunewich
 						tagNames = getTrackTags track
 
 						outputMessageLines = []
+						outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
 						outputMessageLines << "    volume : #{getCurrentMplayerVolume}/100"
 						outputMessageLines << "------------------------------"
 						outputMessageLines << "     title : #{track['title']}" if alreadyHas[:title]
@@ -605,9 +601,15 @@ module Tunewich
 				'shuffle' => {
 					'description' => 'Toggle shuffle.',
 					'action' => Proc.new { |input|
-						@shuffle = !@shuffle
+						inputParts = input.match(/^([^\/]*)(.*)$/)
+						if inputParts[1] && inputParts[1].length > 0
+							@shuffle = !!((inputParts[1].match /^(y(es)?|o(n|[^f]))/i))
+						else
+							@shuffle = !@shuffle
+						end
+						shuffleIndex() if @shuffle
 						putsRealtime "shuffle: #{@shuffle ? 'on' : 'off'}" if @configuredVerbosity >= 1
-						{:chainedInput => input}
+						{:chainedInput => inputParts[2]}
 					}
 				},
 				'ab' => {
@@ -1025,6 +1027,8 @@ module Tunewich
 
 					titleBlock "[#{@trackIndex + 1}] - #{@currentTrack['title']}"
 
+					nextTrack() # call nextTrack after @trackIndex is announced, but before play, so that the user can see which track will come next.
+
 					if @updateAllPlayedTrackInfo && !@noNetwork
 						printRepeat "Getting latest track information..."
 						updateTrackInfo @currentTrack
@@ -1033,7 +1037,6 @@ module Tunewich
 					fileExists = trackFileExists? @currentTrack
 
 					if !fileExists && @noNetwork
-						nextTrack
 						next
 					end
 
@@ -1057,14 +1060,12 @@ module Tunewich
 						writeLibraryToFile
 					end
 
-					whisper "I've been asked to exit", 4 if commandRequiresExit
+					whisper "I've been asked to exit", 3 if commandRequiresExit
 					return if commandRequiresExit
-					whisper "I've been asked to break", 4 if commandRequiresBreak
+					whisper "I've been asked to break", 3 if commandRequiresBreak
 					break if commandRequiresBreak
-					whisper "I've been asked to skip to next", 4 if commandRequiresNext
+					whisper "I've been asked to skip to next", 3 if commandRequiresNext
 					next if commandRequiresNext
-
-					nextTrack()
 				else
 					whisper "Empty tracklist", 3
 					commandPrompt "empty", interactiveCommands
@@ -1827,13 +1828,14 @@ module Tunewich
 			end
 		end
 
-		def titleBlock(message, fill = '=', width = 80)
+		def titleBlock(message, fill = '=')
+			width = `tput cols`.chomp.to_i
 			blockRow = fill * width
 			padding = '  '
 			marginSize = (width - message.length) / 2 - padding.length
 			marginLeft = marginSize > 1 ? fill * marginSize : ''
 			marginRight = marginLeft
-			marginRight += fill if message.length % 2 == 1
+			marginRight += fill if (width - message.length) % 2 == 1
 			puts "\n#{blockRow}"
 			puts "#{marginLeft}#{padding}#{message}#{padding}#{marginRight}"
 			puts blockRow
