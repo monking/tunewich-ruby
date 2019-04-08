@@ -59,7 +59,7 @@ module Tunewich
 		private
 
 		def whisper message
-			puts "  DEBUG: #{message}" if @verbose
+			puts "  -- #{message}" if @verbose
 		end
 
 		def getEnvironmentConfig
@@ -425,7 +425,7 @@ module Tunewich
 				fadeCommandMatch = /^fade (out|in|\d+)( \d+)?( .+)?$/.match command
 				if fadeCommandMatch
 					whisper "mplayerAction: found a fade command"
-					duration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 1.0
+					duration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 2.0
 					followingCommand = fadeCommandMatch[3] && fadeCommandMatch[3].length > 0 ? fadeCommandMatch[3].strip : nil
 					volume = getCurrentMplayerVolume
 					targetFadeVolume = fadeCommandMatch[1]
@@ -501,8 +501,9 @@ module Tunewich
 				if not streaming
 					duration = track['loop'][1] - track['loop'][0]
 
-					whisper "putting a 'seek to the beginning' command in the player command input file" 
-					mplayerAction.call 'seek -999:00:00' # this is a silly way to do it. -100% doesn't work. Still, there's a moment of the audio heard before this command is run.
+					# FIXME: this stalls when file is to be downloaded...
+					# whisper "putting a 'seek to the beginning' command in the player command input file" 
+					# mplayerAction.call 'seek -999:00:00' # this is a silly way to do it. -100% doesn't work. Still, there's a moment of the audio heard before this command is run.
 
 					whisper "setting some player startup options" 
 					# loop back from B to A
@@ -747,7 +748,6 @@ module Tunewich
 
 		def findTrackFiles(track)
 			globString = "#{getTrackFilePrefix track}*"
-			whisper "findTrackFiles: globbing for: '#{globString}'" 
 			Dir.glob(globString)
 		end
 
@@ -806,13 +806,17 @@ module Tunewich
 					# 		end
 					# 	end
 					# end
-					break if output.match(/#{track['src']}|100(\.0)?%|ERROR/)
+					if output.match(/#{track['src']}|100(\.0)?%|ERROR/)
+						whisper "downloadTrack: #{output}"
+						break
+					end
 					printRepeat "(#{cliRotate}) #{output}"
 					sleep 0.1
 				end
 
-				puts "Waiting 0.5 seconds to be sure the file is ready..."
-				sleep 0.5 # FIXME: remove `sleep` in favor of checking if the right file exists yet
+				delayForFileToExist = 5
+				puts "Waiting #{delayForFileToExist} seconds to be sure the file is ready..."
+				sleep delayForFileToExist # FIXME: remove `sleep` in favor of checking if the right file exists yet
 			end
 
 			deleteTempFile downloadFeedbackFileName
@@ -1595,7 +1599,7 @@ module Tunewich
 
 		def editListInVim list, instructions = nil
 			instructions ||= "edit"
-			fileDirections = "##\n# #{instructions}\n##\n\n"
+			fileDirections = "##\n#{instructions.gsub(/^/, '# ')}\n##\n\n"
 
 			editListName = 'edit-list'
 			deleteTempFile editListName
