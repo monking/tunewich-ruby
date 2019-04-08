@@ -33,8 +33,9 @@ module Tunewich
 		FILTER_HELP_2 = "Available rules are: [min-,max-]rating=<#0-5>,title=<query>,tag=<tag>,chapters,last=<[[[DD:]HH:]MM:]SS>,ab."
 		FILTER_HELP_3 = "Prepend an '-' to your rule to add it to exclude matches (e.g. '-tag=' vs 'tag=')."
 		MODES = {
-			'play' => 'play',
-			'edit' => 'edit'
+			'play' => 'play', # manage library while playing tracks
+			'edit' => 'edit', # same interaction as "play", but without playback
+			'kill' => 'kill' # shutting down
 		}
 		TAG_INPUT_SPLIT = /[,\s]+/
 		PLAYER_APPLICATION = 'mplayer'
@@ -43,7 +44,7 @@ module Tunewich
 		UNAME = `uname`.chomp
 
 		def initialize
-			@userMode = Player::MODES['play']
+			@userMode = MODES['play']
 			@library = nil
 			@libraryHash = nil
 			@eventBindings = {}
@@ -92,6 +93,8 @@ module Tunewich
 			@youtubeDLTrackTypes = ['youtube', 'soundcloud']
 			@isPlayerPlaying = false
 			@tempFiles = {}
+			@writeEnabled = true
+			@yesToConfirmPropts = false
 			@loop = false
 			@innerLoopsOnly = false
 			@loopHistory = {};
@@ -104,6 +107,10 @@ module Tunewich
 
 			doOptionSecondaryActions parseOptions # library may be loaded again from a different place here
 
+			main if @userMode != MODES['kill']
+		end
+
+		def main
 			trackTitleListFromLastSession = readTempFile('tracks', false)
 			if trackTitleListFromLastSession && trackTitleListFromLastSession.length > 0
 				whisper("Using tracks from last session.", 1)
@@ -167,7 +174,7 @@ module Tunewich
 
 			listenForExternalCommands
 
-			main
+			interactiveLoop
 		end
 
 		def cleanup
@@ -192,7 +199,7 @@ module Tunewich
 					@isPlayerPlaying = false
 				end
 			end
-			putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
+			putInTempFile "#{MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
 		end
 
 		def togglePlay
@@ -200,7 +207,7 @@ module Tunewich
 			sendPlayerCommand @isPlayerPlaying ? 'pause' : 'play'
 		end
 
-		def main
+		def interactiveLoop
 			bindingGroupName = 'interactivePlayback'
 
 			shouldExitMainLoop = false
@@ -232,7 +239,7 @@ module Tunewich
 
 					titleBlock "[#{@trackIndex + 1}] - #{@currentTrack['title']}"
 
-					if @userMode == 'play'
+					if @userMode == MODES['play']
 						nextTrack() # call nextTrack after @trackIndex is announced, but before play, so that the user can see which track will come next.
 
 						if @updateAllPlayedTrackInfo && @networkEnabled
@@ -254,12 +261,12 @@ module Tunewich
 
 					case @userMode
 
-					when 'play'
+					when MODES['play']
 						playerOutput = play @currentTrack, interactiveCommands
 						if @tracks.empty? || !@trackIndex || 0 > @trackIndex || @trackIndex > @tracks.length - 1
-							setUserMode 'edit'
+							setUserMode MODES['edit']
 						end
-					when 'edit'
+					when MODES['edit']
 						commandPrompt '(keep hitting enter)', interactiveCommands
 					end
 
@@ -403,6 +410,7 @@ module Tunewich
 
 		def kill
 			trigger 'before_exit'
+			setUserMode MODES['kill']
 			cleanup
 		end
 
@@ -1203,7 +1211,7 @@ module Tunewich
 						'description' => "[FORMAT] [FFMPEG_OPTIONS]  Transcode downloaded file to another format (default Ogg/Vorbis). This is the same as doing '/format FORMAT /download'.",
 						'args' => ['vorbis'],
 						'action' => Proc.new { |input, command|
-              inputParts = getCommandInputParts(input, /^(?<format>\w+)?( (?<options>.*?))?( (?<remainder>\/.*))?$/)
+							inputParts = getCommandInputParts(input, /^(?<format>\w+)?( (?<options>.*?))?( (?<remainder>\/.*))?$/)
 
 							outputFormat = inputParts[:format] && inputParts[:format].length > 0 ? inputParts[:format] : 'vorbis'
 
@@ -1361,9 +1369,9 @@ module Tunewich
 							else
 								filtersList = command['listFilters'].call()
 								filterInstructions = []
-								filterInstructions << Player::FILTER_HELP_1
-								filterInstructions << Player::FILTER_HELP_2
-								filterInstructions << Player::FILTER_HELP_3
+								filterInstructions << FILTER_HELP_1
+								filterInstructions << FILTER_HELP_2
+								filterInstructions << FILTER_HELP_3
 								filterInstructions << '' # empty line
 								filterInstructions << "Available tags: \n	#{listAllTagsWithCountsAndAliases.join "\n	"}"
 								filterInstructions << "For music without words: -tag=verbal acapella visual live noise delete missing-source"
@@ -1443,7 +1451,7 @@ module Tunewich
 							success = false
 
 							if inputParts[:query].length > 0
-								tags = inputParts[:query].split(Player::TAG_INPUT_SPLIT)
+								tags = inputParts[:query].split(TAG_INPUT_SPLIT)
 								if tags.length == 2
 									# TODO: optionally remove parent tags from all tracks which contain child tag
 									success = relateTags tags
@@ -1469,7 +1477,7 @@ module Tunewich
 							success = false
 
 							if inputParts[:query].length > 0
-								tags = inputParts[:query].split(Player::TAG_INPUT_SPLIT)
+								tags = inputParts[:query].split(TAG_INPUT_SPLIT)
 								if tags.length > 1
 									success = combineTags tags
 									if success
@@ -1715,6 +1723,8 @@ module Tunewich
 						}
 					}
 				},
+				'kill' => {
+				},
 				'edit' => {
 				},
 				'play' => {
@@ -1733,13 +1743,13 @@ module Tunewich
 							output
 						},
 						'inputOptions' => Proc.new { |input, command|
-							`#{Player::PLAYER_APPLICATION} -input cmdlist`.split("\n")
+							`#{PLAYER_APPLICATION} -input cmdlist`.split("\n")
 						}
 					},
 					'stop' => {
 						'description' => 'Stop playing (enter "edit" mode).',
 						'action' => Proc.new { |input, command|
-							setUserMode Tunewich::Player::MODES['edit']
+							setUserMode MODES['edit']
 							exitPlayerCommand
 
 							false
@@ -2128,7 +2138,7 @@ module Tunewich
 			}
 
 			if modes.empty?
-				modes = Tunewich::Player::MODES.keys 
+				modes = MODES.keys 
 			else
 				modes << 'base'
 				modes.uniq!
@@ -2153,7 +2163,7 @@ module Tunewich
 		end
 
 		def setUserMode mode
-			@userMode = mode if Tunewich::Player::MODES.has_key?(mode)
+			@userMode = mode if MODES.has_key?(mode)
 		end
 
 		def getNoteIndexAtTime notes, seconds
@@ -2586,11 +2596,11 @@ module Tunewich
 				:playTime => 0
 			}
 
-			playerInputStreamName = "#{Player::MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
+			playerInputStreamName = "#{MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
 			deleteStream playerInputStreamName
 			playerInputFile = makeStream playerInputStreamName
 
-			playerStdoutName = "#{Player::MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
+			playerStdoutName = "#{MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
 			playerStdoutFile = getTempFilePath playerStdoutName
 
 			# https://mplayerhq.hu/DOCS/tech/slave.txt
@@ -2726,10 +2736,10 @@ module Tunewich
 				@isPlayerPlaying = true
 				# TODO 1gnyIc: fix missing input characters while paused
 				@tempFiles[playerStdoutFile] = true
-				playerCommand = "#{Player::PLAYER_APPLICATION} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '} > #{playerStdoutFile}"
+				playerCommand = "#{PLAYER_APPLICATION} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '} > #{playerStdoutFile}"
 				whisper(playerCommand, 3)
 				playerStatus = `#{playerCommand} 2> /dev/null`
-				whisper("#{Player::PLAYER_APPLICATION} is finished. killing user input thread", 4)
+				whisper("#{PLAYER_APPLICATION} is finished. killing user input thread", 4)
 				@inputThread.kill if @inputThread
 			}
 
@@ -2927,7 +2937,7 @@ module Tunewich
 				# TODO: 1gG4jB maybe this needs pausing_keep (http://www.mplayerhq.hu/DOCS/tech/slave.txt). doesn't quite work in my testing
 				sendPlayerCommand command
 				sleep responseDelay if responseDelay
-				lastPlayerOutput = tailTempFile "#{Player::MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
+				lastPlayerOutput = tailTempFile "#{MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
 				if lastPlayerOutput
 					whisper("read #{property} from player, output: #{lastPlayerOutput}", 5)
 					matches = lastPlayerOutput.match pattern
@@ -3030,7 +3040,7 @@ module Tunewich
 			@tunewichDirectory = libraryPath
 			if not Dir.exist? @tunewichDirectory
 				whisper("Please create the directory '#{@tunewichDirectory}'.", 0)
-				exit
+				kill
 			end
 
 			@fileDirectory = "#{@tunewichDirectory}/music"
@@ -3508,21 +3518,26 @@ module Tunewich
 		end
 
 		def writeLibraryToFile shouldPrompt = false
-			if shouldPrompt && !@writeEnabled
-				return if !confirm("Write changes to library?")
-			end
-			libraryJSON = JSON.pretty_generate(@library)
-			# FIXME 1gpb0C
-			if not libraryJSON || libraryJSON == 'null' || libraryJSON.length < 1
-				putsRealtime "Sorry! The loaded library has been corrupted. Please restart the player if you want to save any changes to your library."
+			if @writeEnabled
+				if shouldPrompt && !@yesToConfirmPropts
+					return if !confirm("Write changes to library?")
+				end
+				libraryJSON = JSON.pretty_generate(@library)
+				# FIXME 1gpb0C
+				if not libraryJSON || libraryJSON == 'null' || libraryJSON.length < 1
+					putsRealtime "Sorry! The loaded library has been corrupted. Please restart the player if you want to save any changes to your library."
+					return
+				end
+				libraryOnFile = processLibraryJSON File.read(@libraryFilePath) # since we're writing, no need to check for libraryOnFile[:data], right?
+				if @libraryHash == libraryOnFile[:hash] || confirm("Library file has changed since last load. Overwrite?")
+					libraryInfo = processLibraryJSON libraryJSON
+					File.write(@libraryFilePath, libraryJSON)
+					@libraryHash = libraryInfo[:hash]
+					whisper("Saved change to library file.", 2)
+				end
+			else
+				whisper("Writing the library to file is disabled.", "2")
 				return
-			end
-			libraryOnFile = processLibraryJSON File.read(@libraryFilePath) # since we're writing, no need to check for libraryOnFile[:data], right?
-			if @libraryHash == libraryOnFile[:hash] || confirm("Library file has changed since last load. Overwrite?")
-				libraryInfo = processLibraryJSON libraryJSON
-				File.write(@libraryFilePath, libraryJSON)
-				@libraryHash = libraryInfo[:hash]
-				whisper("Saved change to library file.", 2)
 			end
 		end
 
@@ -4137,7 +4152,7 @@ module Tunewich
 				setLibraryPath inputDir
 			end
 
-			parser.on("-f RULES", "--filter RULES", Player::FILTER_HELP_1, Player::FILTER_HELP_2, Player::FILTER_HELP_3, " ") do |rules|
+			parser.on("-f RULES", "--filter RULES", FILTER_HELP_1, FILTER_HELP_2, FILTER_HELP_3, " ") do |rules|
 				@trackFilters = parseOptionParameters rules
 			end
 
@@ -4150,7 +4165,7 @@ module Tunewich
 				puts "INTERACTIVE COMMANDS"
 				interactiveCommands = getInteractiveCommands([], 'help')
 				showInteractiveCommandHelp(interactiveCommands)
-				exit
+				kill
 			end
 
 			parser.on("-l [COUNT]", "--loop [COUNT]", "Loop tracks COUNT times (indefinitely if COUNT is 0 or missing). A track may contain inner loops on chapters or notes, in which case _each loop_ will be repeated COUNT times.", " ") do |count = 0|
@@ -4173,11 +4188,15 @@ module Tunewich
 				whisper("Log level: #{@logVerbosity}", 1)
 			end
 
-			parser.on("-m MODE", "--mode MODE", "Choose a player mode: #{Player::MODES.keys.join ', '}", " ") do |modeName|
-				if Player::MODES.has_key? modeName
+			parser.on("--readonly", "Do not write any changes to the library file.", " ") do
+				@writeEnabled = false
+			end
+
+			parser.on("-m MODE", "--mode MODE", "Choose a player mode: #{MODES.keys.join ', '}", " ") do |modeName|
+				if MODES.has_key? modeName
 					@userMode = modeName
 				else
-					putsRealtime "#{modeName} is not a valid player mode. Please use one of #{Player::MODES.keys.join ', '}"
+					putsRealtime "#{modeName} is not a valid player mode. Please use one of #{MODES.keys.join ', '}"
 				end
 			end
 
@@ -4325,7 +4344,7 @@ module Tunewich
 			end
 
 			parser.on("-w", "--write [SECONDS]", "Save changes to the library. If SECONDS are given, only tracks played that many seconds will be written.", " ") do |seconds|
-				@writeEnabled = true
+				@yesToConfirmPropts = true
 				@writeAfterSecondsPlayed = seconds ? seconds.to_f : 0.0
 			end
 
@@ -4342,7 +4361,7 @@ module Tunewich
 		def doOptionSecondaryActions optionsOutput
 			if not @fileDirectory
 				whisper("please specify an input directory with -i", 0)
-				exit
+				kill
 			end
 
 			if @youtubeSearch && @networkEnabled
