@@ -720,9 +720,6 @@ module Tunewich
 								tagNames = getTrackTags track
 
 								outputMessageLines = []
-								outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
-								outputMessageLines << "    volume : #{@currentVolume}/100" if track == @currentTrack
-								outputMessageLines << "------------------------------"
 								if !alreadyHas[:title] || !alreadyHas[:duration] || track['title'].length == 0
 									info = {}
 									if track['type'] === 'youtube'
@@ -733,6 +730,11 @@ module Tunewich
 									updateTrackInfo track, info
 								end
 								outputMessageLines << "     title : #{track['title']}" if track.has_key? 'title'
+								outputMessageLines << "      tags : #{tagNames.join ', '}" if tagNames.length > 0
+								outputMessageLines << "sourceTags : #{info['sourceTags']}" if info && info.has_key?('sourceTags')
+								outputMessageLines << "    rating : #{track['rating']}" if track['rating']
+								outputMessageLines << "       bpm : #{track['bpm']}" if alreadyHas[:bpm]
+
 								if track == @currentTrack
 									timeMessage = "			time : #{getDurationStringFromSeconds @currentPlayerTime}"
 									if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
@@ -753,12 +755,8 @@ module Tunewich
 								else
 									outputMessageLines << "	duration : #{track['duration']}" if alreadyHas[:duration]
 								end
-								outputMessageLines << "      tags : #{tagNames.join ', '}" if tagNames.length > 0
-								outputMessageLines << "sourceTags : #{info['sourceTags']}" if info && info.has_key?('sourceTags')
-								outputMessageLines << "    rating : #{track['rating']}" if track['rating']
-								outputMessageLines << "       bpm : #{track['bpm']}" if alreadyHas[:bpm]
+
 								outputMessageLines << "downloaded : #{trackFileExists? track}"
-								outputMessageLines << "=============================="
 								outputMessageLines << "#{track['description']}" if track.has_key?('description')
 								if !info.has_key? 'link'
 									info['link'] = track['link'] || track['src']
@@ -766,8 +764,10 @@ module Tunewich
 										info['link'] = "http://youtu.be/#{track['src']}"
 									end
 								end
-
 								outputMessageLines << "      link : #{info['link']}" if info
+
+								outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
+								outputMessageLines << "    volume : #{@currentVolume}/100" if track == @currentTrack
 
 								if @configuredVerbosity > 1 && tagNames.length > 0
 									whisper("about to loop through tagNames", 4)
