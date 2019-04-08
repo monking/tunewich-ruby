@@ -93,6 +93,7 @@ module Tunewich
 			@forceStreaming = false
 			@commandHistory = []
 			@streamingServerType = nil
+			@youtubeDLTrackTypes = ['youtube', 'soundcloud']
 
 			getEnvironmentConfig
 
@@ -590,6 +591,8 @@ module Tunewich
 									info = nil
 									if track['type'] === 'youtube'
 										info = getYouTubeTrackInfo track['src']
+									elsif track['type'] === 'soundcloud'
+										info = getSoundcloudTrackInfo track['src']
 									end
 									updateTrackInfo track, info
 
@@ -1865,7 +1868,7 @@ module Tunewich
 				mediaFilePath = firstTrackFile track
 			else
 				if streaming
-					if track['type'] === 'youtube'
+          if @youtubeDLTrackTypes.include? track['type']
 						whisper "streaming youtube track", 2
 						streamName = 'youtube-stream'
 						deleteStream streamName
@@ -2287,7 +2290,7 @@ module Tunewich
 		def getDownloadCommand(track, downloadFeedbackFile = '/dev/null', streamPath = nil)
 			downloadCommand = ''
 
-			if track['type'] === 'youtube'
+      if @youtubeDLTrackTypes.include? track['type']
 				# TODO: remove --Frag0, --Frag1, ..., --FragN files? Would this interfere with playback if downloading a playing track?
 				youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} -q"
 				# youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} --no-part --no-cache-dir --no-continue"
@@ -2836,9 +2839,36 @@ module Tunewich
 			track
 		end
 
+		def getSoundcloudTrackInfo soundcloudURL
+			track = {
+				'type' => 'soundcloud',
+				'src' => soundcloudURL,
+				'id' => Digest::MD5.hexdigest(soundcloudURL).to_s
+			}
+			if @noNetwork
+				puts "no getSoundcloudTrackInfo --no-network"
+				return track
+			end
+			json = `youtube-dl -j -- #{soundcloudURL} 2>/dev/null` # suppress errors
+			return track if !json || json.length == 0
+
+			trackInfo = JSON.parse(json)
+			track['title'] = trackInfo['fulltitle']
+			track['duration'] = getDurationStringFromSeconds(trackInfo['duration'])
+			track['description'] = trackInfo['description']
+			track['link'] = trackInfo['webpage_url'] || soundcloudURL
+			track['type'] = trackInfo['extractor']
+			track['sourceTags'] = trackInfo['tags'] if trackInfo['tags']
+			whisper "sourceTags: #{trackInfo['tags']}", 4
+
+			track
+		end
+
 		def updateTrackInfo track, trackInfo = nil, force = false
 			if track['type'] === 'youtube'
 				trackInfo ||= getYouTubeTrackInfo track['id']
+			elsif track['type'] === 'soundcloud'
+				trackInfo ||= getSoundcloudTrackInfo track['src']
 			end
 			if trackInfo
 				track['title'] = trackInfo['title'] if (!track['title'] || force) && trackInfo['title'] && trackInfo['title'].length > 0
@@ -3318,12 +3348,17 @@ module Tunewich
           urlHTTPHead = `curl -sL --head "#{url}"`
 					urlContentType = getHTTPHeaderByPattern urlHTTPHead, /^Content-Type: ([^;]*).*/i
 					cookieDomain = getHTTPHeaderByPattern urlHTTPHead, /^Set-Cookie:.*domain=([^;]*).*/i
-					whisper "urlContentType: #{urlContentType}", 3
+					whisper "urlContentType: #{urlContentType}, cookieDomain: #{cookieDomain}", 3
 					if 'text/html' == urlContentType && (cookieDomain == '.bandcamp.com' || url.match(/(https?:\/\/)([^\.]+)\.bandcamp\.com.*/))
             whisper "WIP: scraping bandcamp page"
 						urlCanBeScraped = false
 						bandcampTracks = loadBandcamp url
 						tracks += bandcampTracks if bandcampTracks
+					elsif 'text/html' == urlContentType && cookieDomain == '.soundcloud.com'
+            whisper "WIP: getting soundcloud track"
+						urlCanBeScraped = false
+						soundcloudTracks = loadSoundcloud url
+						tracks += soundcloudTracks if soundcloudTracks
 					elsif urlContentType && ['text/xml', 'application/rss+xml'].include?(urlContentType) # TODO: application/rss+xml, application/rdf+xml;q=0.8, application/atom+xml;q=0.6, application/xml;q=0.4, text/xml;q=0.4
             whisper "WIP: try to load podcast feed"
 						urlCanBeScraped = false
@@ -3432,6 +3467,13 @@ module Tunewich
 					end
 				}
 			end
+			tracks
+		end
+
+		def loadSoundcloud url
+			whisper "loadSoundcloud #{url}", 3
+			tracks = [createTrack(url, 'soundcloud')]
+      whisper "tracks: #{tracks}", 3 # XXX
 			tracks
 		end
 
