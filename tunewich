@@ -369,17 +369,17 @@ module Tunewich
 			mplayerStartupOptions = []
 			deleteStream 'mplayer-input'
 			mplayerInputFile = makeStream 'mplayer-input'
-			mplayerStartupOptions << "-slave -input file=#{mplayerInputFile}"
+			mplayerStartupOptions << "-slave -quiet -input file=#{mplayerInputFile}"
 			mplayerThread = nil
 			inputThread = nil
 			mplayerStatus = nil
 			mplayerAction = Proc.new { |command|
 				if 'f' == command || 'fq' == command
-					count = getDefaultMplayerVolume
-					while count > 0
+					volume = getMplayerProperty('volume', /^ANS_volume=(.*)$/).to_f
+					while volume > 0
 						putInTempFile 'mplayer-input', "volume -1\n"
+						volume -= 1
 						sleep 0.1
-						count -= 1
 					end
 					if 'fq' == command
 						putInTempFile 'mplayer-input', "quit\n"
@@ -467,13 +467,13 @@ module Tunewich
 
 			mplayerStartTime = Time.now.to_f
 
-			mplayerOutputFile = getTempFilePath 'mplayer-output'
+			mplayerStdoutFile = getTempFilePath 'mplayer-stdout'
 
 			inputThread = Thread.new {
 				commandPrompt "commands: ", interactiveCommands, mplayerAction
 			}
 			mplayerThread = Thread.new {
-				mplayerStatus = system "mplayer \"#{mediaFilePath}\" #{mplayerStartupOptions.join ' '} > #{mplayerOutputFile}"
+				mplayerStatus = system "mplayer \"#{mediaFilePath}\" #{mplayerStartupOptions.join ' '} &> #{mplayerStdoutFile}"
 				inputThread.kill if inputThread
 			}
 			mplayerThread.join
@@ -482,7 +482,7 @@ module Tunewich
 			mplayerEndTime = Time.now.to_f
 
 			deleteStream 'mplayer-input'
-			deleteTempFile 'mplayer-output'
+			deleteTempFile 'mplayer-stdout'
 
 			mplayerPlayTime = mplayerEndTime - mplayerStartTime
 
@@ -493,11 +493,20 @@ module Tunewich
 				titleBlock "UNATTACHED DOWNLOAD DELETED", 'X'
 			end
 
-			deleteTempFile 'mplayer-input' if mplayerInputFile
-
 			response[:exit] = mplayerStatus
 			response[:playtime] = mplayerPlayTime
 			response
+		end
+
+		def getMplayerProperty property, pattern = nil
+			pattern ||= /^(.*)$/
+			command = "#{property}\n"
+			command = "get_property #{command}" if not property.match(/^get_/)
+			putInTempFile 'mplayer-input', command
+			sleep 0.1
+			output = readTempFile('mplayer-stdout').lines.pop.chomp
+			matches = output.match pattern
+			matches[1] || nil
 		end
 
 		def getDefaultMplayerVolume
