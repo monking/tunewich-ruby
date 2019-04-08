@@ -43,6 +43,8 @@
 #   }
 # - [ ] also stop mplayer #1pnpP3BJJnE
 # - [ ] run commands from FIFO queue as if they had been typed interactively (this would allow the tent "away" function to fade out before killing, e.g.) #1pxQxMENEem
+# - [ ] Determine whether a URL is serving a live stream based on some data returned by the source URL #1gSke5
+# - [ ] Do this only if the list being edited is not already the canonical library track list, in which case we cannot determine if there was a change #1gSlF1
 
 require "io/console" # STDIN.getch
 require "open-uri" # URI
@@ -530,6 +532,8 @@ module Tunewich
 						'description' => 'Edit playing tracklist in Vim.',
 						'action' => Proc.new { |input|
 							editedTrackList = editTrackList @tracks
+							# writeTitleChangesInTrackList editedTrackList # TODO 1gSlF1
+							writeLibraryToFile
 							useTracks editedTrackList, false
 							putsRealtime "#{@tracks.length} tracks selected"
 							{:chainedInput => input}
@@ -1127,12 +1131,16 @@ module Tunewich
 									if editedNotesList.length > 0
 										editedNotes = []
 										editedNotesList.each_with_index { |editedLine, index|
-											lineMatches = editedLine.match(/^([0-9:]+) - (.*)/)
+											lineMatches = editedLine.match(/^([0-9:]+) - (.*)( \(([0-9-]{10}T[0-9]{8}[Z0-9-]+)\))?/)
 											if lineMatches
-												editedNotes << {
+												editedNote = {
 													'time' => lineMatches[1],
 													'text' => lineMatches[2]
 												}
+												if lineMatches[4] && lineMatches[4].length > 0
+													editedNote['datetime'] = lineMatches[4]
+												end
+												editedNotes << editedNote
 											else
 												editedNotes.last['text'] += "\n#{editedLine}"
 											end
@@ -1151,6 +1159,10 @@ module Tunewich
 									'text' => inputParts[1],
 									'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime)
 								}
+								liveStreaming = doesTrackHaveTag(@currentTrack, 'live-radio') # TODO: 1gSke5
+								if liveStreaming
+									note['datetime'] = Time.now.iso8601
+								end
 								if note['text'].length < 1
 									note['text'] = editListInVim([], 'Write your note').join "\n"
 								end
@@ -1929,6 +1941,7 @@ module Tunewich
 
 		def play(track, interactiveCommands)
 			fileAlreadyExists = !@forceStreaming && trackFileExists?(track) # TODO: 1pnpNACYZQO
+			liveStreaming = doesTrackHaveTag(track, 'live-radio') # TODO: 1gSke5
 			streaming = @forceStreaming || (!fileAlreadyExists && !@enableDownload)
 
 			if @noNetwork && !fileAlreadyExists
@@ -1968,7 +1981,7 @@ module Tunewich
 				true
 			}
 
-			if track['mark']
+			if track['mark'] && !liveStreaming
 				puts "Starting from mark at #{track['mark']}."
 				offsetSeconds = getSecondsFromDurationString track['mark']
 				playerStartupOptions << "-ss #{offsetSeconds}"
@@ -2279,6 +2292,24 @@ module Tunewich
 			end
 		end
 
+		def writeTitleChangesInTrackList tracks
+			whisper("writeTitleChangesInTrackList: say something!", 3)
+			anyChanges = false
+			tracks.each { |track|
+				canonicalTrack = matchExistingLibraryTrack(track)
+				if track['title'] != canonicalTrack['title']
+					whisper("Updating '#{canonicalTrack['title']}' = '#{track['title']}'", 3)
+					canonicalTrack['title'] = track['title']
+					anyChanges = true
+				else
+					whisper("Identical: '#{canonicalTrack['title']}' == '#{track['title']}'", 3)
+				end
+			}
+			if anyChanges then writeLibraryToFile
+			else whisper("No changes to track titles.", 3) # XXX
+			end
+		end
+
 		def filterTracksOnDeck
 			if @trackFilters
 				@tracks = filterTracks @tracks, @trackFilters
@@ -2336,6 +2367,14 @@ module Tunewich
 				tags << name if tag.has_key?('tracks') && tag['tracks'].include?(track['id'])
 			}
 			tags
+		end
+
+		def doesTrackHaveTag(track, *tagNames)
+			tagNames.each { |tagName|
+				@library['tags'].has_key?(tagName) &&
+					@library['tags'][tagName].has_key?('tracks') &&
+					@library['tags'][tagName]['tracks'].include?(track['id'])
+			}
 		end
 
 		def getTrackTitles tracks
@@ -4090,6 +4129,9 @@ module Tunewich
 					referenceTracks.each { |referenceTrack|
 						if referenceTrack['src'] == trackSource
 							track = referenceTrack
+							if matches[1].length > 0 and matches[1] != track['title']
+								track['title'] = matches[1]
+							end
 							break
 						end
 					}
