@@ -402,21 +402,32 @@ module Tunewich
 			mplayerThread = nil
 			inputThread = nil
 			mplayerStatus = nil
+			volumeBeforeFadingOut = 10 # FIXME: better initial default
 			mplayerAction = Proc.new { |command|
-				fadeCommandMatch = /^f(ade)?(q(uit)?)?( (\d+))?$/.match command
+				fadeCommandMatch = /^fade (out|in|\d+)( \d+)?( .+)?$/.match command
 				if fadeCommandMatch
-					duration = fadeCommandMatch[5] && fadeCommandMatch[5].length > 0 ? fadeCommandMatch[5].to_f : 1.0
+					duration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 1.0
+					followingCommand = fadeCommandMatch[3] && fadeCommandMatch[3].length > 0 ? fadeCommandMatch[3].strip : nil
 					volume = getCurrentMplayerVolume
+					targetFadeVolume = fadeCommandMatch[1]
+					if targetFadeVolume == 'out'
+						targetFadeVolume = 0
+						volumeBeforeFadingOut = volume
+					elsif targetFadeVolume == 'in'
+						targetFadeVolume = volumeBeforeFadingOut
+					else
+						targetFadeVolume = targetFadeVolume.to_f
+					end
 					volumeFadeInterval = 0.1
-					volumeStep = volume / duration * volumeFadeInterval
-					while volume > 0
-						volume -= volumeStep
-						printRepeat "fade out: #{volume.round()}"
+					volumeStep = (targetFadeVolume - volume) / duration * volumeFadeInterval
+					while (volume - targetFadeVolume).abs > 0.1
+						volume += volumeStep
+						printRepeat "fading: #{volume.round()}"
 						putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "volume #{volume} 1\n"
 						sleep volumeFadeInterval
 					end
-					if fadeCommandMatch[2].length
-						putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "quit\n"
+					if followingCommand
+						putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{followingCommand}\n"
 					end
 				else
 					putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, "#{command}\n"
