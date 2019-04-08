@@ -637,7 +637,8 @@ module Tunewich
 				whisper "commandPrompt end"
 			}
 			mplayerThread = Thread.new {
-				mplayerCommand = "#{Player::PLAYER_APPLICATION} \"#{mediaFilePath}\" #{mplayerStartupOptions.join ' '} &> #{mplayerStdoutFile}"
+				mplayerCommand = "#{Player::PLAYER_APPLICATION} \"#{mediaFilePath}\" #{mplayerStartupOptions.join ' '} > #{mplayerStdoutFile}"
+				whisper mplayerCommand
 				mplayerStatus = `#{mplayerCommand}`
 				whisper "mplayer is finished. killing user input thread"
 				inputThread.kill if inputThread
@@ -666,17 +667,20 @@ module Tunewich
 		end
 
 		def getMplayerProperty property, pattern = nil
-			pattern ||= /^(.*)$/
+      # TODO: get text output (any output!) from mplayer in ubuntu
+			pattern ||= /^()(.*)$/
 			command = "#{property}\n"
 			command = "get_property #{command}" if not property.match(/^get_/)
 			responseWait = 0.1
 			putInTempFile Player::MPLAYER_INPUT_FIFO_NAME, command
-			whisper "wait #{responseWait} for property response"
 			sleep responseWait
-			output = readTempFile(Player::MPLAYER_STDOUT_BUFFER_NAME).lines.pop.chomp.strip.gsub(/\r/, '')
-			whisper "read #{property} from player, output: #{output}"
-			matches = output.match pattern
-			matches[2] || nil
+			lastPlayerOutput = tailTempFile Player::MPLAYER_STDOUT_BUFFER_NAME
+			if lastPlayerOutput
+				whisper "read #{property} from player, output: #{lastPlayerOutput}"
+				matches = lastPlayerOutput.match pattern
+				return matches[2] if matches
+			end
+			return nil
 		end
 
 		def getCurrentMplayerVolume
@@ -959,15 +963,24 @@ module Tunewich
 			path = getTempFilePath name
 
 			if File.exist? path
-				return File.read path
+				whisper "read tmp #{name}: exists"
+				contents = File.read path
+				whisper "read tmp #{name}, contents: #{contents}"
+				return contents
+			else
+				whisper "read tmp #{name}: missing"
+				return ''
 			end
 		end
 
 		def tailTempFile(name)
 			whisper "tail tmp #{name}"
 			content = readTempFile name
-			lastLine = content.gsub("\r","\n").lines.pop
-			lastLine.strip.chomp
+			lastLine = ''
+			if content && content.length > 0
+				lastLine = content.gsub("\r","\n").lines.pop.strip.chomp
+			end
+			lastLine
 		end
 
 		def deleteTempFile(name)
@@ -980,8 +993,8 @@ module Tunewich
 		end
 
 		def makeStream(name)
-			whisper "mkfifo #{name}"
 			path = getTempFilePath name
+			whisper "mkfifo #{path}"
 
 			if File.exist? path
 				File.delete path
