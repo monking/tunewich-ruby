@@ -888,7 +888,7 @@ module Tunewich
 								input = inputParts[2]
 							else
 								if @currentTrack['chapters']
-									whisper("Prompting to select a chapter from the list...", 2)
+									whisper("Prompting to select a chapter from the list...", 3)
 
 									chapterPromptMessage = nil
 
@@ -1734,20 +1734,20 @@ module Tunewich
 			whisper("fadeVolume(targetFadeVolume:#{targetFadeVolume}, duration:#{duration}, playerIndex:#{playerIndex})", 4)
 			transitionVolume = @currentVolume
 			if targetFadeVolume == 'out'
-				whisper("fading out volume", 2)
+				whisper("fading out volume", 4)
 				targetFadeVolume = 0
 			elsif targetFadeVolume == 'in'
 				targetFadeVolume = @volume
-				whisper("fading in volume (to #{targetFadeVolume})", 2)
+				whisper("fading in volume (to #{targetFadeVolume})", 4)
 			elsif targetFadeVolume.match(/x$/)
 				multiplier = targetFadeVolume.to_f
 				targetFadeVolume = transitionVolume * multiplier
 				@volume = targetFadeVolume
-				whisper("fading volume #{multiplier}x (to #{targetFadeVolume})", 2)
+				whisper("fading volume #{multiplier}x (to #{targetFadeVolume})", 4)
 			else
 				targetFadeVolume = targetFadeVolume.to_f
 				@volume = targetFadeVolume
-				whisper("fading to volume #{targetFadeVolume}", 2)
+				whisper("fading to volume #{targetFadeVolume}", 4)
 			end
 			targetFadeVolume = [[targetFadeVolume, 0].max, 100].min
 			whisper("fading from #{transitionVolume} to #{targetFadeVolume} in #{duration} seconds (playerIndex: #{playerIndex})", 4)
@@ -1853,7 +1853,7 @@ module Tunewich
 		end
 
 		def addTrackToTags(track, tagNames)
-			whisper("adding tags: #{tagNames}", 2)
+			whisper("adding tags (input): #{tagNames}", 3)
 			tagNames.each { |tagName|
 				whisper("about to add to tag '#{tagName}'", 4)
 				matchingTag = findTag(tagName) || createTag(tagName)
@@ -1866,7 +1866,7 @@ module Tunewich
 		end
 
 		def removeTagsFromTrack(track, tagNames)
-			whisper("removing tags: #{tagNames}", 2)
+			whisper("removing tags: #{tagNames}", 3)
 			tagNames.each { |tagName|
 				matchingTag = findTag tagName
 				if matchingTag && matchingTag['tracks']
@@ -1904,7 +1904,7 @@ module Tunewich
 		end
 
 		def createTag(tagName)
-			whisper("creating tag '#{tagName}'", 2)
+			whisper("creating tag '#{tagName}'", 3)
 			@library['tags'][tagName] = {}
 			@library['tags'][tagName]
 		end
@@ -2228,7 +2228,7 @@ module Tunewich
 		end
 
 		def nextTrack
-			whisper("next track", 2)
+			whisper("next track", 3)
 			if @shuffle
 				# FIXME 1gpalq: filterTracksOnDeck should run regardles of @shuffle, but it would mess with @trackIndex. With @shuffle == true, it doesn't matter.
 				filterTracksOnDeck()
