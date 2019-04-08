@@ -654,108 +654,150 @@ module Tunewich
         value
       }
 
-      noteCommandArgs = ['new', 'edit', 'rm', 'skip']
-      noteInputPattern = Regexp.new("^((?<offset>[+-][0-9.]+)|(?<option>#{noteCommandArgs.join('|')}) ?)?(?<query>[^\\/]*)(?<remainder>.*)$")
-      handleNoteCommand = Proc.new { |input, command, noteType|
-        whisper("note command - input: #{input}", 3)
-        noteInputPattern =~ input
-        inputParts = getCommandInputParts(input, noteInputPattern)
-        whisper("inputParts: '#{inputParts}'", 3)
-        whisper("offset: '#{inputParts[:offset]}', option: '#{inputParts[:option]}', query: '#{inputParts[:query]}', remainder: '#{inputParts[:remainder]}'", 3)
+      noteCommandDefaults = {
+        'args' => ['go', 'new', 'edit', 'rm', 'skip']
+      }
+      noteCommandDefaults['inputPattern'] = Regexp.new("^((?<offset>[+-][0-9.]+)|(?<option>#{noteCommandDefaults['args'].join('|')}) ?)?(?<query>.*?)?( +(?<remainder>\/.*))?$")
+      generateNoteCommand = Proc.new { |noteType, description|
+        {
+          'args' => noteCommandDefaults['args'],
+          'inputPattern' => noteCommandDefaults['inputPattern'],
+          'action' => Proc.new { |input, command|
+            inputParts = getCommandInputParts(input, command['inputPattern'])
 
-        if inputParts[:option] && noteCommandArgs.include?(inputParts[:option])
-          loadLibrary
-          @currentTrack = matchExistingLibraryTrack @currentTrack
-
-          if inputParts[:option] == 'new'
-            @currentTrack[noteType] ||= []
-            addNote(
-              @currentTrack,
-              noteType,
-              {
-                'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime),
-                'text' => inputParts[:query]
-              }
-            )
-            writeLibraryToFile
-          elsif inputParts[:option] == 'edit'
-            notes = editNotes(@currentTrack[noteType] || [], @currentNoteIndex[noteType])
-            if notes && notes.length > 0
-              @currentTrack[noteType] = sortNotes notes
-            elsif @currentTrack[noteType] && @currentTrack[noteType].length > 0
-              if confirm("Do you want to clear #{noteType} from this track?")
-                @currentTrack.delete noteType
+            chosenOption = 'edit'
+            if inputParts
+              if inputParts[:option]
+                chosenOption = inputParts[:option]
+              elsif inputParts[:query]
+                if inputParts[:query].match(/^[<>]+$/)
+                  chosenOption = 'go'
+                elsif inputParts[:query].length > 0
+                  chosenOption = 'new'
+                end
               end
             end
-            writeLibraryToFile
-            whisper("#{noteType} changes written to library file", 3)
-          elsif inputParts[:option] == 'remove' && @currentPlayerTime
-            # TODO 1gzTHg: take input to choose a note
-            noteIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
-            if noteIndex > -1
-              @currentTrack[noteType].delete_at noteIndex
-              writeLibraryToFile
-            end
-          elsif inputParts[:option] == 'skip' && @currentPlayerTime
-            noteIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
-            if noteIndex > -1
-              @currentTrack[noteType][noteIndex]['skip'] = true
-              writeLibraryToFile
-              seekToNextPlayableNoteOrSkip @currentTrack[noteType], @currentNoteIndex[noteType]
-            end
-          end
-        else
 
-          if @currentTrack[noteType]
-            if inputParts[:query] && inputParts[:query].length > 0
-              noteIndex = getNoteIndexByQuery inputParts[:query], @currentTrack[noteType]
+            whisper("note command - input: #{input}", 3)
+            whisper("inputParts: '#{inputParts}'", 3)
+            whisper("offset: '#{inputParts[:offset]}', option: '#{inputParts[:option]}', query: '#{inputParts[:query]}', remainder: '#{inputParts[:remainder]}'", 3)
+            whisper("chosenOption: '#{chosenOption}'", 3)
+
+            loadLibrary
+            @currentTrack = matchExistingLibraryTrack @currentTrack
+
+            if chosenOption == 'go'
+              if @currentTrack[noteType]
+                if inputParts[:query] && inputParts[:query].length > 0
+                  noteIndex = getNoteIndexByQuery inputParts[:query], @currentTrack[noteType]
+                else
+                  putsRealtime getFormattedNoteList(@currentTrack[noteType], @currentNoteIndex[noteType], "# ^ current").join("\n")
+                end
+              else
+                putsRealtime "No #{noteType} on the current track."
+              end
+
+              if noteIndex && noteIndex >= 0 && noteIndex < @currentTrack[noteType].length
+                whisper("Done with #{noteType} selection. Resulting #{noteType} index: #{noteIndex}", 3)
+                note = @currentTrack[noteType][noteIndex]
+                seekSeconds = getSecondsFromDurationString note['time']
+                offsetSeconds = inputParts[:offset].to_f if inputParts[:offset]
+                seekSeconds += offsetSeconds if offsetSeconds
+                seek seekSeconds, 0.5, 0.25
+              elsif inputParts[:option] && inputParts[:option].length > 0
+                putsRealtime "No #{noteType} found."
+              end
+            end
+
+            if chosenOption == 'rm' # remove
+              if @currentPlayerTime
+                # TODO 1gzTHg: take input to choose a note
+                noteIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
+                if noteIndex > -1
+                  @currentTrack[noteType].delete_at noteIndex
+                  writeLibraryToFile
+                end
+              else
+                whisper("No current track / current time; can't tell which #{noteType} to remove.", 0)
+              end
+            end
+
+            if chosenOption == 'skip'
+              if @currentPlayerTime
+                noteIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
+                if noteIndex > -1
+                  @currentTrack[noteType][noteIndex]['skip'] = true
+                  writeLibraryToFile
+                  seekToNextPlayableNoteOrSkip @currentTrack[noteType], @currentNoteIndex[noteType]
+                end
+              else
+                whisper("No current track / current time; can't tell which #{noteType} to skip.", 0)
+              end
+            end
+
+            if chosenOption == 'new'
+              @currentTrack[noteType] ||= []
+              addNote(
+                @currentTrack,
+                noteType,
+                {
+                  'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime),
+                  'text' => inputParts[:query]
+                }
+              )
+
+              chosenOption = 'edit' if inputParts[:query].length == 0
+
+              writeLibraryToFile
+            end
+
+            if chosenOption == 'edit'
+              notes = editNotes(@currentTrack[noteType] || [], @currentNoteIndex[noteType])
+              if notes && notes.length > 0
+                @currentTrack[noteType] = sortNotes notes
+              elsif @currentTrack[noteType] && @currentTrack[noteType].length > 0
+                if confirm("Do you want to clear #{noteType} from this track?")
+                  @currentTrack.delete noteType
+                end
+              end
+              writeLibraryToFile
+              whisper("#{noteType} changes written to library file", 3)
+            end
+
+            {:chainedInput => inputParts[:remainder]}
+          },
+          'tabComplete' => Proc.new { |input, command|
+            inputParts = getCommandInputParts(input, command['inputPattern'])
+            whisper("noteType: '#{noteType}'", 3)
+            whisper("pattern: '#{command['inputPattern']}'", 3)
+            whisper("inputParts: #{inputParts}", 3)
+            whisper("offset: '#{inputParts[:offset]}', option: '#{inputParts[:option]}', query: '#{inputParts[:query]}', remainder: '#{inputParts[:remainder]}'", 3)
+
+            if @currentTrack.has_key?(noteType)
+              if inputParts[:query] && inputParts[:query].length > 0
+                noteTexts = @currentTrack[noteType].map { |note| note['text'] }
+                guessChapterTexts = fuzzyStringSearchInListValues(inputParts[:query], noteTexts) if inputParts[:query].length > 0
+                if guessChapterTexts && guessChapterTexts.length == 1
+                  input = input.sub!(inputParts[:query], guessChapterTexts[0])
+                elsif guessChapterTexts && guessChapterTexts.length > 1
+                  heading = "#{[guessChapterTexts.length, 10].min}/#{guessChapterTexts.length} #{noteType}"
+                  putsRealtime "\n#{heading}\n================\n#{guessChapterTexts.slice(0, 10).join("\n")}"
+                end
+              else
+                if !inputParts[:option] || inputParts[:option].length == 0
+                  input = "go #{input}"
+                end
+
+                # TODO 1gzoGh: it'd be nice to put in a space if inputParts[:offset] is given
+                putsRealtime getFormattedNoteList(@currentTrack[noteType], @currentNoteIndex[noteType], "# ^ current").join("\n")
+              end
             else
-              putsRealtime getFormattedNoteList(@currentTrack[noteType], @currentNoteIndex[noteType], "# ^ current").join("\n")
+              putsRealtime "No #{noteType} on the current track."
             end
-          else
-            putsRealtime "No #{noteType} on the current track."
-          end
 
-          if noteIndex && noteIndex >= 0 && noteIndex < @currentTrack[noteType].length
-            whisper("Done with #{noteType} selection. Resulting #{noteType} index: #{noteIndex}", 3)
-            note = @currentTrack[noteType][noteIndex]
-            seekSeconds = getSecondsFromDurationString note['time']
-            offsetSeconds = inputParts[:offset].to_f if inputParts[:offset]
-            seekSeconds += offsetSeconds if offsetSeconds
-            seek seekSeconds, 0.5, 0.25
-          elsif inputParts[:option] && inputParts[:option].length > 0
-            putsRealtime "No #{noteType} found."
-          end
-        end
-
-        {:chainedInput => inputParts[:remainder]}
-      }
-      noteTabComplete = Proc.new { |input, command, noteType|
-        noteInputPattern =~ input
-        inputParts = getCommandInputParts(input, noteInputPattern)
-        whisper("pattern: '#{noteInputPattern}'", 3)
-        whisper("inputParts: #{inputParts}", 3)
-        whisper("offset: '#{inputParts[:offset]}', option: '#{inputParts[:option]}', query: '#{inputParts[:query]}', remainder: '#{inputParts[:remainder]}'", 3)
-
-        if @currentTrack.has_key?(noteType)
-          if inputParts[:query] && inputParts[:query].length > 0
-            noteTexts = @currentTrack[noteType].map { |note| note['text'] }
-            guessChapterTexts = fuzzyStringSearchInListValues(inputParts[:query], noteTexts) if inputParts[:query].length > 0
-            if guessChapterTexts && guessChapterTexts.length == 1
-              input = input.sub!(inputParts[:query], guessChapterTexts[0])
-            elsif guessChapterTexts && guessChapterTexts.length > 1
-              heading = "#{[guessChapterTexts.length, 10].min}/#{guessChapterTexts.length} #{noteType}"
-              putsRealtime "\n#{heading}\n================\n#{guessChapterTexts.slice(0, 10).join("\n")}"
-            end
-          else
-            # TODO 1gzoGh: it'd be nice to put in a space if inputParts[:offset] is given
-            putsRealtime getFormattedNoteList(@currentTrack[noteType], @currentNoteIndex[noteType], "# ^ current").join("\n")
-          end
-        else
-          putsRealtime "No #{noteType} on the current track."
-        end
-
-        input
+            input
+          }
+        }
       }
 
       generateVisualCommand = Proc.new { |property|
@@ -1069,25 +1111,26 @@ module Tunewich
             'description' => "Load, save, update, or remove a playlist.",
             'args' => ['save', 'rm', 'update'],
             'inputOptions' => Proc.new { @library['playlists'].keys },
+            'inputPattern' => /^((?<action>(save|rm|update)) *)?(?<query>.*?)?(?<remainder> \/.*)?$/,
             'action' => Proc.new { |input, command|
-              inputParts = getCommandInputParts(input, /^((?<action>(save|rm|update)) *)?(?<name>.*?)?(?<remainder> \/.*)?$/)
+              inputParts = getCommandInputParts(input, command['inputPattern'])
 
               loadLibrary
 
               playlistNames = command['inputOptions'].call
-              chosenName = firstFuzzyMatchValue(inputParts[:name], playlistNames) if inputParts[:name] && inputParts[:name].length > 0
+              chosenName = firstFuzzyMatchValue(inputParts[:query], playlistNames) if inputParts[:query] && inputParts[:query].length > 0
               shouldShowPlaylistNames = false
 
               if inputParts[:action] && inputParts[:action] == 'update'
                 if !chosenName || !@library['playlists'].has_key?(chosenName)
                   shouldShowPlaylistNames = true
-                  if !inputParts[:name]
+                  if !inputParts[:query]
                     whisper("No list name given.", 0)
                   else
-                    whisper("No list found by name '#{inputParts[:name]}'.", 0)
+                    whisper("No list found by name '#{inputParts[:query]}'.", 0)
                   end
                 elsif !@library['playlists'][chosenName]['src'] || @library['playlists'][chosenName]['src'].length == 0
-                  whisper("Unable to update list '#{inputParts[:name]}': no source URL.", 0)
+                  whisper("Unable to update list '#{inputParts[:query]}': no source URL.", 0)
                 else
                   shouldGetAllTracks = true
                   urls = [@library['playlists'][chosenName]['src']]
@@ -1103,14 +1146,14 @@ module Tunewich
                 end
               elsif inputParts[:action] && inputParts[:action] == 'save'
                 @library['playlists'] ||= {}
-                @library['playlists'][inputParts[:name]] = {
+                @library['playlists'][inputParts[:query]] = {
                   'tracks' => @tracks.map { |t| t['id'] }
                 }
                 writeLibraryToFile
               elsif inputParts[:action] && inputParts[:action] == 'rm'
                 if chosenName
                   if confirm("Delete the playlist '#{chosenName}'?")
-                    @library['playlists'].delete inputParts[:name]
+                    @library['playlists'].delete inputParts[:query]
                     writeLibraryToFile
                   end
                 else
@@ -1526,22 +1569,8 @@ module Tunewich
               {:chainedInput => inputParts[:remainder]}
             }
           },
-          'chapter' => {
-            'description' => 'Skip to a chapter, or show chapter list. Input: [optional seconds offset], number or name of chapter; or "<" or ">" to go back or forward, multiples to go further.',
-            'args' => noteCommandArgs,
-            'action' => Proc.new { |input, command|
-              handleNoteCommand.call input, command, 'chapters'
-            },
-            'tabComplete' => Proc.new { |input, command| noteTabComplete.call(input, command, 'chapters') }
-          },
-          'note' => {
-            'description' => "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing).",
-            'args' => noteCommandArgs,
-            'action' => Proc.new { |input, command|
-              handleNoteCommand.call input, command, 'notes'
-            },
-            'tabComplete' => Proc.new { |input, command| noteTabComplete.call(input, command, 'notes') }
-          },
+          'chapter' => generateNoteCommand.call('chapters', 'Skip to a chapter, or show chapter list. Input: [optional seconds offset], number or name of chapter; or "<" or ">" to go back or forward, multiples to go further.'),
+          'note' => generateNoteCommand.call('notes', "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing)."),
           'filter' => {
             'description' => 'Set filters (same as -f/--filter). With no arguments, the filters are edited in Vim.',
             'showStatus' => Proc.new { |command|
@@ -5076,7 +5105,8 @@ module Tunewich
                     elsif commands[commandName].has_key?('inputOptions')
                       genericTabComplete = Proc.new { |input, command|
                         whisper("generic tab complete for command '#{commandName}'", 3)
-                        inputParts = getCommandInputParts(input)
+                        inputPattern = command['inputPattern'] if command.has_key?('inputPattern')
+                        inputParts = getCommandInputParts(input, inputPattern)
                         inputOptions = command['inputOptions'].call
                         options = []
                         options += command['args'] if command.has_key?('args')
