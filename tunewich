@@ -206,15 +206,15 @@ module Tunewich
 			# I think I ripped this from here: https://gist.github.com/acook/4190379
 			STDIN.echo = false
 			STDIN.raw!
-			input = STDIN.getc.chr
-			if input == "\e" then
-				input << STDIN.read_nonblock(3) rescue nil
-				input << STDIN.read_nonblock(2) rescue nil
+			char = STDIN.getc.chr
+			if char == "\e" then
+				char << STDIN.read_nonblock(3) rescue nil
+				char << STDIN.read_nonblock(2) rescue nil
 			end
 		ensure
 			STDIN.echo = true
 			STDIN.cooked!
-			return input
+			return char
 		end
 
 		def whisper message, verbosity = 1
@@ -371,6 +371,9 @@ module Tunewich
               elsif newRating.match(/^[+-][0-9]*$/)
                 if newRating.match(/^[+-]$/) # if it's simply "+" or "-", append "1"
                   newRating = newRating + '1';
+                end
+                if not @currentTrack['rating']
+                  @currentTrack['rating'] = 0
                 end
                 @currentTrack['rating'] += newRating.to_i
 							else
@@ -2048,6 +2051,7 @@ module Tunewich
 			end
 			@playerApplicationThreads[@currentPlayerIndex] = Thread.new {
 				@isPlayerPlaying = true
+				# TODO 1gnyIc
 				playerCommand = "#{Player::PLAYER_APPLICATION} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '} > #{playerStdoutFile}"
 				whisper(playerCommand, 3)
 				playerStatus = `#{playerCommand} 2> /dev/null`
@@ -2091,7 +2095,6 @@ module Tunewich
 			}, bindingGroupName)
 			while @playerApplicationThreads[@currentPlayerIndex].alive?
 				playerResponseDelay = 0.1
-				# TODO: 1pnpNEtDDLE
 				playerTimeResponse = getMplayerProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(.*?)(\?)?$/, playerResponseDelay)
 				if playerTimeResponse
 					@currentPlayerTime = playerTimeResponse.to_f
@@ -2188,7 +2191,7 @@ module Tunewich
 
 		def getMplayerProperty property, pattern = nil, responseDelay = nil
 			output = nil
-			if @isPlayerPlaying
+			if @isPlayerPlaying # TODO: 1pnpNEtDDLE
 				pattern ||= /^()(.*)$/
 				command = "#{property}\n"
 				command = "get_property #{command}" if not property.match(/^get_/)

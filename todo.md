@@ -50,3 +50,5 @@
 	- [ ] allow multiple sessions to be loaded
 		- in which case the current session will not be named or saved, unless the user saves it again interactively...
 		- e.g. `-S nonet,work,cheer`, which would load those 3 sessions, overwriting each other in reverse of that order, so that the `nonet` session would have no parameters overwritten.
+- [ ] fix missing input characters while paused (1gnyIc)
+	- perhaps the solution is to put mplayer in the background to avoid it affecting STDIN at all; I would have thought that `-slave -input file="..."` was enough.
