@@ -1503,6 +1503,15 @@ module Tunewich
 				requestedCommandSet.merge! interactiveCommands[modeName]
 			}
 
+			if requestedCommandSet
+				requestedCommandSet['?'] = {
+					'description' => 'Show interactive command info (like this). Not chainable.',
+					'action' => Proc.new {
+            showInteractiveCommandHelp requestedCommandSet
+					}
+				}
+			end
+
 			requestedCommandSet
 		end
 
@@ -3302,6 +3311,9 @@ module Tunewich
 
 			parser.on("-h", "--help", "Show this help.", " ") do
 				puts parser.help()
+        puts "INTERACTIVE COMMANDS"
+        interactiveCommands = getInteractiveCommands(['playing'], 'help')
+        showInteractiveCommandHelp(interactiveCommands)
 				exit
 			end
 
@@ -3447,6 +3459,10 @@ module Tunewich
 			end
 
 			parser.on("-s", "--shuffle", "Enable shuffle.", " ") do
+				@shuffle = true
+			end
+
+      parser.on("-S SESSION", "--session SESSION", "Load a session: a set of most options, like filters, track list. Pass no value in order to see a list of sessions available See INTERACTIVE COMMANDS for info on saving a session during playback.", " ") do
 				@shuffle = true
 			end
 
@@ -3776,37 +3792,34 @@ module Tunewich
 			getTracksFromTitleList editedList, tracks
 		end
 
+    def showInteractiveCommandHelp commands = nil
+      commandInfo = []
+      maxCommandNameLength = 0
+      sortedCommandList = []
+      whisper("gathering command info", 3)
+      commands.each { |name, command|
+        sortedCommandList << {:name => name, :command => command}
+        maxCommandNameLength = name.length if name.length > maxCommandNameLength
+      }
+      sortedCommandList.sort! { |a,b| a[:name] <=> b[:name] }
+      sortedCommandList.each { |commandMeta|
+        info = "    /"
+        commandPaddingLength = info.length
+        info += commandMeta[:name]
+        info += " " * (maxCommandNameLength - info.length + commandPaddingLength)
+        info += " : #{commandMeta[:command]['description']}" if commandMeta[:command]['description']
+        commandInfo << info
+      }
+      putsRealtime(commandInfo.join("\n"))
+      nil
+    end
+
 		def commandPrompt message = nil, commands = nil, action = nil
 			shouldBreakCommandLoop = false
 			bindOnce 'request_exit', Proc.new {
 				shouldBreakCommandLoop = true
 			}
 			whisper("opening command prompt", 3)
-			if commands
-				commands['?'] = {
-					'description' => 'Show interactive command info (like this). Not chainable.',
-					'action' => Proc.new {
-						commandInfo = []
-						maxCommandNameLength = 0
-						sortedCommandList = []
-						whisper("gathering command info", 3)
-						commands.each { |name, command|
-							sortedCommandList << {:name => name, :command => command}
-							maxCommandNameLength = name.length if name.length > maxCommandNameLength
-						}
-						sortedCommandList.sort! { |a,b| a[:name] <=> b[:name] }
-						sortedCommandList.each { |commandMeta|
-							info = "/#{commandMeta[:name]}"
-							info += " " * (maxCommandNameLength - info.length + 1)
-							info += " : #{commandMeta[:command]['description']}" if commandMeta[:command]['description']
-							commandInfo << info
-						}
-						putsRealtime commandInfo.join "\n"
-
-						nil
-					}
-				}
-			end
 
 			prompt = Proc.new {
 				print "#{message} " if message
