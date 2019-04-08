@@ -903,16 +903,16 @@ module Tunewich
 							{:chainedInput => inputParts[2]}
 						}
 					},
-					'net' => {
-						'description' => 'Toggle "no-network".',
+					'network' => {
+						'description' => 'Toggle network enabled.',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							if inputParts[1] && inputParts[1].length > 0
-								@networkEnabled = inputParts[1].match(/^(y(es)?|o(n|[^f]))/i)
+								@networkEnabled = !!(inputParts[1].match(/^(y(es)?|o(n|[^f]))/i))
 							else
 								@networkEnabled = !@networkEnabled
 							end
-							putsRealtime "network: #{@networkEnabled ? 'off' : 'on'}"
+							putsRealtime "network: #{@networkEnabled ? 'on' : 'off'}"
 							{:chainedInput => input}
 						}
 					},
