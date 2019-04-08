@@ -1100,6 +1100,10 @@ module Tunewich
 		end
 
 		def downloadTrack(track, streamPath = nil)
+			if @noNetwork
+				puts "not downloading --no-network"
+				return
+			end
 			youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat}"
 			# youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} --no-part --no-cache-dir --no-continue"
 			youtubeDlCommandEnd = "-- #{track['src']}"
@@ -1687,6 +1691,10 @@ module Tunewich
 		end
 
 		def getTrackInfo id
+			if @noNetwork
+				puts "no getTrackInfo --no-network"
+				return false
+			end
 			rawInfo = `youtube-dl --get-title --get-description --get-duration -- #{id} 2>/dev/null` # suppress errors
 			return false if !rawInfo || rawInfo.length == 0
 
@@ -1777,6 +1785,10 @@ module Tunewich
 		end
 
 		def getYouTubeTracksFromPage url
+			if @noNetwork
+				puts "no getYouTubeTracksFromPage --no-network"
+				return false
+			end
 			url = getValidYouTubeURI url
 			queryResultIds = []
 			whisper "reading URL #{url}"
@@ -1819,6 +1831,10 @@ module Tunewich
 
 		def getOCRemixSource(url)
 			source = nil
+			if @noNetwork
+				puts "no getOCRemixSource --no-network"
+				return false
+			end
 
 			open(url) do |handle|
 				sourcePattern = /^.*href="(https?:\/\/ocrmirror.org[^"]+)".*$/
