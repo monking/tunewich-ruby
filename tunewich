@@ -294,7 +294,7 @@ module Tunewich
 			interactiveCommands = {
 				'base' => {
 					'wait' => {
-						'description' => 'Wait for an event, or some number of seconds, to execute following chained commands. Events: chapter_change, play_start, play_end, fade_start, fade_end, speed_ramp_start, speed_ramp_end, download_start, download_end. You may use fuzzy substrings of the event names, e.g. "ch" will match "chapter_change", and "ple" will match "play_end".',
+						'description' => 'Wait for an event, or some number of seconds, to execute following chained commands. Events: chapter_change, play_start, play_end, fade_start, fade_end, speed_ramp_start, speed_ramp_end, download_success. You may use fuzzy substrings of the event names, e.g. "ch" will match "chapter_change", and "ple" will match "play_end".',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 
@@ -324,8 +324,7 @@ module Tunewich
 											'fade_end',
 											'speed_ramp_start',
 											'speed_ramp_end',
-											'download_start',
-											'download_end'
+											'download_success'
 										]
 										waitEvent = firstFuzzyMatchValue waitInput.strip.downcase, availableWaitEvents
 										if !waitEvent
@@ -2453,7 +2452,7 @@ module Tunewich
 		end
 
 		# @param hash track
-		# @param string/nil streamPath
+		# @param string/nil streamPath (local file path); if the file already exists, copy it to the destination
 		# @returns integer PID of download process, or nil if download failed
 		def downloadTrack(track, streamPath = nil)
 			if @noNetwork
@@ -2466,21 +2465,19 @@ module Tunewich
 			downloadFeedbackFile = createTempFile downloadFeedbackFileName
 			downloadCommand = getDownloadCommand track, downloadFeedbackFile, streamPath
 
+      whisper(downloadCommand, 3)
 			if streamPath
-				downloadPid = spawn(downloadCommand)
+				downloadPid = spawn(downloadCommand) # spawn: non-blocking
 			else
 				trigger 'download_begin', track
 				Thread.new {
-					fullDownloadShellCommand = "#{downloadCommand} 2> \"#{downloadFeedbackFile}\""
-					whisper(fullDownloadShellCommand, 3)
-					downloadPid = spawn(fullDownloadShellCommand)
-
-					if trackFileExists? track
-						trigger 'download_complete', track
-					else
-						trigger 'download_fail', track
-					end
-					trigger 'download_end', track
+					downloadPid = system(downloadCommand) # system: blocking
+          if trackFileExists? track
+            trigger 'download_success', track
+          else
+            trigger 'download_fail', track
+          end
+          trigger 'download_end', track
 				}
 			end
 
