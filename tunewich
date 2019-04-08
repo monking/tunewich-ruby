@@ -854,16 +854,16 @@ module Tunewich
 
 							if track
 								alreadyHas = {
-									:title => track.has_key?('title'),
+									:title => track.has_key?('title') && track['title'].strip.length > 0,
 									:duration => track.has_key?('duration'),
-									:description => track.has_key?('description'),
+									:description => track.has_key?('description') && track['description'].strip.length > 0,
 									:bpm => track.has_key?('bpm')
 								}
 								tagNames = getTrackTags track
 
 								outputMessageLines = []
 								info = {}
-								if !alreadyHas[:title] || !alreadyHas[:duration] || track['title'].length == 0
+								if !alreadyHas[:title] || !alreadyHas[:duration]
 									if track['type'] === 'youtube'
 										info = getYouTubeTrackInfo track['src']
 									elsif track['type'] === 'soundcloud'
@@ -3607,7 +3607,7 @@ module Tunewich
 			track['link'] = trackInfo['webpage_url'] || "https://youtu.be/#{youtubeVideoID}"
 			track['type'] = trackInfo['extractor']
 			track['sourceTags'] = trackInfo['tags'] if trackInfo['tags']
-			whisper("sourceTags: #{trackInfo['tags']}", 4)
+			whisper("sourceTags: #{trackInfo['tags']}", 2)
 
 			track
 		end
@@ -3644,7 +3644,7 @@ module Tunewich
 				trackInfo ||= getSoundcloudTrackInfo track['src']
 			end
 			if trackInfo
-				track['title'] = trackInfo['title'] if (!track['title'] || force) && trackInfo['title'] && trackInfo['title'].length > 0
+				track['title'] = trackInfo['title'] if (!track['title'] || track['title'].strip.length == 0 || force) && trackInfo['title'] && trackInfo['title'].length > 0
 
 				if (!track['description'] || force) && trackInfo['description'] && trackInfo['description'].length > 0
 					if !track['chapters'] || force
