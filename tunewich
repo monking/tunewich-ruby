@@ -111,6 +111,8 @@ module Tunewich
 		end
 
 		def main
+			updateSessionDescription
+
 			trackTitleListFromLastSession = readTempFile('tracks', false)
 			if trackTitleListFromLastSession && trackTitleListFromLastSession.length > 0
 				whisper("Using tracks from last session.", 1)
@@ -415,6 +417,29 @@ module Tunewich
 		end
 
 		private
+
+		def updateSessionDescription
+			sessionDescription = "##{@sessionID}"
+
+			sessionDescriptors = [];
+
+			if @tracks
+				sessionDescriptors << "#{@tracks.length} tracks"
+			end
+
+			filters = listFilters
+			if filters.length > 0
+				sessionDescriptors << filters.join(' ')
+			end
+
+			sessionDescription += " (#{sessionDescriptors.join(', ')})" if sessionDescriptors.length > 0
+
+			if @currentTrack && @currentTrack.has_key?('title')
+				sessionDescription += " playing: #{@currentTrack['title']}"
+			end
+
+			putInTempFile 'session-description', sessionDescription
+		end
 
 		def readCharacter
 			# I think I ripped this from here: https://gist.github.com/acook/4190379
@@ -1339,15 +1364,9 @@ module Tunewich
 					},
 					'filter' => {
 						'description' => 'Set filters (same as -f/--filter). With no arguments, the filters are edited in Vim.',
-						'listFilters' => Proc.new {
-							filtersList = []
-							filtersList += @trackFilters.map { |filter, rule| "#{filter}=#{rule}" } if @trackFilters
-							filtersList += @trackExcludeFilters.map { |filter, rule| "-#{filter}=#{rule}" } if @trackExcludeFilters
-							filtersList
-						},
 						'showStatus' => Proc.new { |command|
 							if @trackFilters || @trackExcludeFilters
-								filtersList = command['listFilters'].call()
+								filtersList = listFilters
 								putsRealtime "Current filters:\n" + filtersList.join("\n")
 							else
 								putsRealtime "No filters"
@@ -1363,7 +1382,7 @@ module Tunewich
 									filters = parseOptionParameters inputParts[:query]
 								end
 							else
-								filtersList = command['listFilters'].call()
+								filtersList = listFilters
 								filterInstructions = []
 								filterInstructions << FILTER_HELP_1
 								filterInstructions << FILTER_HELP_2
@@ -3032,6 +3051,8 @@ module Tunewich
 			if @trackExcludeFilters
 				@tracks = filterTracks @tracks, @trackExcludeFilters, true
 			end
+
+			updateSessionDescription
 		end
 
 		def shuffleIndex
@@ -3781,6 +3802,17 @@ module Tunewich
 			putsRealtime "#{tracks.length} matches for filters"
 
 			tracks
+		end
+
+		def listFilters includeFilters = nil, excludeFilters = nil
+			includeFilters ||= @trackFilters
+			excludeFilters ||= @trackExcludeFilters
+
+			filtersList = []
+			filtersList += includeFilters.map { |filter, rule| "#{filter}=#{rule}" } if includeFilters
+			filtersList += excludeFilters.map { |filter, rule| "-#{filter}=#{rule}" } if excludeFilters
+
+			filtersList
 		end
 
 		def listAllTagsWithCountsAndAliases
