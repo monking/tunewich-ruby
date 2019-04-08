@@ -59,7 +59,7 @@ module Tunewich
 			@playerThreads = []
 			@inputThread = nil
 			@playerApplicationThreads = []
-      @verbosity = 0
+			@forceStreaming = false
 
 			getEnvironmentConfig
 
@@ -457,12 +457,13 @@ module Tunewich
 						puts "downloaded : #{trackFileExists? track}"
 						puts "==============================\n#{track['description']}" if alreadyHas[:description]
 
-						if !alreadyHas[:title] || !alreadyHas[:duration]
+						if !alreadyHas[:title] || !alreadyHas[:duration] || track['title'].length == 0 || @allowedVerbosity > 0
 							info = getTrackInfo track['src']
 							updateTrackInfo track, info
 
 							puts "     title : #{track['title']}" if !alreadyHas[:title]
 							puts "  duration : #{track['duration']}" if !alreadyHas[:duration]
+							puts "sourceTags : #{info['sourceTags']}" if info['sourceTags']
 							puts "==============================\n#{track['description']}" if !alreadyHas[:description] && track['description']
 						else
 							info = {'url' => "http://youtu.be/#{track['src']}"}
@@ -474,7 +475,8 @@ module Tunewich
 							whisper "about to loop through tagNames", 4
 							tagNames.each { |tagName|
 								whisper "digging up ancestors of #{tagName}", 4
-								getAncestorTagNames tagName
+								ancestorTags = getAncestorTagNames tagName
+								whisper("ancestors of tag '#{tagName}': #{ancestorTags}", 1) if ancestorTags.length > 0
 							}
 						end
 
@@ -637,6 +639,14 @@ module Tunewich
 						{:chainedInput => input}
 					}
 				},
+				'stream' => {
+          'description' => "Ignore downloaded files.",
+					'action' => Proc.new { |input|
+						@forceStreaming = !@forceStreaming
+						puts "force streaming: #{@forceStreaming ? 'on' : 'off'}"
+						{:chainedInput => input}
+					}
+				},
 				'chapter' => {
 					'description' => 'Skip to a chapter, or show chapter list.',
 					'action' => Proc.new { |input|
@@ -645,7 +655,7 @@ module Tunewich
 						if inputParts[1] && inputParts[1].length > 0
 							if @currentTrack['chapters']
 								chapterIndex = inputParts[1].to_i - 1
-								if chapterIndex <= 0
+								if chapterIndex < 0
 									chapterIndex = getChapterIndexAtTime @currentTrack, getCurrentMplayerTimePosition
 									if inputParts[1] == '>'
 										chapterIndex +=1
@@ -1107,8 +1117,8 @@ module Tunewich
 				true
 			}
 			# TODO: I shouldn't need to check twice
-			fileAlreadyExists = trackFileExists? track
-			streaming = !fileAlreadyExists && !@enableDownload && !chapterIndex
+			fileAlreadyExists = !@forceStreaming && trackFileExists?(track)
+			streaming = @forceStreaming || (!fileAlreadyExists && !@enableDownload && !chapterIndex)
 
 			if @noNetwork && !fileAlreadyExists
 				puts "No local file to play: #{track['title']}"
@@ -1227,6 +1237,11 @@ module Tunewich
 				whisper "#{Player::PLAYER_APPLICATION} is finished. killing user input thread", 4
 				@inputThread.kill if @inputThread
 			}
+			# # TODO: show chapters changing
+			# while @playerApplicationThreads[@currentPlayerIndex].alive?
+			# 	sleep 0.1
+			# 	if track['chapers']
+			# end
 			@playerApplicationThreads[@currentPlayerIndex].join
 			whisper "killing user input thread (again)", 4
 			@inputThread.kill if @inputThread # FIXME: overkill?
@@ -1530,7 +1545,7 @@ module Tunewich
 
 		def notify(message)
 			if UNAME == 'Linux'
-				if @verbosity > 0
+				if @allowedVerbosity > 0
 					`notify-send --expire-time=3000 --urgency=low tunewich "#{message}"`
 				end
 			elsif UNAME == 'Darwin'
@@ -2132,36 +2147,44 @@ module Tunewich
 		end
 
 		def getTrackInfo id
+			track = {
+				'id' => id
+			}
 			if @noNetwork
 				puts "no getTrackInfo --no-network"
-				return false
+				return track
 			end
-			rawInfo = `youtube-dl --get-title --get-description --get-duration -- #{id} 2>/dev/null` # suppress errors
-			return false if !rawInfo || rawInfo.length == 0
+			json = `youtube-dl -j -- #{id} 2>/dev/null` # suppress errors
+			return track if !json || json.length == 0
 
-			lines = rawInfo.chomp.lines
-			track = {
-				'title' => lines.shift.chomp, # first line
-				'duration' => lines.pop.chomp, # last line
-				'description' => lines.join("\n").chomp, # everything else
-				'url' => "http://youtu.be/#{id}" # youtube-only URL
-			}
+			trackInfo = JSON.parse(json)
+			track['title'] = trackInfo['fulltitle']
+			track['duration'] = getDurationStringFromSeconds(trackInfo['duration'])
+			track['description'] = trackInfo['description']
+			track['url'] = trackInfo['webpage_url']
+			track['type'] = trackInfo['extractor']
+			track['sourceTags'] = trackInfo['tags'] if trackInfo['tags']
+			whisper "sourceTags: #{trackInfo['tags']}", 4
 
 			track
 		end
 
-		def updateTrackInfo track, trackInfo = nil
+		def updateTrackInfo track, trackInfo = nil, force = false
 			trackInfo ||= getTrackInfo track['id']
-			return false if !trackInfo
+			return track if !trackInfo
 
-			track['title'] = trackInfo['title']
+			track['title'] = trackInfo['title'] if (!track['title'] || force) && trackInfo['title'] && trackInfo['title'].length > 0
 
-			if trackInfo['description']
-				chapters = getChaptersFromDescription trackInfo['description'].lines
-				track['chapters'] = chapters if chapters && chapters.length > 0
+			if (!track['description'] || force) && trackInfo['description'] && trackInfo['description'].length > 0
+				if !track['chapters'] || force
+					chapters = getChaptersFromDescription trackInfo['description'].lines
+					track['chapters'] = chapters if chapters && chapters.length > 0
+				end
 			end
 
 			track['duration'] = trackInfo['duration'] if trackInfo['duration']
+			track['url'] = trackInfo['url'] if trackInfo['url']
+			track['type'] = trackInfo['type'] if  trackInfo['type']
 
 			track
 		end
@@ -2658,24 +2681,26 @@ module Tunewich
 				while commands && !input.empty? && input[0] == '/'
 					whisper "inside command while loop", 4
 					commandParts = input.match(/^\/([^\s]+)\s*(.*)/)
-					commandName = commandParts[1]
-					commandArgs = commandParts[2]
+					if commandParts
+						commandName = commandParts[1]
+						commandArgs = commandParts[2]
+						whisper "commandParts: #{commandParts}", 4
 
-					if not commands[commandName]
-						possibleCommands = []
-						commands.each { |name, command|
-							if name.start_with? commandName
-								possibleCommands << name
+						if not commands[commandName]
+							possibleCommands = []
+							commands.each { |name, command|
+								if name.start_with? commandName
+									possibleCommands << name
+								end
+							}
+							if possibleCommands.length == 1
+								commandName = possibleCommands[0]
+							elsif possibleCommands.length > 1
+								puts "Did you mean #{possibleCommands.join ", or "}?"
 							end
-						}
-						if possibleCommands.length == 1
-							commandName = possibleCommands[0]
-						elsif possibleCommands.length > 1
-							puts "Did you mean #{possibleCommands.join ", or "}?"
-						else
-							puts "No commands matching '/#{commandName}'; type '/?' to see all commands."
-							break
 						end
+					else
+						commandName = ''
 					end
 
 					if commands[commandName]
