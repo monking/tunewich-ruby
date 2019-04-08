@@ -125,9 +125,8 @@ module Tunewich
 				'tag' => {
 					'info' => "Tag this track.",
 					'action' => Proc.new { |tags|
-						track = @tracks[@trackIndex]
 						if !tags || tags.length < 1
-							puts "current tags: #{getTrackTags track}"
+							puts "current tags: #{getTrackTags @tracks[@trackIndex]}"
 						else
 							tagsToAdd = tags.split(/[, ]+/)
 							tagsToRemove = []
@@ -137,8 +136,8 @@ module Tunewich
 									tagsToAdd.delete tagName
 								end
 							}
-							addTrackToTags track, tagsToAdd
-							removeTagsFromTrack track, tagsToRemove
+							addTrackToTags @tracks[@trackIndex], tagsToAdd
+							removeTagsFromTrack @tracks[@trackIndex], tagsToRemove
 							addTrackToLibrary @tracks[@trackIndex] if @tracks[@trackIndex]['unattached']
 							writeLibraryToFile true
 						end
