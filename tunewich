@@ -361,29 +361,29 @@ module Tunewich
 						}
 					},
 					'rate' => {
-						'description' => "Rate this track.",
+						'description' => "Rate this track + or -, or give it an explicit number.",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							newRating = inputParts[1] if (inputParts[1].length > 0) && (inputParts[1].match(/^[+-]?[0-9]*/))
-              oldRating = @currentTrack['rating']
+							oldRating = @currentTrack['rating']
 							if newRating.length < 1
 								putsRealtime "current rating: #{@currentTrack['rating']}"
-              elsif newRating.match(/^[+-][0-9]*$/)
-                if newRating.match(/^[+-]$/) # if it's simply "+" or "-", append "1"
-                  newRating = newRating + '1';
-                end
-                if not @currentTrack['rating']
-                  @currentTrack['rating'] = 0
-                end
-                @currentTrack['rating'] += newRating.to_i
+							elsif newRating.match(/^[+-][0-9]*$/)
+								if newRating.match(/^[+-]$/) # if it's simply "+" or "-", append "1"
+									newRating = newRating + '1';
+								end
+								if not @currentTrack['rating']
+									@currentTrack['rating'] = 0
+								end
+								@currentTrack['rating'] += newRating.to_i
 							else
 								@currentTrack['rating'] = newRating.to_i
 							end
-              if oldRating != @currentTrack['rating'] && !@currentTrack['unattached']
-                loadLibrary
-                addTrackToLibrary @currentTrack if @currentTrack['unattached']
-                writeLibraryToFile
-              end
+							if oldRating != @currentTrack['rating'] && !@currentTrack['unattached']
+								loadLibrary
+								addTrackToLibrary @currentTrack if @currentTrack['unattached']
+								writeLibraryToFile
+							end
 							{:chainedInput => inputParts[2]}
 						}
 					},
@@ -1512,7 +1512,7 @@ module Tunewich
 			}
 
 			if requestedCommandSet
-				requestedCommandSet['?'] = {
+				requestedCommandSet['?'] = requestedCommandSet['help'] = {
 					'description' => 'Show interactive command info (like this). Not chainable.',
 					'action' => Proc.new {
 						showInteractiveCommandHelp requestedCommandSet
