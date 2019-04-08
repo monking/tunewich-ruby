@@ -865,6 +865,53 @@ module Tunewich
 							output
 						}
 					},
+					'macro' => {
+						'description' => "[save] NAME [COMMANDS] - Save or run some command, or chain of commands. With the 'save' keyword, this command cannot be chained into any other commands, as it will take all following commands as part of the macro.",
+						'args' => ['save'],
+						'inputPattern' => /^((?<save>save) )?(?<name>\w*)(?<guff>.*?)( +(?<remainder>\/.*))?$/,
+						'action' => Proc.new { |input, command|
+							output = {}
+							inputParts = getCommandInputParts(input, command['inputPattern'])
+
+							if inputParts || !inputParts[:guff] || inputParts[:guff].length == 0
+								if inputParts[:save] && inputParts[:save].length > 0
+									loadLibrary
+									@library['commandMacros'] ||= {}
+									@library['commandMacros'][inputParts[:name]] = inputParts[:remainder]
+									writeLibraryToFile
+								else
+									output[:chainedInput] = inputParts[:remainder]
+									if @library['commandMacros'].has_key?(inputParts[:name])
+										output[:chainedInput] = "#{@library['commandMacros'][inputParts[:name]]} #{output[:chainedInput]}"
+									end
+								end
+							else
+								putsRealtime "Invalid input to the 'macro' command."
+								output = nil
+							end
+
+							output
+						},
+						'tabComplete' => Proc.new { |input, command|
+							inputParts = getCommandInputParts(input, command['inputPattern'])
+
+							macroNames = @library['commandMacros'].keys
+							if inputParts[:name] && inputParts[:name].length > 0
+								guessMacroNames = fuzzyStringSearchInListValues(inputParts[:name], macroNames) if inputParts[:name].length > 0 # @refactor: duplicating code from trackTabComplete above
+								if guessMacroNames && guessMacroNames.length == 1
+									input = input.sub!(Regexp.new("#{inputParts[:name]}$"), guessMacroNames[0])
+								elsif guessMacroNames && guessMacroNames.length > 1
+									heading = "#{[guessMacroNames.length, 10].min}/#{guessMacroNames.length} macros"
+									putsRealtime "\n#{heading}\n================\n#{guessMacroNames.slice(0, 10).join("\n")}"
+								end
+							else
+								macroDescriptions = @library['commandMacros'].map { |key, commands| "#{key}: #{commands}" }
+								putsRealtime "#{macroDescriptions.join("\n")}"
+							end
+
+							input
+						}
+					},
 					'clear' => {
 						'description' => 'Clear current tracklist',
 						'action' => Proc.new { |input, command|
@@ -2101,14 +2148,20 @@ module Tunewich
 						}
 					},
 					'loop' => {
-						'description' => '/loop [COUNT]: Set the loop limit, or toggle looping off/on, or \'reset\' the loop counters.',
-						'args' => ['off', 'on', 'reset'],
+						'description' => '/loop [COUNT]: Set the loop limit, or toggle looping off/on, or toggle only inner loops, or \'reset\' the loop counters.',
+						'args' => ['off', 'on', 'inner', 'reset'],
 						'showStatus' => Proc.new {
 							statusMessage = "Looping: #{@loop ? 'on' : 'off'}"
+							statusExtras = []
 							if @breakLoop
-								statusMessage += " (breaking current loop)"
+								statusExtras << "breaking current loop"
 							end
-							statusMessage += " (#{getLoopLimitStatusMessage})"
+							if @innerLoopsOnly
+								statusExtras << "inner loops only"
+							end
+							statusExtras << getLoopLimitStatusMessage
+
+							statusMessage += " (#{statusExtras.join('; ')})"
 
 							putsRealtime statusMessage
 						},
@@ -2120,6 +2173,8 @@ module Tunewich
 								@loopLimit = loopLimit
 							elsif inputParts[:query] == 'reset'
 								@loopHistory = {}
+							elsif inputParts[:query] == 'inner'
+								@innerLoopsOnly = getToggledValueByInput.call(@innerLoopsOnly, inputParts[:query])
 							else
 								@loop = getToggledValueByInput.call(@loop, inputParts[:query])
 							end
