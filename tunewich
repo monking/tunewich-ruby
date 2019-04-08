@@ -239,7 +239,7 @@ module Tunewich
 			if (@bpmGlideDelay > 0 || @bpmGlideDuration > 0) && trackA.has_key?('bpm') && trackB.has_key?('bpm')
 				whisper("gliding bpm for #{@bpmGlideDuration} seconds (after #{@bpmGlideDelay} seconds) seconds between #{trackA['bpm']} and #{trackB['bpm']} (adjust for current speed #{@speed}).", 2)
 				initialSpeed = @speed
-        # TODO: ramp to the nearest multiple: e.g. if going from 60bpm to 120, do nothing. If going from 60 to 140, ramp to 70; from 140 to 60, ramp to 120.
+				# TODO: ramp to the nearest multiple: e.g. if going from 60bpm to 120, do nothing. If going from 60 to 140, ramp to 70; from 140 to 60, ramp to 120.
 				@speed = @speed * trackA['bpm'] / trackB['bpm']
 				bindOnce 'time_update', Proc.new {
 					Thread.new {
@@ -456,6 +456,24 @@ module Tunewich
 		end
 
 		def getInteractiveCommands modes = [], bindingGroupName
+
+			chapterTabAction = Proc.new { |input|
+				inputParts = input.match(/^([^\/]*)(.*)$/)
+				if @currentTrack.has_key?('chapters')
+					if inputParts[1] && inputParts[1].length > 0
+						chapterNames = @currentTrack['chapters'].map { |c| c['text'] }
+						guessChapterName = firstFuzzyMatchValue(inputParts[1], chapterNames) if inputParts[1].length > 0
+						if guessChapterName && guessChapterName.length > 0
+							input = input.sub!(inputParts[1], guessChapterName)
+						end
+					else
+						putsRealtime getFormattedChapterList(@currentTrack['chapters']).join("\n")
+					end
+				else
+					putsRealtime "No chapters on the current track."
+				end
+				input
+			}
 
 			tagTabAction = Proc.new { |input|
 				inputParts = input.match(/^([^\/]*)(.*)$/)
@@ -1046,7 +1064,8 @@ module Tunewich
 							end
 
 							{:chainedInput => inputParts[2]}
-						}
+						},
+						'tabAction' => chapterTabAction
 					},
 					'mkchapter' => {
 						'description' => "Make a chapter, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing). Input: name.",
@@ -1072,6 +1091,7 @@ module Tunewich
 					'rmchapter' => {
 						'description' => "Remove the current chapter.",
 						'action' => Proc.new { |input|
+							# TODO 1gzTHg: take input to choose a chapter
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
 							if chapterIndex > -1
@@ -1081,6 +1101,7 @@ module Tunewich
 
 							{:chainedInput => inputParts[2]}
 						}
+						# 'tabAction' => chapterTabAction # TODO 1gzTHg: take input to choose a chapter
 					},
 					'skipchapter' => {
 						'description' => "Mark the current chapter as to be skipped every time.",
