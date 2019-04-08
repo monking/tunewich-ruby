@@ -162,6 +162,7 @@ module Tunewich
 				'more' => {
 					'info' => "Play all tracks on this video's page.",
 					'action' => Proc.new {
+						# FIXME: diagnose: I updated youtube-dl, and I still get errors all the time, and it'll quit afterward (2016 Feb 29 Mon 11:37:51)
 						tracks = getYouTubeTracksFromPage(@tracks[@trackIndex]['src'])
 						tracks.unshift @tracks[@trackIndex]
 						useTracks tracks, false
@@ -734,6 +735,7 @@ module Tunewich
 		end
 
 		def downloadTrack(track, streamPath = nil)
+			# FIXME: this never seems to work anymore
 			youtubeDlCommandBegin = "youtube-dl -f bestaudio --no-part"
 			youtubeDlCommandEnd = "-- #{track['src']}"
 
