@@ -548,7 +548,7 @@ module Tunewich
 					}
 					guessTagName = firstFuzzyMatchValue(lastInputToken, tagNames) if lastInputToken.length > 0
 					if guessTagName && guessTagName.length > 0
-						input = input.sub!(lastInputToken, guessTagName)
+						input = input.sub!(Regexp.new("#{lastInputToken}$"), guessTagName)
 					end
 				end
 
@@ -944,6 +944,7 @@ module Tunewich
 					},
 					'shuffle' => {
 						'description' => 'Toggle shuffle.',
+						'args' => ['on', 'off'],
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							@shuffle = getToggledValueByInput.call(@shuffle, inputParts[1])
@@ -954,6 +955,7 @@ module Tunewich
 					},
 					'network' => {
 						'description' => 'Toggle network enabled.',
+						'args' => ['on', 'off'],
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							@networkEnabled = getToggledValueByInput.call(@networkEnabled, inputParts[1])
@@ -1248,8 +1250,34 @@ module Tunewich
 							{:chainedInput => input}
 						}
 					},
+					'relatetags' => {
+						'description' => '(USAGE: /relatetags A B...) Make tag A a child of tag(s) B...',
+						'action' => Proc.new { |input|
+							inputParts = input.match(/^([^\/]*)(.*)$/)
+							success = false
+
+							if inputParts[1].length > 0
+								tags = inputParts[1].split(Player::TAG_INPUT_SPLIT)
+								if tags.length == 2
+									# TODO: optionally remove parent tags from all tracks which contain child tag
+									success = relateTags tags
+									if success
+										writeLibraryToFile
+									else
+										putsRealtime "There was a problem with relating the tags. Your changes were not saved."
+									end
+								else
+									putsRealtime "Please give exactly two tags."
+								end
+							end
+
+							putsRealtime "Tags: \n	#{@library['tags'].keys.sort.join(", ")}" if not success
+							{:chainedInput => inputParts[2]}
+						},
+						'tabComplete' => tagTabComplete
+					},
 					'jointag' => {
-						'description' => '(USAGE: /jointag A B) Join tracks from two tags, making tag B an alias of tag A',
+						'description' => '(USAGE: /jointag A B...) Join tracks from two tags, making tag(s) B an alias of tag A',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							success = false
@@ -1270,7 +1298,8 @@ module Tunewich
 
 							putsRealtime "Tags: \n	#{@library['tags'].keys.sort.join(", ")}" if not success
 							{:chainedInput => inputParts[2]}
-						}
+						},
+						'tabComplete' => tagTabComplete
 					},
 					'rm' => {
 						'description' => 'remove selected tracks',
@@ -2099,6 +2128,21 @@ module Tunewich
 					matchingTag['tracks'].delete track['id'] if matchingTag['tracks'].include? track['id']
 				end
 			}
+		end
+
+		def relateTags(tagNames)
+			childTagName = tagNames.shift
+			childTag = findTag childTagName
+
+			if childTag && tagNames.length > 0
+				childTag['parents'] ||= []
+				childTag['parents'].concat tagNames
+				childTag['parents'].uniq!
+			else
+				putsRealtime "provide 2 or more tags to relate together"
+			end
+
+			childTag
 		end
 
 		def combineTags(tagNames)
