@@ -1938,30 +1938,30 @@ module Tunewich
               @library['player']['equalizer_presets']['bass'] ||= '-1:0:-2:-3:-5:-5:-5:-5:-5:-5'
               @library['player']['equalizer_presets']['earplugs'] ||= '-4:0:-5:-6:-6:-5:-4:-2:0:-3'
 
-              def handleEQTextInput input
+              handleEQTextInput = Proc.new { |eqInput, parentCommand|
                 is_success = false
                 savePresetNamePattern = /^save ([^ ]+).*/
-                if savePresetNamePattern.match input
-                  @eqPreset = input.sub savePresetNamePattern, '\1'
+                if savePresetNamePattern.match eqInput
+                  @eqPreset = eqInput.sub savePresetNamePattern, '\1'
                   @library['player']['equalizer_presets'][@eqPreset] = @eqSetting
                   writeLibraryToFile
                   is_success = true
                 else
-                  chosenEQPreset = firstFuzzyMatchValue input, command['inputOptions'].call
+                  chosenEQPreset = firstFuzzyMatchValue eqInput, parentCommand['inputOptions'].call
                   if chosenEQPreset
                     @eqPreset = chosenEQPreset
                     @eqSetting = @library['player']['equalizer_presets'][chosenEQPreset]
                     is_success = true
                     sendPlayerCommand "af_del equalizer\naf_add equalizer=#{@eqSetting}"
                   else
-                    putsRealtime "Unknown preset '#{input}'."
+                    putsRealtime "Unknown preset '#{eqInput}'."
                   end
                 end
                 is_success
-              end
+              }
 
               if inputParts[:query] && inputParts[:query].length > 0
-                handleEQTextInput inputParts[:query]
+                handleEQTextInput.call inputParts[:query], command
               else
                 chosenPresetMessage = @eqPreset ? "Using #{@eqPreset}. " : ""
                 putsRealtime "#{chosenPresetMessage}Presets: #{@library['player']['equalizer_presets'].keys.join ", "}"
@@ -1999,7 +1999,7 @@ module Tunewich
                   elsif /[\n\r]/.match(eqInput)
                     if interactivePresetNameInput.length > 0
                       print "\n"
-                      inputCausedEQChange = handleEQTextInput interactivePresetNameInput
+                      inputCausedEQChange = handleEQTextInput.call interactivePresetNameInput, command
                     end
                     break
                   else
