@@ -105,6 +105,7 @@ module Tunewich
       @loopHistory = {};
       @loopLimit = 0
       @breakLoop = false
+      @commandBeforePlayer = nil
 
       getConfigFiles
 
@@ -522,6 +523,12 @@ module Tunewich
         setLibraryMediaPath ENV['TUNEWICH_DIR']
       else
         whisper("Please add `export TUNEWICH_DIR=\"<path/to/your/music/directory>\"` to your ~/.profile or similar file.", 0)
+      end
+
+      if ENV.key? 'TUNEWICH_CMD_BEFORE_TRACK'
+        @commandBeforePlayer = ENV['TUNEWICH_CMD_BEFORE_TRACK']
+      else
+        whisper("No per-track pre-play command set.", 2)
       end
 
       # assume volume is not logarithmic for player on Mac
@@ -2863,6 +2870,7 @@ module Tunewich
         # TODO 1gnyIc: fix missing input characters while paused
         @tempFiles[playerStdoutFile] = true
         playerCommand = "#{PLAYER_APPLICATION} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '} > #{playerStdoutFile}"
+        playerCommand = "#{@commandBeforePlayer} #{playerCommand}" if @commandBeforePlayer
         whisper(playerCommand, 3)
         playerStatus = `#{playerCommand} 2> /dev/null`
         whisper("#{PLAYER_APPLICATION} is finished. killing user input thread", 4)
