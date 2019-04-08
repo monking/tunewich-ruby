@@ -773,7 +773,7 @@ module Tunewich
 							nil
 						}
 					},
-					'edit' => {
+					'tracks' => {
 						'description' => 'Edit playing tracklist in Vim.',
 						'action' => Proc.new { |input|
 							editedTrackList = editTrackList @tracks
@@ -1614,18 +1614,16 @@ module Tunewich
 						}
 					},
 					'mark' => {
-						'description' => 'Mark the point at which to play this track next time.',
+						'description' => 'Mark the point at which to play this track next time. Pass any argument to remove an existing mark',
 						'action' => Proc.new { |input|
-							addMarkToTrack @currentTrack, @currentPlayerTime
-							{:chainedInput => input}
-						}
-					},
-					'unmark' => {
-						'description' => 'Remove a "mark" from a track.',
-						'action' => Proc.new { |input|
+							inputParts = input.match(/^([^\/]*)(.*)$/)
 							loadlibrary
 							@currentTrack = matchExistingLibraryTrack @currentTrack
-							removeMarkFromTrack @currentTrack
+							if inputParts[1] && inputParts[1].length > 0
+								removeMarkFromTrack @currentTrack
+							else
+								addMarkToTrack @currentTrack, @commandinputStartPlayerTime
+							end
 							writeLibraryToFile
 							{:chainedInput => input}
 						}
@@ -1672,78 +1670,11 @@ module Tunewich
 							{:chainedInput => inputParts[2]}
 						}
 					},
-					'ab' => {
-						'description' => 'Create or edit an A/B loop in this track.',
-						'action' => Proc.new { |input|
-							inputParts = input.match(/^([^\/]*)(.*)$/)
-							whisper("inputParts: #{inputParts}", 3)
-							chunks = inputParts[1].split ' '
-							testing = false
-
-							loadLibrary
-							track = matchExistingLibraryTrack @currentTrack
-
-							if chunks.length > 0 && chunks[0] == 'test'
-								putsRealtime "testing A/B loop"
-								testing = true
-								chunks.shift
-							end
-							if chunks.length > 0 && chunks[0].match(/beats?$/)
-								if track['loop']
-									if track['bpm']
-										numberOfBeatsToShift = (chunks.shift.gsub(/[^0-9.+-]*/, '')).to_f
-										beatShift = numberOfBeatsToShift * 60.0 / track['bpm'].to_f
-										whisper("Shifting by #{beatShift} seconds (#{numberOfBeatsToShift} beats at #{track['bpm']} BPM).", 1)
-										track['loop'][0] += beatShift
-										track['loop'][1] += beatShift
-									else
-										putsRealtime "No BPM on this track. Set with /bpm."
-									end
-								end
-							elsif chunks.length > 1
-								aTime = getSecondsFromDurationString chunks.shift
-								bTime = getSecondsFromDurationString chunks.shift
-								aTimeString = getDurationStringFromSeconds aTime
-								bTimeString = getDurationStringFromSeconds bTime
-							end
-							if trackFileExists? track
-								if aTime && bTime
-									putsRealtime "Setting A/B (#{aTimeString}/#{bTimeString}) & seeking to the end to test."
-									track['loop'] = [aTime, bTime]
-									if not testing
-										whisper("writing AB to track in library", 2)
-										writeLibraryToFile
-									end
-									testing = true
-								elsif track['loop']
-									putsRealtime "A: #{getDurationStringFromSeconds track['loop'][0]} B: #{getDurationStringFromSeconds track['loop'][1]}"
-								else
-									putsRealtime "No A/B loop on track."
-								end
-								if testing
-									@loop = true
-									@playerTemporaryInteractiveCommands << "seek #{track['loop'][1] - 3.0} 2"
-								end
-							else
-								putsRealtime "Download the track before adding an A/B loop."
-							end
-							whisper("done with AB command", 3)
-							{:chainedInput => inputParts[2]}
-						}
-					},
 					'logarithmic' => {
 						'description' => 'Toggle logarithmic volume scale.',
 						'action' => Proc.new { |input|
 							@isVolumeAlreadyLogarithmic= !@isVolumeAlreadyLogarithmic
 							putsRealtime "logarithmic volume scale: #{@isVolumeAlreadyLogarithmic ? 'off' : 'on'}"
-							{:chainedInput => input}
-						}
-					},
-					'fixbpm' => {
-						'description' => "TODO: [Toggle ON/off] Change next track's playback speed to BPM of a current track. If either track does not have BPM metadata, then the curent playback speed is maintained.", #1gG4iM
-						'action' => Proc.new { |input|
-							@fixbpm = !@fixbpm
-							putsRealtime "TODO: fixbpm #{@fixbpm ? "on" : "off"}"
 							{:chainedInput => input}
 						}
 					},
@@ -1775,7 +1706,7 @@ module Tunewich
 						}
 					},
 					'stream' => {
-						'description' => "Ignore downloaded files.",
+						'description' => "Ignore downloaded files. This is useful if you want to play a different format than the one downloaded (e.g. audio vs. video).",
 						'action' => Proc.new { |input|
 							@forceStreaming = !@forceStreaming
 							putsRealtime "force streaming: #{@forceStreaming ? 'on' : 'off'}"
@@ -2236,6 +2167,10 @@ module Tunewich
 				end # don't skip if first chapter doesn't start at 0:00
 			end
 
+			if @loop && track['loop'].kind_of?(Array)
+				whisper("This track has has an A/B loop (#{track['loop'].join(" - ")}. This will deprecated in favor of looping notes; for now, use looping chapters instead.", 0)
+			end
+
 			if track['mark'] && !liveStreaming
 				puts("Starting from mark at #{track['mark']}.", 0)
 				offsetSeconds = getSecondsFromDurationString track['mark']
@@ -2244,21 +2179,6 @@ module Tunewich
 				editingTrack = matchExistingLibraryTrack track
 				removeMarkFromTrack editingTrack
 				writeLibraryToFile
-			elsif @loop && track['loop'].kind_of?(Array)
-				whisper("ooh, this track has has an A/B loop!", 2)
-
-				if not streaming
-					duration = track['loop'][1] - track['loop'][0]
-
-					playerAction.call "seek 0 1" # seek offset[, absolute]
-
-					whisper("setting some player startup options", 4)
-					# loop back from B to A
-					playerStartupOptions << "-ss #{track['loop'][0]}"
-					playerStartupOptions << "-endpos #{duration}"
-				else
-					titleBlock "This track has an A/B loop, but looping is not supported while streaming. Add the -d option to enable downloading."
-				end
 			elsif firstPlayableChapterIndex && firstPlayableChapterIndex > 0
 				startTime = getSecondsFromDurationString track['chapters'][firstPlayableChapterIndex]['time']
 				playerStartupOptions << "-ss #{startTime}"
@@ -2994,20 +2914,13 @@ module Tunewich
 		end
 
 		def addMarkToTrack track, time
-			loadLibrary
-			editingTrack = matchExistingLibraryTrack track
-			editingTrack['mark'] = getDurationStringFromSeconds time
+			track['mark'] = getDurationStringFromSeconds time
 			@library["lastMarked"] = track["id"]
-			writeLibraryToFile
 		end
 
 		def removeMarkFromTrack track
-			# FIXME 1gpao6: this deletion _is_ saved, but for some reason, playing the track again immediately starts again from the mark.
-			loadLibrary
-			editingTrack = matchExistingLibraryTrack track
-			if editingTrack.has_key? 'mark'
-				editingTrack.delete 'mark'
-				writeLibraryToFile
+			if track.has_key? 'mark'
+				track.delete 'mark'
 			end
 		end
 
@@ -3265,17 +3178,6 @@ module Tunewich
 				minDuration = getSecondsFromDurationString filters['min-duration']
 				tracks.send(action) { |t|
 					t['duration'] ? getSecondsFromDurationString(t['duration']) > minDuration : false
-				}
-			end
-
-			if filters.has_key? 'ab'
-				whisper("Filtering tracks with an A/B loop", 3)
-				tracks.send(action) { |track|
-					if track
-						track.has_key? 'loop'
-					else
-						false
-					end
 				}
 			end
 
@@ -3682,7 +3584,7 @@ module Tunewich
 				exit
 			end
 
-			parser.on("-l", "--loop", "Loop, even if a track doesn't have an A/B loop defined.", " ") do
+			parser.on("-l", "--loop", "Loop a track. A track may contain chapters which loop.", " ") do
 				@loop = true
 			end
 
