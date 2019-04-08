@@ -364,17 +364,23 @@ module Tunewich
 						'description' => "Rate this track.",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
-							newRating = inputParts[1] if (inputParts[1].length > 0) && (inputParts[1].match(/^[0-9]/))
-							if !newRating || newRating.length < 1
+							newRating = inputParts[1] if (inputParts[1].length > 0) && (inputParts[1].match(/^[+-]?[0-9]*/))
+              oldRating = @currentTrack['rating']
+							if newRating.length < 1
 								putsRealtime "current rating: #{@currentTrack['rating']}"
+              elsif newRating.match(/^[+-][0-9]*$/)
+                if newRating.match(/^[+-]$/) # if it's simply "+" or "-", append "1"
+                  newRating = newRating + '1';
+                end
+                @currentTrack['rating'] += newRating.to_i
 							else
 								@currentTrack['rating'] = newRating.to_i
-								if !@currentTrack['unattached'] || @currentTrack['rating'] > 0
-									loadLibrary
-									addTrackToLibrary @currentTrack if @currentTrack['unattached']
-									writeLibraryToFile
-								end
 							end
+              if oldRating != @currentTrack['rating'] && !@currentTrack['unattached']
+                loadLibrary
+                addTrackToLibrary @currentTrack if @currentTrack['unattached']
+                writeLibraryToFile
+              end
 							{:chainedInput => inputParts[2]}
 						}
 					},
