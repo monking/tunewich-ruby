@@ -2369,11 +2369,11 @@ module Tunewich
 			downloadCommand = ''
 
       if @youtubeDLTrackTypes.include? track['type']
-				youtubeDlCommandBegin = "rm -- --Frag*; youtube-dl -f #{@preferredFileFormat} -q"
+				youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} -q"
 				# youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} --no-part --no-cache-dir --no-continue"
 				youtubeDlCommandEnd = "-- #{track['src']}"
 				if streamPath
-					downloadCommand = "#{youtubeDlCommandBegin} -o - #{youtubeDlCommandEnd} > \"#{streamPath}\" 2> \"#{downloadFeedbackFile}\""
+					downloadCommand = "rm -f -- --Frag*; #{youtubeDlCommandBegin} -o - #{youtubeDlCommandEnd} > \"#{streamPath}\" 2> \"#{downloadFeedbackFile}\""
 				else
 					downloadCommand = "#{youtubeDlCommandBegin} -o \"#{getTrackFilePrefix track}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd}"
 				end
@@ -2404,11 +2404,12 @@ module Tunewich
 
 			if streamPath
 				downloadPid = spawn(downloadCommand)
-				trigger 'download_end', track
 			else
         trigger 'download_begin', track
         downloadThread = Thread.new {
-          downloadPid = spawn("#{downloadCommand} 2> \"#{downloadFeedbackFile}\"")
+					fullDownloadShellCommand = "#{downloadCommand} 2> \"#{downloadFeedbackFile}\""
+					whisper fullDownloadShellCommand, 3
+          downloadPid = spawn(fullDownloadShellCommand)
 
           if trackFileExists? track
             trigger 'download_complete', track
