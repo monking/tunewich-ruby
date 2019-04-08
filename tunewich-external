@@ -17,8 +17,21 @@ else
 	echo "Ctrl+C to exit."
 	echo
 
-	while true; do
-		read -p "tunewich\$ "
-		echo "$REPLY" > "$queueFile"
+	prompt='tunewich $ '
+	inputLine=
+	1>&2 echo -n "$prompt"
+	while IFS= read -s -r -n1 ch; do
+		case "$ch" in
+			'')
+				# surely other things will also come across as empty, besides newline?
+				inputLine=
+				ch=$'\n'
+				echo -ne "$ch";;
+			"") inputLine=;;
+			"") [[ ${#inputLine} -gt 0 ]] && inputLine="${inputLine:0:$((${#inputLine} - 1))}";;
+			*) inputLine+="$ch";;
+		esac
+		1>&2 echo -ne "\r${prompt}${inputLine}"
+		echo -ne "$ch" > "$queueFile"
 	done
 fi

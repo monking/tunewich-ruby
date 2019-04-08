@@ -4186,18 +4186,18 @@ module Tunewich
 				externalCommandStream = makeStream streamName
 				whisper("external command stream: #{externalCommandStream}", 2)
 				File.open(externalCommandStream, 'r') { |externalCommandStreamHandle|
-					externalCommand = ""
+					# externalCommand = ""
 					while shouldListenForExternalCommands do
 						while ($_ = externalCommandStreamHandle.read(1)) do
-							# trigger 'external_input', $_
-							if $_ != "\n"
-								externalCommand << $_
-							else
-								if externalCommand && externalCommand.length > 0
-									trigger 'external_command', externalCommand
-									externalCommand = ""
-								end
-							end
+							trigger 'external_input', $_
+							# if $_ != "\n"
+							# 	externalCommand << $_
+							# else
+							# 	if externalCommand && externalCommand.length > 0
+							# 		trigger 'external_command', externalCommand
+							# 		externalCommand = ""
+							# 	end
+							# end
 						end
 					end
 				}
