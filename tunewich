@@ -1531,6 +1531,12 @@ module Tunewich
 			whisper 'filterTracks'
 			action = isExcludeFilter ? 'delete_if' : 'keep_if'
 
+			if filters.has_key? 'local'
+				tracks.send(action) { |t|
+					trackFileExists? t
+				}
+			end
+
 			if filters.has_key? 'rating'
 				if filters['rating'] && filters['rating'].length > 0
 					tracks.send(action) { |t|
@@ -1970,6 +1976,8 @@ module Tunewich
 
 			parser.on("--no-network", "Don't fetch any information or media from the internet. Use only local files.", " ") do
 				@noNetwork = true
+				@trackFilters ||= {}
+				@trackFilters['local'] = ''
 			end
 
 			parser.on("--format FORMAT", "Set the file format to request for streaming or downloading.", " ") do |format|
