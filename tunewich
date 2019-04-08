@@ -719,7 +719,6 @@ module Tunewich
 			@library['tags'].each { |tagName, t|
 				index = t['tracks'].index id
 				if index
-					playlistMatches << tagName
 					t['tracks'].delete_at index
 				end
 			}
