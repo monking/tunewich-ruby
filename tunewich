@@ -50,7 +50,7 @@ module Tunewich
 			@playlistName = nil
 			@volume = 25
 			@enableDownload = false
-			@preferredFileFormat = 'm4a'
+			@preferredFileFormat = 'bestaudio'
 			@keepUnattachedDownload = false
 			@playerTemporaryInteractiveCommands = []
 			@playerOverrideCommands = []
