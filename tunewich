@@ -955,7 +955,9 @@ module Tunewich
 
 							if chapterIndex && chapterIndex >= 0 && chapterIndex < @currentTrack['chapters'].length
 								whisper("Done with chapter selection. Resulting chapter index: #{chapterIndex}", 3)
-								seekToChapter chapterIndex
+								chapter = @currentTrack['chapters'][chapterIndex]
+								seekSeconds = getSecondsFromDurationString chapter['time']
+								seek seekSeconds, 0.5, 0.25
 							elsif inputParts[1] && inputParts[1].length > 0
 								putsRealtime "No chapter found."
 							end
@@ -1712,15 +1714,6 @@ module Tunewich
 			end
 		end
 		
-		def seekToNote noteIndex, fadeOutPeriod = 1.0, fadeInPeriod = 0.1
-			whisper("seeking to note #{noteIndex} (fade #{fadeOutPeriod}/#{fadeInPeriod}", 3)
-			seekTime = @currentTrack['notes'][noteIndex]['time']
-			seekSeconds = getSecondsFromDurationString seekTime
-			whisper("seeking to note at #{seekSeconds} seconds", 3)
-
-			seek seekSeconds, fadeOutPeriod, fadeInPeriod
-		end
-		
 		def seekToChapter chapterIndex, fadeOutPeriod = 1.0, fadeInPeriod = 0.1
 			whisper("seeking to chapter #{chapterIndex} (fade #{fadeOutPeriod}/#{fadeInPeriod}", 3)
 			seekTime = @currentTrack['chapters'][chapterIndex]['time']
@@ -2121,22 +2114,26 @@ module Tunewich
 						@currentTrack['chapters'][@currentChapterIndex].has_key?('skip') &&
 						@currentTrack['chapters'][@currentChapterIndex]['skip'] == true
 					@currentlySkippingChapter = @currentChapterIndex
-					nextNonSkippingChapter = nil
+					nextChapterIndex = nil
 					@currentTrack['chapters'].each_with_index { |chapter, index|
 						if index > @currentChapterIndex && (!chapter.has_key?('skip') || !chapter['skip'])
-							nextNonSkippingChapter = index
+							nextChapterIndex = index
 							break
 						end
 					}
-					if nextNonSkippingChapter
-						whisper("Skipping chapter #{@currentChapterIndex}, to #{nextNonSkippingChapter}.", 0)
-						seekToChapter nextNonSkippingChapter, 0.25, 0.25
+					if nextChapterIndex
+						chapter = @currentTrack['chapters'][nextChapterIndex]
+						seekSeconds = getSecondsFromDurationString chapter['time']
+						whisper("Skipping chapter #{@currentChapterIndex + 1}, to #{nextChapterIndex + 1} (#{chapter['time']}, #{seekSeconds}).", 0)
+						seek seekSeconds, 0.5, 0.25
 					else
-						whisper("Skipping chapter #{@currentChapterIndex}; no more playable chapters; skipping track.", 0)
+						whisper("Skipping chapter #{@currentChapterIndex + 1}; no more playable chapters; skipping track.", 0)
 						fadeVolume "out"
 						playerCommand "q"
 					end
-					@currentlySkippingChapter = nil
+					bindOnce('chapter_change', Proc.new {
+						@currentlySkippingChapter = nil
+					})
 				end
 			}, bindingGroupName)
 			while @playerApplicationThreads[@currentPlayerIndex].alive?
