@@ -335,10 +335,12 @@ module Tunewich
 						alreadyHas = {
 							:title => @tracks[@trackIndex].has_key?('title'),
 							:duration => @tracks[@trackIndex].has_key?('duration'),
-							:description => @tracks[@trackIndex].has_key?('description')
+							:description => @tracks[@trackIndex].has_key?('description'),
+							:bpm => @tracks[@trackIndex].has_key?('bpm')
 						}
 						puts "title: #{@tracks[@trackIndex]['title']}" if alreadyHas[:title]
 						puts "duration: #{@tracks[@trackIndex]['duration']}" if alreadyHas[:duration]
+						puts "bpm: #{@tracks[@trackIndex]['bpm']}" if alreadyHas[:bpm]
 						puts "==============================\n#{@tracks[@trackIndex]['description']}" if alreadyHas[:description]
 
 						if !alreadyHas[:title] || !alreadyHas[:duration]
