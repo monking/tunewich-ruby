@@ -657,7 +657,7 @@ module Tunewich
       noteCommandDefaults = {
         'args' => ['go', 'new', 'edit', 'rm', 'skip']
       }
-      noteCommandDefaults['inputPattern'] = Regexp.new("^((?<offset>[+-][0-9.]+)|(?<option>#{noteCommandDefaults['args'].join('|')}) ?)?(?<query>.*?)?( +(?<remainder>\/.*))?$")
+      noteCommandDefaults['inputPattern'] = Regexp.new("^(?<option>#{noteCommandDefaults['args'].join('|')})?( *(?<offset>[+-][0-9.]+))?( *(?<query>.*?))?( +(?<remainder>\/.*))?$")
       generateNoteCommand = Proc.new { |noteType, description|
         {
           'args' => noteCommandDefaults['args'],
@@ -710,9 +710,9 @@ module Tunewich
             end
 
             if chosenOption == 'rm' # remove
-              if @currentPlayerTime
+              if @commandinputStartPlayerTime
                 # TODO 1gzTHg: take input to choose a note
-                noteIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
+                noteIndex = getNoteIndexAtTime @currentTrack[noteType], @commandinputStartPlayerTime
                 if noteIndex > -1
                   @currentTrack[noteType].delete_at noteIndex
                   writeLibraryToFile
@@ -723,8 +723,8 @@ module Tunewich
             end
 
             if chosenOption == 'skip'
-              if @currentPlayerTime
-                noteIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
+              if @commandinputStartPlayerTime
+                noteIndex = getNoteIndexAtTime @currentTrack[noteType], @commandinputStartPlayerTime
                 if noteIndex > -1
                   @currentTrack[noteType][noteIndex]['skip'] = true
                   writeLibraryToFile
@@ -783,16 +783,10 @@ module Tunewich
                   heading = "#{[guessChapterTexts.length, 10].min}/#{guessChapterTexts.length} #{noteType}"
                   putsRealtime "\n#{heading}\n================\n#{guessChapterTexts.slice(0, 10).join("\n")}"
                 end
-              else
-                if !inputParts[:option] || inputParts[:option].length == 0
-                  input = "go #{input}"
-                end
-
+              elsif inputParts[:option] && inputParts[:option].length > 0
                 # TODO 1gzoGh: it'd be nice to put in a space if inputParts[:offset] is given
                 putsRealtime getFormattedNoteList(@currentTrack[noteType], @currentNoteIndex[noteType], "# ^ current").join("\n")
               end
-            else
-              putsRealtime "No #{noteType} on the current track."
             end
 
             input
