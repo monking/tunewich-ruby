@@ -1014,7 +1014,9 @@ module Tunewich
 		##
 
 		def getYoutubeIdFromUrl url
-			url.sub(/^.*v=/, '')
+      youtubeIdPattern = /^.*youtu(\.be\/|be\.com.*v=)([^&\/]+)/
+			matches = url.match(youtubeIdPattern)
+      matches ? matches[1] : false
 		end
 
 		def searchYouTube query, offset = 0, count = 20
@@ -1023,20 +1025,20 @@ module Tunewich
 			page = (offset.to_f / resultsPerPage.to_f).to_i + 1
 			queryParameter = URI::encode(query)
 			queryUrl="https://www.youtube.com/results?search_query=#{queryParameter}&page=#{page}"
-			getYoutubeIdFromUrl queryUrl
+			getYouTubeTracksFromPage queryUrl
 		end
 
 		def getYouTubeTracksFromPage url
 			queryResultIds = []
 			open(url) do |handle|
-				html = []
-				handle.each_line { |line| html << line }
+        html = []
+        handle.each_line { |line| html << line }
 
-				queryResultIds = html.grep(/href="\/watch/).map! do |line|
-					line.sub!(/^.*watch\?v=([^\"&<]+).*\n/, '\1')
-				end
+        queryResultIds = html.grep(/href="\/watch/).map! do |line|
+          line.sub!(/^.*watch\?v=([^\"&<]+).*\n/, '\1')
+        end
 
-				queryResultIds.uniq!
+        queryResultIds.uniq!
 			end
 
 			threads = []
@@ -1088,10 +1090,19 @@ module Tunewich
 
 			parser = OptionParser.new
 
-			parser.on("-a", "--add-track YOUTUBE_URLS", "Add tracks to the library, and to a playlist, if specified. Takes a comma-separated list of YouTube URLs or IDs", " ") do |urls|
+      parser.on("-a", "--add-track YOUTUBE_URLS", "Add tracks to the library, and to a playlist, if specified. Takes a comma-separated list of YouTube URLs or IDs.", " ") do |urls|
 				output[:newTracks] = []
 				urls.split(',').each { |url|
-					output[:newTracks] << createTrack(getYoutubeIdFromUrl url)
+          youtubeId = getYoutubeIdFromUrl url
+
+          if youtubeId
+            output[:newTracks] << updateTrackInfo(createTrack(youtubeId))
+            puts "This URL contains a YouTube ID. Adding."
+          end
+
+          if confirm "Look for all tracks on this page?"
+            output[:newTracks].concat getYouTubeTracksFromPage url
+          end
 				}
 			end
 
@@ -1210,7 +1221,6 @@ module Tunewich
 
 			if options.has_key? :newTracks
 				options[:newTracks].each { |newTrack|
-					newTrack = updateTrackInfo newTrack if !@noNetwork
 					trackReference = addTrackToLibrary newTrack
 					addTrackReferenceToPlaylist trackReference, @playlistName if @playlistName
 				}
