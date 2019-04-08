@@ -68,7 +68,9 @@ module Tunewich
 			@networkEnabled = true
 			@playlistName = nil
 			@volume = 25 # volume stored as state (the "intended" volume)
-			@actualVolume = 25 # actual volume heard (change during fading, or changing track loudness)
+			@currentVolume = 25 # actual volume heard (change during fading, or changing track loudness)
+			@currentSpeed = 1
+			@currentBrightness = 0
 			@volumeMultipliers = {}
 			@bpmGlideDuration = 0
 			@bpmGlideDelay = 0
@@ -155,7 +157,7 @@ module Tunewich
 
 			@volume = getMplayerConfigNumericProperty('volume')
 			whisper("@volume: #{@volume}", 3)
-			@actualVolume = @volume
+			@currentVolume = @volume
 			trigger 'volume_change'
 			@speed = getMplayerConfigNumericProperty('speed', 1.0)
 			whisper("@speed: #{@speed}", 3)
@@ -1075,7 +1077,7 @@ module Tunewich
 								outputMessageLines << "      link : #{info['link']}" if info
 
 								outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
-								outputMessageLines << "    volume : #{@actualVolume}/100" if track == @currentTrack
+								outputMessageLines << "    volume : #{@currentVolume}/100" if track == @currentTrack
 
 								if @configuredVerbosity > 1 && tagNames.length > 0
 									whisper("about to loop through tagNames", 4)
@@ -1169,7 +1171,7 @@ module Tunewich
 							elsif shouldShowStatus
 								command['showStatus'].call
 							else
-								if trackFileExists? track
+								if !@forceStreaming && trackFileExists?(track)
 									putsRealtime "This file is already downloaded."
 								else
 									disablePlaybackInfo
@@ -1929,22 +1931,19 @@ module Tunewich
 						'description' => '/fade VOLUME [DURATION]; VOLUME can be "out" or "in", which will fade from or to the last explicit volume set.',
 						'args' => ['out', 'in'],
 						'action' => Proc.new { |input, command|
-							output = nil
-							fadeCommandMatch = /^(out|in|[0-9.]+x?)( [0-9.]+)?[^\/]*(.*)$/.match input
-							if fadeCommandMatch
-								output = {:chainedInput => fadeCommandMatch[3]}
-								whisper("fade command", 4)
-								fadeDuration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 2.0
-								targetFadeVolume = fadeCommandMatch[1]
-								if output[:chainedInput] && output[:chainedInput].length > 0
-									whisper("fade in main thread", 4)
+							inputParts = getCommandInputParts input, /^(?<target>out|in|[0-9.]+x?)( (?<duration>[0-9.]+))?[^\/]*(?<remainder>.*)$/
+							output = {:chainedInput => inputParts[:remainder]}
+							whisper("fade command", 4)
+							fadeDuration = inputParts[:duration] && inputParts[:duration].length > 0 ? inputParts[:duration].to_f : 2.0
+							targetFadeVolume = inputParts[:target]
+							if output[:chainedInput] && output[:chainedInput].length > 0
+								whisper("fade in main thread", 4)
+								fadeVolume targetFadeVolume, fadeDuration, @currentPlayerIndex
+							else
+								whisper("fade in separate thread", 4)
+								Thread.new {
 									fadeVolume targetFadeVolume, fadeDuration, @currentPlayerIndex
-								else
-									whisper("fade in separate thread", 4)
-									Thread.new {
-										fadeVolume targetFadeVolume, fadeDuration, @currentPlayerIndex
-									}
-								end
+								}
 							end
 							output
 						}
@@ -1953,14 +1952,14 @@ module Tunewich
 						'description' => '/ramp SPEED [DURATION] - Ramp speed',
 						'action' => Proc.new { |input, command|
 							output = nil
-							rampCommandMatch = /^(out|in|[0-9.]*(bpm)?)( [0-9:.]+)?[^\/]*(.*)$/.match input
-							#                    1              2      3                4
-							if rampCommandMatch
-								output = {:chainedInput => rampCommandMatch[4]}
-								rampDuration = rampCommandMatch[3] && rampCommandMatch[3].length > 0 ? rampCommandMatch[3].to_f : 0.3
+							rampInputPattern = /^(?<target>out|in|[0-9.]*(?<bpm>bpm)?)( (?<duration>[0-9:.]+))?[^\/]*(?<remainder>.*)$/
+							inputParts = getCommandInputParts input, rampInputPattern
+							if inputParts
+								output = {:chainedInput => inputParts[:remainder]}
+								rampDuration = inputParts[:duration] && inputParts[:duration].length > 0 ? inputParts[:duration].to_f : 0.3
 								whisper('without -af scaletempo[=speed=tempo], min and max limited by the system (~1/8 and ~4.5 on my Mac Mini)', 1)
-								targetRampSpeed = rampCommandMatch[1]
-								if rampCommandMatch[1] == 'bpm'
+								targetRampSpeed = inputParts[:target]
+								if inputParts[:bpm] == 'bpm'
 									targetRampBPM = getUserInputBPM
 									if targetRampBPM && targetRampBPM > 0
 										targetRampSpeed = "#{targetRampBPM}bpm"
@@ -1970,7 +1969,7 @@ module Tunewich
 								end
 								if targetRampSpeed
 									targetRampSpeed = determineRelativeSpeed targetRampSpeed, @currentTrack, true
-									if rampCommandMatch[4] && rampCommandMatch[4].length > 0
+									if output[:chainedInput] && output[:chainedInput].length > 0
 										whisper("ramping speed in the main thread", 4)
 										rampSpeed targetRampSpeed, rampDuration, @currentPlayerIndex
 										whisper("Waiting 1 second for buffered sound to play", 2)
@@ -1984,6 +1983,39 @@ module Tunewich
 								end
 							end
 							output
+						}
+					},
+					'brightness' => {
+						'description' => 'BRIGHTNESS [DURATION] - Blend to brightness',
+						'args' => ['out', 'in'],
+						'action' => Proc.new { |input, command|
+							inputParts = getCommandInputParts input, /^(?<target>out|in|[0-9.-]+)( (?<duration>[0-9.]+))?[^\/]*(?<remainder>.*)$/
+							if inputParts[:target]
+								targetBrightness = @currentBrightness
+								case inputParts[:target]
+								when 'out'
+									targetBrightness = -100
+								when 'in'
+									targetBrightness = 0 # normal brightness
+								else
+									targetBrightness = inputParts[:target].to_f
+									whisper("turning '#{inputParts[:target]}' to  '#{targetBrightness}'", 3)
+								end
+							end
+
+							duration = inputParts[:duration] && inputParts[:duration].length > 0 && getSecondsFromDurationString(inputParts[:duration]) || 1
+
+							tween(
+								@currentBrightness,
+								targetBrightness,
+								duration,
+								Proc.new { |x|
+									sendPlayerCommand "brightness #{x} 1"
+									@currentBrightness = x
+								}
+							)
+
+							{:chainedInput => inputParts[:remainder]}
 						}
 					},
 					'glide' => {
@@ -2275,14 +2307,49 @@ module Tunewich
 
 		def setActualVolume newVolume
 			@volume = newVolume
-			@actualVolume = getMultipliedVolume newVolume
-			sendPlayerCommand "volume #{@actualVolume} 1", @currentPlayerIndex
+			@currentVolume = getMultipliedVolume newVolume
+			sendPlayerCommand "volume #{@currentVolume} 1", @currentPlayerIndex
+		end
+
+		def tween a, b, duration, onStep, interval = 0.02, curve = 'linear'
+			whisper("tween from #{a} to #{b}", 3)
+			interval = 0.02
+			stepCount = (duration.to_f / interval).to_i
+			transitionValue = a
+			span = b - a
+			floor = [a, b].min
+
+			if span != 0
+				case curve
+				when 'logarithmic'
+					stepStrategy = Proc.new { |stepIndex|
+						transitionValue = floor + 10**(Math.log10(span.abs + 1) / stepCount * stepIndex) - 1
+					}
+				else
+					stepStrategy = Proc.new { |stepIndex|
+						transitionValue = floor + span.abs * (stepIndex.to_f / stepCount)
+					}
+				end
+
+				step = Proc.new { |stepIndex|
+					stepStrategy.call(stepIndex)
+					onStep.call(transitionValue, false)
+					sleep interval
+				}
+				if span > 0
+					1.upto(stepCount - 1) { |stepIndex| step.call stepIndex }
+				else
+					(stepCount - 1).downto(1) { |stepIndex| step.call stepIndex }
+				end
+			end
+
+			onStep.call(b, true)
 		end
 
 		def fadeVolume targetFadeVolume, duration, playerIndex
 			whisper("fadeVolume(targetFadeVolume:#{targetFadeVolume}, duration:#{duration}, playerIndex:#{playerIndex})", 4)
 			# @volumeMultipliers['fade'] ||= 1 # TODO 1gzQHH: I haven't worked this out yet
-			transitionVolume = @actualVolume
+			transitionVolume = @currentVolume
 			if targetFadeVolume == 'out'
 				whisper("fading out volume", 4)
 				targetFadeVolume = 0
@@ -2301,38 +2368,19 @@ module Tunewich
 			end
 			targetFadeVolume = [[targetFadeVolume, 0].max, 100].min
 			whisper("fading from #{transitionVolume} to #{targetFadeVolume} in #{duration} seconds (playerIndex: #{playerIndex})", 4)
-			volumeFadeInterval = 0.02
-			volumeFadeStepCount = (duration.to_f / volumeFadeInterval).to_i
-			volumeSpan = targetFadeVolume - transitionVolume
-			lowerVolume = [transitionVolume, targetFadeVolume].min
-			if volumeSpan != 0
-				if @isVolumeAlreadyLogarithmic
-					volumeStepStrategy = Proc.new { |stepIndex|
-						transitionVolume = lowerVolume + volumeSpan.abs * (stepIndex.to_f / volumeFadeStepCount)
-					}
-				else
-					volumeStepStrategy = Proc.new { |stepIndex|
-						transitionVolume = lowerVolume + 10**(Math.log10(volumeSpan.abs + 1) / volumeFadeStepCount * stepIndex) - 1
-					}
-				end
-				stepFade = Proc.new { |stepIndex|
-					volumeStepStrategy.call(stepIndex)
-					sendPlayerCommand "volume #{transitionVolume} 1", playerIndex
-					@actualVolume = transitionVolume
+			curve = @isVolumeAlreadyLogarithmic ? 'linear' : 'logarithmic'
+			tween(
+				transitionVolume,
+				targetFadeVolume,
+				duration,
+				Proc.new { |iVolume|
+					sendPlayerCommand "volume #{iVolume} 1", playerIndex
+					@currentVolume = iVolume
 					trigger 'volume_change'
-					sleep volumeFadeInterval
-				}
-				if volumeSpan > 0
-					1.upto(volumeFadeStepCount - 1) { |stepIndex| stepFade.call stepIndex }
-				else
-					(volumeFadeStepCount - 1).downto(1) { |stepIndex| stepFade.call stepIndex }
-				end
-				sendPlayerCommand "volume #{targetFadeVolume} 1", playerIndex
-				@actualVolume = targetFadeVolume
-				trigger 'volume_change'
-			else
-				whisper("fading to the same volume: doing nothing", 4)
-			end
+				},
+				0.02,
+				curve
+			)
 
 			trigger 'fade_end'
 		end
@@ -2352,21 +2400,18 @@ module Tunewich
 					@speed = targetRampSpeed
 					# does this work? # @speed = targetRampSpeed.to_f!
 				end
-				speedRampInterval = 0.02
-				speedRampStepCount = duration / speedRampInterval
-				speedStep = (targetRampSpeed - transitionSpeed) / duration * speedRampInterval
-				whisper("about to ramp speed by #{speedStep} every #{speedRampInterval} seconds", 3)
-				for stepIndex in 1..speedRampStepCount
-					whisper("rampSpeed: step #{stepIndex} of #{speedRampStepCount}", 4)
-					transitionSpeed += speedStep
-					sendPlayerCommand "speed_set #{transitionSpeed}", playerIndex
-					@currentSpeed = transitionSpeed
-					trigger 'speed_change'
-					sleep speedRampInterval
-				end
-				sendPlayerCommand "speed_set #{targetRampSpeed}", playerIndex
-				@currentSpeed = targetRampSpeed
-				trigger 'speed_change'
+
+				tween(
+					transitionSpeed,
+					targetRampSpeed,
+					duration,
+					Proc.new { |iSpeed|
+						sendPlayerCommand "speed_set #{iSpeed}", playerIndex
+						@currentSpeed = iSpeed
+						trigger 'speed_change'
+					}
+				)
+
 				isValidInput = true
 			else
 				putsRealtime "Bad speed format, or track has no bpm set."
@@ -2650,8 +2695,8 @@ module Tunewich
 			# end
 			# 
 			# newVolume = getMultipliedVolume @volume
-			# if @actualVolume != newVolume
-			# 	@actualVolume = newVolume # they may differ, but at this point, only @volume matters
+			# if @currentVolume != newVolume
+			# 	@currentVolume = newVolume # they may differ, but at this point, only @volume matters
 			# 	trigger 'volume_change'
 			# end
 
@@ -2832,7 +2877,7 @@ module Tunewich
 				playbackInfo << "#{@shuffle ? unicodeChars[:crossArrows] : unicodeChars[:parallelArrows]}"
 
 				# show volume
-				volumeIndication = "█" * (@actualVolume / 10).to_i + ["", "▁", "▂", "▃", "▄", "▅", "▆", "▇"][(@actualVolume % 10 / 1.25).to_i]
+				volumeIndication = "█" * (@currentVolume / 10).to_i + ["", "▁", "▂", "▃", "▄", "▅", "▆", "▇"][(@currentVolume % 10 / 1.25).to_i]
 				volumeIndication = "[#{volumeIndication}#{" " * (10 - volumeIndication.length)}]"
 				playbackInfo << "#{unicodeChars[:speaker]} #{volumeIndication}"
 
@@ -3252,6 +3297,7 @@ module Tunewich
 						@library['x.hosts'][$hostname]['downloaded'] ||= []
 						@library['x.hosts'][$hostname]['downloaded'] << track['id']
 						writeLibraryToFile
+						whisper("download complete", 3)
 						trigger 'download_success', track
 					else
 						trigger 'download_fail', track
@@ -4054,7 +4100,7 @@ module Tunewich
 			seconds = nil
 			timecodeRegExpPattern = /^[0-9:.]+$/
 
-			if durationString && durationString.length > 0 && durationString.match(timecodeRegExpPattern)
+			if durationString && durationString.kind_of?(String) && durationString.length > 0 && durationString.match(timecodeRegExpPattern)
 				seconds = 0
 				factor = 1
 				factors = [1,60,60,24]
