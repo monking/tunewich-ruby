@@ -172,6 +172,7 @@ module Tunewich
 		end
 
 		def togglePlay
+			whisper("before togglePlay, @isPlayerPlaying: #{@isPlayerPlaying}", 2)
 			sendPlayerCommand @isPlayerPlaying ? 'pause' : 'play'
 		end
 
@@ -775,8 +776,8 @@ module Tunewich
 						'description' => 'Edit playing tracklist in Vim.',
 						'action' => Proc.new { |input|
 							editedTrackList = editTrackList @tracks
-							# writeTitleChangesInTrackList editedTrackList # TODO 1gSlF1
-							writeLibraryToFile
+							# writeTitleChangesInTrackList editedTrackList # TODO 1gSlF1: Do this only if the list being edited is not already the canonical library track list, in which case we cannot determine if there was a change
+							# writeLibraryToFile # TODO 1gSlF1
 							useTracks editedTrackList, false
 							putsRealtime "#{@tracks.length} tracks selected"
 							{:chainedInput => input}
@@ -1120,6 +1121,10 @@ module Tunewich
 						'action' => Proc.new { |input|
 							# TODO 1gzTHg: take input to choose a chapter
 							inputParts = input.match(/^([^\/]*)(.*)$/)
+
+							loadLibrary
+							@currentTrack = matchExistingLibraryTrack @currentTrack
+
 							chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
 							if chapterIndex > -1
 								@currentTrack['chapters'].delete_at chapterIndex
@@ -1136,6 +1141,9 @@ module Tunewich
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							chapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
 							if chapterIndex > -1
+								loadLibrary
+								@currentTrack = matchExistingLibraryTrack @currentTrack
+
 								@currentTrack['chapters'][chapterIndex]['skip'] = true
 								writeLibraryToFile
 								seekToNextPlayableChapterOrSkip @currentTrack['chapters'], @currentChapterIndex
@@ -1148,6 +1156,10 @@ module Tunewich
 						'description' => "Edit all the chapters for the current track (using vim).",
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
+
+							loadLibrary
+							@currentTrack = matchExistingLibraryTrack @currentTrack
+
 							chapters = editChapters(@currentTrack['chapters'] || [], @currentChapterIndex)
 							if chapters && chapters.length > 0
 								@currentTrack['chapters'] = sortChapters chapters
@@ -1483,6 +1495,7 @@ module Tunewich
 					},
 					'eq' => {
 						'description' => 'Set EQ, or save a new preset (/eq [PRESET | save NEW_NAME]). If no preset is given, a list of presets is shown, along with an interactive EQ display, which can by changed using the arrow keys.',
+						'args' => ['save'],
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							loadLibrary
@@ -1508,8 +1521,7 @@ module Tunewich
 										@eqPreset = chosenEQPreset
 										@eqSetting = @library['player']['equalizer_presets'][chosenEQPreset]
 										is_success = true
-										# FIXME 1gpapK: can I target `af_clr` at _just_ `equalizer`? I don't want to also remove scaletempo, for instance
-										sendPlayerCommand "af_clr\naf_add equalizer=#{@eqSetting}"
+										sendPlayerCommand "af_del equalizer\naf_add equalizer=#{@eqSetting}"
 									else
 										putsRealtime "Unknown preset '#{input}'."
 									end
@@ -1578,12 +1590,13 @@ module Tunewich
 							end
 							{:chainedInput => inputParts[2]}
 						},
-						'tabComplete' => Proc.new { |input|
+						'tabComplete' => Proc.new { |input, command|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							presetNames = @library['player']['equalizer_presets'].keys
+							options = command['args'] + presetNames
 
 							if inputParts[1] && inputParts[1].length > 0
-								presetGuess = firstFuzzyMatchValue(inputParts[1], presetNames)
+								presetGuess = firstFuzzyMatchValue(inputParts[1], options)
 								if presetGuess && presetGuess.length > 0
 									input = input.sub!(inputParts[1], presetGuess)
 								end
@@ -1673,8 +1686,10 @@ module Tunewich
 						'description' => 'Mark the point at which to play this track next time. Pass any argument to remove an existing mark',
 						'action' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
+
 							loadLibrary
 							@currentTrack = matchExistingLibraryTrack @currentTrack
+
 							if inputParts[1] && inputParts[1].length > 0
 								removeMarkFromTrack @currentTrack
 							else
@@ -1758,6 +1773,7 @@ module Tunewich
 							if loudness > 0.0
 								loadLibrary
 								@currentTrack = matchExistingLibraryTrack @currentTrack
+
 								@currentTrack['loudness'] = loudness
 								@volumeMultipliers['track_loudness'] = loudness
 								writeLibraryToFile
@@ -1772,7 +1788,7 @@ module Tunewich
 							if !@trackIndex
 								useTracks [@currentTrack]
 								@trackIndex = @tracks.length - 1
-								# TODO: 1gG4iz
+								# TODO 1gG4iz: add @currentTrack to queue
 							end
 							{:chainedInput => input}
 						}
@@ -2233,6 +2249,7 @@ module Tunewich
 			playerStdoutName = "#{Player::MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
 			playerStdoutFile = getTempFilePath playerStdoutName
 
+			# https://mplayerhq.hu/DOCS/tech/slave.txt
 			playerStartupOptions = ["-slave -quiet -input file=#{playerInputFile}"]
 			playerStatus = nil
 			playerAction = Proc.new { |command|
@@ -2257,8 +2274,10 @@ module Tunewich
 				puts("Starting from mark at #{track['mark']}.", 0)
 				offsetSeconds = getSecondsFromDurationString track['mark']
 				playerStartupOptions << "-ss #{offsetSeconds}"
+
 				loadLibrary
 				editingTrack = matchExistingLibraryTrack track
+
 				removeMarkFromTrack editingTrack
 				writeLibraryToFile
 			elsif firstPlayableChapterIndex && firstPlayableChapterIndex > 0
@@ -2886,6 +2905,7 @@ module Tunewich
 					downloadPid = system(downloadCommand) # system: blocking
 					if trackFileExists? track
 						loadLibrary
+						# TODO 1h1dBF: remove from this list when doing `rmfile`
 						@library['x.hosts'][$hostname] ||= {'hostname' => ENV['HOSTNAME']}
 						@library['x.hosts'][$hostname]['downloaded'] ||= []
 						@library['x.hosts'][$hostname]['downloaded'] << track['id']
@@ -3097,7 +3117,6 @@ module Tunewich
 			end
 		end
 
-		# TODO: 1gG4jL
 		def writeLibraryToFile shouldPrompt = false
 			if shouldPrompt && !@writeEnabled
 				return if !confirm("Write changes to library?")
@@ -3240,7 +3259,7 @@ module Tunewich
 			if filters.has_key? 'tag'
 				if filters['tag']
 					whisper("filtering tracks with the tag filter #{filters['tag']}", 3)
-					# TODO: 1gG4jN
+					# TODO: 1gG4jN: @enhancement optionally grow tag set by linking through tracks with explicitly chosen tags
 					selectedTags = []
 					unionTagTracks = []
 					filterTags = filters['tag'].split(' ')
@@ -3774,14 +3793,8 @@ module Tunewich
 			end
 
 			parser.on("-o OPTIONS", "--player-opts OPTIONS", "Set player options. Set interactively with the /player command. You can also add mplayer options in #{$serviceConfigDir}/mplayer.options (You can find a starting copy in the 'config' directory that came with tunewich). --player-opts will override those options.", " ") do |options|
-				# TODO: 1gG4jU
-				isFirstElement = true
-				@playerOverrideCommands += options.split(' -').map { |option|
-					if isFirstElement
-						isFirstElement = false
-					else
-						option = "-#{option}"
-					end
+				@playerOverrideCommands += options.split(' -').map.with_index { |option, index|
+					option = "-#{option}" if index > 0
 					option
 				}
 			end
@@ -3900,7 +3913,7 @@ module Tunewich
 			end
 
 			# parser.on("-S SESSION", "--session SESSION", "Load a session: a set of most options, like filters, track list. Pass no value in order to see a list of sessions available See INTERACTIVE COMMANDS for info on saving a session during playback.", " ") do
-			# 	# TODO 1gTpuh
+			# 	# TODO 1gTpuh: implement named sessions
 			# end
 
 			parser.on("-t", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).", " ") do |trackQuery|
@@ -4376,7 +4389,15 @@ module Tunewich
 					end
 				end
 			elsif inputCharacter == "" # stop job
-				Process.kill("STOP", Process.pid) # TODO: 1gG4ko
+				shouldTogglePause = @isPlayerPlaying
+				whisper("before STOP+toggle, shouldTogglePause: #{shouldTogglePause}", 0)
+				togglePlay if shouldTogglePause
+				whisper("before STOP, after toggle, shouldTogglePause: #{shouldTogglePause}", 0)
+				sleep 0.1
+				Process.kill("STOP", Process.pid)
+				# TODO: 1gG4ko: the player usually doesn't unpause :/
+				whisper("after STOP, shouldTogglePause: #{shouldTogglePause}, @isPlayerPlaying: #{@isPlayerPlaying}", 0)
+				togglePlay if shouldTogglePause
 			elsif inputCharacter == "" # clear line
 				if @commandUserInput
 					@commandInputTyped = nil
@@ -4674,7 +4695,7 @@ module Tunewich
 			library
 		end
 
-		def listenForExternalCommands # 1gOsMN
+		def listenForExternalCommands
 			streamName = 'command-queue'
 			shouldListenForExternalCommands = true
 			Thread.new {
