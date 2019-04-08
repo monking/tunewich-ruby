@@ -265,6 +265,7 @@ module Tunewich
 				fileExists = trackFileExists? track
 
 				if !fileExists && @noNetwork
+					nextTrack
 					next
 				end
 
