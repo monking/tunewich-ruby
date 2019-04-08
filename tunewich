@@ -49,6 +49,7 @@ module Tunewich
 			@playlistName = nil
 			@volume = 25
 			@enableDownload = false
+			@preferredFileFormat = 'm4a'
 			@keepUnattachedDownload = false
 
 			getEnvironmentConfig
@@ -615,7 +616,7 @@ module Tunewich
 			}
 			mplayerThread = Thread.new {
 				mplayerCommand = "#{Player::PLAYER_APPLICATION} \"#{mediaFilePath}\" #{mplayerStartupOptions.join ' '} &> #{mplayerStdoutFile}"
-				mplayerStatus = system mplayerCommand
+				mplayerStatus = `#{mplayerCommand}`
 				whisper "mplayer is finished. killing user input thread"
 				inputThread.kill if inputThread
 			}
@@ -832,8 +833,7 @@ module Tunewich
 		end
 
 		def downloadTrack(track, streamPath = nil)
-			# FIXME: this never seems to work anymore
-			youtubeDlCommandBegin = "youtube-dl -f bestaudio --no-part"
+      youtubeDlCommandBegin = "youtube-dl -f #{@preferredFileFormat} --no-part"
 			youtubeDlCommandEnd = "-- #{track['src']}"
 
 			downloadPid = nil
@@ -1605,6 +1605,10 @@ module Tunewich
 
 			parser.on("--no-network", "Don't fetch any information or media from the internet. Use only local files.", " ") do
 				@noNetwork = true
+			end
+
+      parser.on("--format FORMAT", "Set the file format to request for streaming or downloading.", " ") do |format|
+				@preferredFileFormat = format
 			end
 
 			parser.on("--update-track-info", "Fetch updated track information for every track played.", " ") do
