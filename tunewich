@@ -340,7 +340,7 @@ module Tunewich
 				mplayerCommands.push("-loop 0") if track['loop'] or @loop
 			end
 
-			mplayerCommands.push("-novideo")
+			mplayerCommands += ["-novideo", "-af scaletempo"]
 			mplayerCommands += @mplayerOverrideCommands
 
 			mplayerStartTime = Time.now.to_f
