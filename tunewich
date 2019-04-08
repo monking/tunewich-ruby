@@ -3662,7 +3662,7 @@ module Tunewich
 		def getDurationStringFromSeconds inputSeconds, roundDigits = 2
 			inputSeconds = inputSeconds.to_f
 			wholeSeconds = inputSeconds.to_i
-			seconds = (inputSeconds % 60).truncate(roundDigits)
+			seconds = (inputSeconds % 60).round(roundDigits)
 			minutes = wholeSeconds / 60 % 60
 			hours = wholeSeconds / 3600 % 24
 			days = wholeSeconds / 86400
