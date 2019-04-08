@@ -1384,15 +1384,38 @@ module Tunewich
           },
           'add' => {
             'description' => '[all] <URL>[,<URL>,...] [<TAG>[,<TAG>,...]] - Add a new track to the play queue. URLs: comma-separated URLs or YouTube IDs (Some URLs will add multiple tracks, like a bandcamp album (or TODO: YouTube playliist); tags: comma-separated tags to add to the tracks.',
-            'args' => ['all'],
+            'args' => ['all', 'list'],
             'action' => Proc.new { |input, command|
-              inputParts = getCommandInputParts(input, /^((?<all>all) *)?(?<query>[^ ]*?)(?<tags> .*?)?(?<remainder> \/.*)?$/)
+              inputParts = getCommandInputParts(input, /^((?<option>(all|list)) *)?(?<query>[^ ]*?)(?<tags> .*?)?(?<remainder> \/.*)?$/)
               urls = inputParts[:query].split ',' if inputParts[:query]
               tags = inputParts[:tags].split ',' if inputParts[:tags]
-              getAllVideos = (inputParts[:all] && inputParts[:all] == 'all')
+              getAllVideos = (inputParts[:option] && inputParts[:option].length > 0)
+              saveAsList = (getAllVideos && inputParts[:option] == 'list')
               whisper("urls: #{urls}\ntags: #{tags}", 3)
               if urls && urls.length > 0
                 tracks = getTracksFromURLs urls, getAllVideos
+                if saveAsList
+                  playlistHTMLTitle = `curl -sL "#{urls[0]}" | grep '<title>'`
+                  playlistName = playlistHTMLTitle.sub(/.*<title>(.*?)( - YouTube)?<\/title>.*/, '\1').chomp if playlistHTMLTitle && playlistHTMLTitle.kind_of?(String)
+
+                  # if !playlistName || playlistName.length == 0
+                  #   prompt "Please give this playlist a name" # TODO: simple text prompt, wrapping commandPrompt
+                  # end
+
+                  if playlistName && playlistName.length > 0
+                    loadLibrary
+                    putsRealtime "Using title: '#{playlistName}'"
+                    @library['playlists'] ||= {}
+                    newPlaylist = {
+                      'tracks' => tracks.map { |t| t['id'] },
+                    }
+                    newPlaylist['src'] = urls[0] if urls.length == 1
+                    @library['playlists'][playlistName] = newPlaylist
+                    writeLibraryToFile
+                  else
+                    putsRealtime "Unable to add list without a name"
+                  end
+                end
                 putsRealtime "Adding #{tracks.length} tracks to queue. Playing next."
                 if tracks.length && tags && tags.length > 0
                   tracks.each { |t|
@@ -1545,15 +1568,23 @@ module Tunewich
             }
           },
           'format' => {
-            'description' => 'Choose the file format to download/stream (e.g. "mp4"; default "m4a").',
+            'description' => '[get]: Choose the file format to download/stream, or list available formats (e.g. "mp4"; default "m4a").',
             'showStatus' => Proc.new {
               putsRealtime "preferred file format: #{@preferredFileFormat}"
             },
-            'args' => ['m4a', 'mp4', 'bestaudio', 'bestvideo', '[height=720]'],
+            'args' => ['get', 'm4a', 'mp4', 'bestaudio', 'bestvideo', '[height=720]'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
               if inputParts[:query].length > 0
-                @preferredFileFormat = inputParts[:query].chomp
+                if inputParts[:query] == 'get'
+                  if @currentTrack && @currentTrack['type'] == 'youtube'
+                    putsRealtime "\n" + `youtube-dl --list-formats -- "#{@currentTrack['id']}"`
+                  else
+                    putsRealtime "Currently only able to list available formats from YouTube media."
+                  end
+                else
+                  @preferredFileFormat = inputParts[:query].chomp
+                end
               else
                 command['showStatus'].call
               end
@@ -3486,12 +3517,13 @@ module Tunewich
     ##
 
     def usePlaylist(name, append = false)
-      @playlistName = name
       tracks = []
 
-      if @library['playlists'][@playlistName]['tracks']
+      if @library['playlists'][name]['tracks']
+        @playlistName = name
         @library['playlists'][@playlistName]['tracks'].each do |trackReference|
-          tracks << @library['tracks'][trackReference]
+          track = @library['tracks'][trackReference]
+          tracks << track if track
         end
       end
 
@@ -4503,7 +4535,7 @@ module Tunewich
             urlCanBeScraped = false
             podcastTracks = loadPodcast url
             tracks += podcastTracks if podcastTracks
-          else
+          elsif urlContentType.match(/^audio\//)
             urlCanBeScraped = false
             whisper("assuming that URL is an audio file. Adding as a track", 3)
             track = createTrack(url, urlContentType)
