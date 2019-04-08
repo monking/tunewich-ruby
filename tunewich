@@ -8,6 +8,9 @@ require "json"
 
 module Tunewich
 	class Player
+
+		PLAY_END_OK = 'play_end_ok'
+
 		def initialize
 
 			@sessionID = Random.rand(1024)
@@ -59,8 +62,10 @@ module Tunewich
 			playbackSuccessful = true
 			while playbackSuccessful do
 				break if not @tracks[@trackIndex]
-				playbackSuccessful = play @tracks[@trackIndex]
-				nextTrack()
+
+				chapterIndex = @tracks[@trackIndex]['chapters'] ? promptForChapterIndex(@tracks[@trackIndex]['chapters']) : nil
+				playbackSuccessful = play @tracks[@trackIndex], chapterIndex
+				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
 			end
 		end
 
@@ -177,22 +182,24 @@ module Tunewich
 		end
 
 		def promptForChapterIndex chapters
+			selectedChapterIndex = nil
+
 			chapterList = chapters.map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
 			puts "Please choose a chapter (leave blank to play first):\n  #{chapterList.join "\n  "}"
-			selectedChapter = nil
-			while not selectedChapter do
+
+			while not selectedChapterIndex do
 				chapterQuery = STDIN.gets.chomp
-				if not chapterQuery or chapterQuery.length === 0
-					selectedChapterIndex = 0
-					break
-				end
+				break if not chapterQuery or chapterQuery.length === 0
+
 				selectedChapter = firstFuzzyMatch chapterQuery, chapterList
+
 				if selectedChapter
 					selectedChapterIndex = selectedChapter[:index]
 					break
 				else
-					puts "No matches. Try again"
+					puts "No matches. Try again."
 				end
+
 			end
 
 			selectedChapterIndex
@@ -278,7 +285,7 @@ module Tunewich
 			@trackIndex = Random.rand(@tracks.length - 1)
 		end
 
-		def play(track)
+		def play(track, chapterIndex)
 			if track['get_info']
 				track.delete 'get_info'
 				puts "Getting track title and description. This may take a moment."
@@ -292,7 +299,23 @@ module Tunewich
 			fileExists = fileExistsFromID? track['src']
 			streaming = !fileExists && !@enableDownload
 
-			if track['loop'].kind_of?(Array)
+			if track['chapters']
+				if chapterIndex
+					if not streaming
+						titleBlock "Chapter: #{track['chapters'][chapterIndex]['name']}"
+						offsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex]['time']
+						mplayerCommands.push("-ss #{offsetSeconds}")
+						if chapterIndex < track['chapters'].length - 1
+							nextTrackoffsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex + 1]['time']
+							mplayerCommands.push("-endpos #{nextTrackoffsetSeconds - offsetSeconds}")
+						end
+					else
+						titleBlock "This track has chapters, but seeking backward is not supported while streaming. Add the -d option to enable downloading."
+					end
+				else
+					titleBlock "Playing all chapters in track"
+				end
+			elsif track['loop'].kind_of?(Array)
 				if not streaming
 					duration = track['loop'][1] - track['loop'][0]
 
@@ -304,20 +327,6 @@ module Tunewich
 					mplayerCommands.push("-endpos #{duration}")
 				else
 					titleBlock "This track has an A/B loop, but looping is not supported while streaming. Add the -d option to enable downloading."
-				end
-			elsif track['chapters']
-				if not streaming
-					chapterIndex = promptForChapterIndex track['chapters']
-					titleBlock "Chapter: #{track['chapters'][chapterIndex]['name']}"
-
-					offsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex]['time']
-					mplayerCommands.push("-ss #{offsetSeconds}")
-					if chapterIndex < track['chapters'].length - 1
-						nextTrackoffsetSeconds = getSecondsFromDurationString track['chapters'][chapterIndex + 1]['time']
-						mplayerCommands.push("-endpos #{nextTrackoffsetSeconds - offsetSeconds}")
-					end
-				else
-					titleBlock "This track has chapters, but seeking backward is not supported while streaming. Add the -d option to enable downloading."
 				end
 			end
 
