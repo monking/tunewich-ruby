@@ -53,7 +53,7 @@ module Tunewich
 			@currentTrack = nil
 			@currentChapterIndex = nil
 			@currentlySkippingChapter = nil
-			@trackIndex = 0
+			@trackIndex = nil
 			@tracks = []
 			@configuredVerbosity = 0
 			@verbosityBoost = 0
@@ -110,8 +110,14 @@ module Tunewich
 						whisper("A track was marked, but is not in the current queue. It will remain marked until it is played again.", 0)
 					end
 				end
-			elsif @shuffle && @trackIndex == 0 # sorry if set the index to 0 via the -t/--track option
-				shuffleIndex()
+			end
+
+			if not @trackIndex
+				if @shuffle && !@trackIndex
+					shuffleIndex()
+				else
+					@trackIndex = 0
+				end
 			end
 
 			bindOnce 'before_exit', Proc.new {
