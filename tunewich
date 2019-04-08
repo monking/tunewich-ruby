@@ -4153,17 +4153,18 @@ module Tunewich
 				exit
 			end
 
-			parser.on("-l [COUNT]", "--loop [COUNT]", "Loop tracks COUNT times (indefinitely if COUNT is 0 or missing). A track may contain chapters which loop, in which case each loop will be repeated COUNT times.", " ") do |count = 0|
-				@loopLimit = count.to_i
+			parser.on("-l [COUNT]", "--loop [COUNT]", "Loop tracks COUNT times (indefinitely if COUNT is 0 or missing). A track may contain inner loops on chapters or notes, in which case _each loop_ will be repeated COUNT times.", " ") do |count = 0|
 				@loop = true
+				@loopLimit = count.to_i
 			end
 
-			parser.on("--inner-loop", "Only loop internally on tracks with notes/chapters having \"loop targets\" defined.", " ") do
+			parser.on("-L [COUNT]", "--inner-loop [COUNT]", "Only loop internally on tracks with notes/chapters having \"loop targets\" defined.", " ") do |count = 0|
 				@innerLoopsOnly = true
 				@loop = true
+				@loopLimit = count.to_i
 			end
 
-			parser.on("-L FILE", "--log FILE", "Log most verbose output to FILE. This includes events and crosstalk between the script and player", " ") do |logFile|
+			parser.on("--log FILE", "Log most verbose output to FILE. This includes events and crosstalk between the script and player", " ") do |logFile|
 				$logFilePath = logFile
 			end
 
