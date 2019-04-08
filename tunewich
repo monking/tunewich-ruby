@@ -1811,6 +1811,22 @@ module Tunewich
 							@playerOverrideCommands = editListInVim(@playerOverrideCommands, samplePlayerCommands.join("\n"))
 							{:chainedInput => input}
 						}
+					},
+					'mono' => {
+						'description' => 'Toggle downmixing to mono.',
+						'args' => ['status'],
+						'action' => Proc.new { |input|
+							inputParts = input.match(/^([^\/]*)(.*)$/)
+							if inputParts[1] != 'status' # if status, fall though
+								@downmixMono = getToggledValueByInput.call(@downmixMono, inputParts[1])
+								sendPlayerCommand 'af_del pan'
+								sendPlayerCommand 'af_add pan=1:0.5:0.5' if @downmixMono # assuming stereo source
+							end
+
+							putsRealtime "downmix to mono: #{@downmixMono ? 'on' : 'off'}"
+
+							{:chainedInput => inputParts[2]}
+						}
 					}
 				}
 			}
@@ -2358,6 +2374,7 @@ module Tunewich
 			playerStartupOptions += @playerOverrideCommands
 			playerStartupOptions << "-volume #{@volume}"
 			playerStartupOptions << "-speed #{speed}"
+			playerStartupOptions << "-af pan=1:0.5:0.5" if @downmixMono # @experimental Does this wipe out any previous -af, or add to it?
 
 			response[:startTime] = Time.now.to_f
 
