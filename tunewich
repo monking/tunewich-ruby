@@ -844,7 +844,7 @@ module Tunewich
 
 			if not mediaFilePath
 				puts "File not found for #{track['title']}."
-				return false
+				return response
 			end
 
 			if !streamName
