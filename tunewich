@@ -1,7 +1,5 @@
 #!/usr/bin/env ruby
 
-# TODO: catch C-t, or something like it, to pass interactive commands to the script
-
 require "open-uri"
 require "optparse"
 require "json"
@@ -65,10 +63,23 @@ module Tunewich
 			while playbackSuccessful do
 				break if !@trackIndex || !@tracks[@trackIndex]
 
+				if @updateAllPlayedTrackInfo
+					printRepeat "Getting latest track information..."
+					updateTrackInfo @tracks[@trackIndex]
+					writeLibraryToFile
+				end
+
 				titleBlock "[#{@trackIndex + 1}] - #{@tracks[@trackIndex]['title']}"
 
 				chapterIndex = @tracks[@trackIndex]['chapters'] ? promptForChapterIndex(@tracks[@trackIndex]['chapters']) : nil
 
+				# TODO: catch C-t, or something like it, to pass commands to the script during playback
+				#  -: rating down
+				#  +: rating up
+				#  1-5: explicit rating
+				#  t: prompt for tag
+				#  x: remove from library
+				#  d: download
 				playbackSuccessful = play @tracks[@trackIndex], chapterIndex
 
 				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
@@ -89,13 +100,17 @@ module Tunewich
 				writeLibraryToFile
 				exit
 			end
+			parser.on("-c", "--clean", "Enter an interactive cleanup mode, to remove unwanted items from the library.") do
+				interactiveCleanup
+				exit
+			end
 			parser.on("-d", "--enable-download", "Enable downloading files when encountering a playlist file without a cached file already download.") do
 				@enableDownload = true
 			end
 			parser.on("-D", "--keep-download", "Keep the downloaded file. Normally the file will be removed after playback, unless it belongs to a playlist.") do
 				@keepUnattachedDownload = true
 			end
-			parser.on("-f", "--filter RULES", "Filter by rules, in the format 'name=value,name=value'. Available rules are: min-rating=[0-5],title=[query],chapters.") do |rules|
+			parser.on("-f", "--filter RULES", "Filter by rules, in the format 'name=value,name=value'. Available rules are: min-rating=[0-5],title=[query],tag=[tag],chapters.") do |rules|
 				@trackFilters = parseOptionParameters rules
 			end
 			parser.on("-h", "--help", "Show this help.") do
@@ -145,6 +160,9 @@ module Tunewich
 				else
 					@trackIndex = trackQuery
 				end
+			end
+			parser.on("-u", "--update-track-info", "Fetch updated track information for every track played.") do
+				@updateAllPlayedTrackInfo = true
 			end
 			parser.on("-w", "--write-after TIME", "Save tracks to the playlist (from -p or -P) when played for the given number of seconds. Use with -q.") do |time|
 				@playthroughThreshold = time.to_f
@@ -290,7 +308,7 @@ module Tunewich
 		end
 
 		def shuffleIndex
-			@trackIndex = Random.rand(@tracks.length - 1)
+			@trackIndex = Random.rand(@tracks.length - 1) if @tracks.length > 1
 		end
 
 		def play(track, chapterIndex)
@@ -335,12 +353,17 @@ module Tunewich
 					streamPath = mediaFilePath = makeStream streamName
 				end
 
-				if not downloadFromYouTubeID track['src'], streamPath
+				if not downloadTrack track, streamPath
 					return false
 				end
 			end
 
 			mediaFilePath ||= findFileById track['src']
+
+			if not mediaFilePath
+				puts "File not found for #{track['title']}."
+				return false
+			end
 
 			if !streamName
 				mplayerCommands.push("-loop 0") if track['loop'] or @loop
@@ -378,36 +401,71 @@ module Tunewich
 			`rm #{getFilePrefixFromId id}*`
 		end
 
+		def countFilesById(id)
+			findFileById(id).lines.length
+		end
+
 		def findFileById(id)
 			`ls -1 #{getFilePrefixFromId id}*`.strip
 		end
 
 		def fileExistsFromId?(id)
-			system "ls -1 #{getFilePrefixFromId id}*"
+			system "ls -1 #{getFilePrefixFromId id}* &> /dev/null"
+		end
+
+		def fileSizeById(id)
+			`size #{getFilePrefixFromId id}*`
 		end
 
 		def getFilePrefixFromId(id)
 			"#{@fileDirectory}/tunewich-#{id}"
 		end
 
-		def downloadFromYouTubeID(id, streamPath = nil)
-			puts "Downloading file (#{id})"
+		def downloadTrack(track, streamPath = nil)
+			youtubeDlCommandBegin = "youtube-dl -f bestaudio --no-part"
+			youtubeDlCommandEnd = "-- #{track['src']}"
 
-			youtubeDlCommandBegin = "youtube-dl -f bestaudio"
-			youtubeDlCommandEnd = "-- #{id}"
+			downloadPid = nil
+			downloadFeedbackFile = createTempFile 'download-feedback'
 
 			if streamPath
-				streamPid = spawn("#{youtubeDlCommandBegin} -o - #{youtubeDlCommandEnd} > \"#{streamPath}\"")
-				Process.detach(streamPid)
-				return true
+				downloadPid = spawn("#{youtubeDlCommandBegin} -o - #{youtubeDlCommandEnd} > \"#{streamPath}\" 2> \"#{downloadFeedbackFile}\"")
 			else
-				result = system "#{youtubeDlCommandBegin} -o \"#{getFilePrefixFromId id}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd}"
-				if not result
-					puts "Download interrupted..."
+				# status = system "#{youtubeDlCommandBegin} -o \"#{getFilePrefixFromId track['src']}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd}"
+				downloadPid = spawn("#{youtubeDlCommandBegin} -o \"#{getFilePrefixFromId track['src']}-%(title)s.%(ext)s\" #{youtubeDlCommandEnd} &> \"#{downloadFeedbackFile}\"")
+				Process.detach(downloadPid)
+				while not fileExistsFromId? track['src']
+					printRepeat "Fetching video information for download (#{cliRotate})"
+					sleep 0.1
 				end
+				# TODO: see FIXME below
+				# if track.has_key? 'duration'
+				# 	trackDuration = getSecondsFromDurationString track['duration']
+				# 	bufferDuration = trackDuration / 2
+				# end
+				while true
+					output = tailTempFile 'download-feedback'
+					# FIXME: get mplayer to play the whole file, even if only part is downloaded when it starts
+					# if trackDuration
+					# 	etaMatch = output.match(/ETA ([0-9:]+)/)
+					# 	if etaMatch
+					# 		eta = getSecondsFromDurationString etaMatch[1]
+					# 		if eta < bufferDuration
+					# 			printRepeat "ETA (#{eta}) is less than #{bufferDuration}. Ready to play.\n"
+					# 			break
+					# 		end
+					# 	end
+					# end
+					break if output.match(/#{track['src']}|100\.0%/)
+					printRepeat "(#{cliRotate}) #{output}"
+					sleep 0.1
+				end
+				sleep 1
 			end
 
-			result
+			deleteTempFile 'download-feedback'
+
+			downloadPid
 		end
 
 		def titleBlock(message, fill = '=', width = 80)
@@ -426,10 +484,27 @@ module Tunewich
 			"/tmp/tunewich-#{@sessionID}-#{name}"
 		end
 
+		def createTempFile(name)
+			putInTempFile name, ''
+		end
+
 		def putInTempFile(name, value)
 			path = getTempFilePath name
 			File.write(path, value)
 			path
+		end
+
+		def readTempFile(name)
+			path = getTempFilePath name
+			if File.exist? path
+				return File.read path
+			end
+		end
+
+		def tailTempFile(name)
+			content = readTempFile name
+			lastLine = content.gsub("\r","\n").lines.pop
+			lastLine.strip.chomp
 		end
 
 		def deleteTempFile(name)
@@ -458,6 +533,16 @@ module Tunewich
 			if filters['min-rating']
 				@tracks.keep_if { |track| track['rating'] && track['rating'] >= rating }
 			end
+			if filters['tag']
+				taggedPlaylistTrackIds = []
+				@library['playlists'].each { |name, p| taggedPlaylistTrackIds += p['tracks'] if p['tags'] && p['tags'].find_index(filters['tag']) }
+				@tracks.keep_if { |t| taggedPlaylistTrackIds.find_index(t['src']) }
+				if @tracks.length === 0
+					allTags = []
+					@library['playlists'].each { |name, p| allTags += p['tags'] if p['tags'] }
+					puts "No matches. Available tags are: #{allTags.uniq.sort.join ", "}"
+				end
+			end
 			if filters['title']
 				matches = fuzzyStringSearchInList(filters['title'], getTrackTitles)
 				oldTracks = @tracks
@@ -480,28 +565,6 @@ module Tunewich
 			@library['playlists'][name] = newPlaylist
 		end
 
-		def getTrackInfo id
-			info = `youtube-dl --get-title --get-description -- #{id}`.chomp.lines
-			track = {
-				'title' => info.shift.chomp,
-				'description' => info.join("\n").chomp
-			}
-
-			track
-		end
-
-		def getTrackDescription id
-			puts "Fetching description for YouTube ID #{id}..."
-			description = `youtube-dl --get-description -- #{id}`.chomp
-
-			if description.empty?
-				description = 'Unknown'
-				puts "Video not found. Cannot get description."
-			end
-
-			description
-		end
-
 		def createTrack id, getInfo = true
 			track = {
 				'src' => id,
@@ -515,6 +578,17 @@ module Tunewich
 			track
 		end
 
+		def getTrackInfo id
+			info = `youtube-dl --get-title --get-description --get-duration -- #{id}`.chomp.lines
+			track = {
+				'title' => info.shift.chomp, # title is the first line
+				'duration' => info.pop.chomp, # duration is the last line
+				'description' => info.join("\n").chomp # everything else is description
+			}
+
+			track
+		end
+
 		def updateTrackInfo track
 			trackInfo = getTrackInfo track['src']
 			track['title'] = trackInfo['title']
@@ -523,6 +597,8 @@ module Tunewich
 				chapters = getChaptersFromDescription trackInfo['description'].lines
 				track['chapters'] = chapters if chapters && chapters.length > 0
 			end
+
+			track['duration'] = trackInfo['duration'] if trackInfo['duration']
 
 			track
 		end
@@ -560,6 +636,7 @@ module Tunewich
 		def writeLibraryToFile
 			libraryJSON = JSON.pretty_generate(@library)
 			File.write(@libraryFilePath, libraryJSON) if libraryJSON
+			puts "Saved change to library file."
 		end
 
 		def searchYouTube query, offset = 0, count = 20
@@ -581,13 +658,36 @@ module Tunewich
 
 			resultTracks = []
 			queryResultIds.slice(0, count).each_with_index do |id, index|
-				print "Getting track information (#{index + 1}/#{count})    \r"
+				printRepeat "Getting track information (#{index + 1}/#{count})"
 				track = createTrack id
 				resultTracks.push track
 			end
 			print "\n"
 
 			resultTracks
+		end
+
+		def interactiveCleanup
+			unattachedTracks = @library['library']
+			@library['playlists'].each do |name, playlist|
+				playlist['tracks'].each do |id|
+					unattachedTracks.delete id if unattachedTracks.has_key? id
+				end
+			end
+			if unattachedTracks.length > 0
+				puts "The following tracks are not in any playlist:"
+				puts "#{unattachedTracks.map { |id, t| "#{t['title']}" } .join "\n"}"#{t.title}" }}"
+				print "\nRemove these tracks? (y/N): "
+				confirmation = STDIN.gets.chomp
+				if confirmation.match(/^[Yy]/)
+					unattachedTracks.each do |id, track|
+						@library['library'].delete id
+					end
+					writeLibraryToFile
+				end
+			else
+				puts "Every track is assigned to a playlist. No suggestions for deletion."
+			end
 		end
 
 		def getSecondsFromDurationString durationString
@@ -612,6 +712,24 @@ module Tunewich
 			}
 
 			hash
+		end
+
+		def printRepeat message
+			print " " * @printRepeatMessage.length + "\r" if @printRepeatMessage
+			message = message.to_s if message.respond_to? 'to_s'
+			print message + "\r"
+			@printRepeatMessage = message.match(/\n/) ? nil : message
+		end
+
+		def cliRotate
+			if not @cliRotateIndex
+				@cliRotateIndex = 0
+				@cliRotateCharacters = '-\|/'
+			else
+				@cliRotateIndex = (@cliRotateIndex + 1) % @cliRotateCharacters.length
+			end
+
+			@cliRotateCharacters[@cliRotateIndex]
 		end
 
 		alias deleteStream deleteTempFile
