@@ -976,9 +976,6 @@ module Tunewich
 
 							@currentTrack['chapters'] << newChapter
 							@currentTrack['chapters'] = sortChapters @currentTrack['chapters']
-							currentChapterIndex = getChapterIndexAtTime @currentTrack['chapters'], @currentPlayerTime
-							@currentTrack['chapters'] = editChapters(@currentTrack['chapters'], currentChapterIndex)
-							@currentTrack['chapters'] = sortChapters @currentTrack['chapters']
 							writeLibraryToFile
 							whisper("New chapter written to library file", 3)
 
