@@ -93,6 +93,9 @@
 		- make sure that sequential volume operations are cohesive
 			- how to handle interrupting /fade operations?
 
+- [ ] enable loop rules for a track, like "loop this during the time window 13:00:00-13:59:59"
+	- [ ] enable setting these rules on tracks in a playlist, so that different lists can use the same tracks with different rules (and so that playing a track in isolation doesn't necessarily cause weird playback behavior).
+
 ## notes
 
 Hashes are generated with tent:bin/hashtime, which turns the decimal seconds since the unix epoch into a base-62 number with these digits: `0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz`.
