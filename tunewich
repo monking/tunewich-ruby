@@ -2364,9 +2364,6 @@ module Tunewich
 			elsif type == 'ocremix'
 				newTrack['src'] = getOCRemixSource url
 				newTrack['id'] = getIDFromOCRemixURL url
-			elsif type == 'podcast'
-				newTrack['src'] = url
-				newTrack['id'] = Digest::MD5.hexdigest(url).to_s
 			else
 				newTrack['src'] = url
 				newTrack['id'] = Digest::MD5.hexdigest(url).to_s
@@ -2838,9 +2835,9 @@ module Tunewich
               whisper "itemElement: #{itemElement}", 4
               enclosure = itemElement.at_xpath('enclosure')
               if enclosure
-                newTrack = createTrack(enclosure['url'], enclosure['type'])
+                newTrack = createTrack(enclosure['url'], enclosure['type'] || 'audio/mpeg')
                 newTrack['title'] = itemElement.at_xpath('title').content.chomp
-                newTrack['description'] = itemElement.at_xpath('itunes:summary').content.chomp
+                newTrack['description'] = itemElement.at_xpath('description').content.chomp
                 whisper "newTrack: #{newTrack}", 4
                 podcastTracks << newTrack
               else
