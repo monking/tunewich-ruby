@@ -3,6 +3,7 @@
 require "open-uri"
 require "optparse"
 require "json"
+require "digest"
 
 module Tunewich
 
@@ -11,6 +12,8 @@ module Tunewich
 		HELP_FILTER = "Filter by rules, in the format 'title=Some Title,tag=fun,chapters'. Available rules are: [min-,max-]rating=[0-5],title=[query],tag=[tag],chapters."
 
 		def initialize
+			@library = nil
+			@libraryHash = nil
 			@sessionID = Random.rand(1024)
 			@trackIndex = nil
 			@tracks = nil
@@ -265,7 +268,7 @@ module Tunewich
 				raise "TODO: create library file at #{@libraryFilePath}"
 			end
 
-			@library = JSON.parse(File.read(@libraryFilePath))
+			loadLibrary
 		end
 
 		def promptForPlaylist
@@ -490,6 +493,7 @@ module Tunewich
 			mplayerPlayTime = mplayerEndTime - mplayerStartTime
 			if (@playthroughThreshold && mplayerPlayTime > @playthroughThreshold)
 				puts "Played more than #{@playthroughThreshold}s, adding to #{@playlistName ? "playlist '#{@playlistName}'" : 'library'}."
+				loadLibrary
 				trackReference = addTrackToLibrary track
 				addTrackReferenceToPlaylist trackReference, @playlistName if @playlistName
 				writeLibraryToFile
@@ -776,10 +780,31 @@ module Tunewich
 			end
 		end
 
+		def processLibraryJSON(json)
+			{
+				:json => json,
+				:hash => Digest::MD5.digest(json),
+				:data => JSON.parse(json)
+			}
+		end
+
+		def loadLibrary
+			libraryInfo = processLibraryJSON File.read(@libraryFilePath)
+			if libraryInfo
+				@library = libraryInfo[:data]
+				@libraryHash = libraryInfo[:hash]
+			end
+		end
+
 		def writeLibraryToFile
 			libraryJSON = JSON.pretty_generate(@library)
-			File.write(@libraryFilePath, libraryJSON) if libraryJSON
-			puts "Saved change to library file."
+			libraryOnFile = processLibraryJSON File.read(@libraryFilePath)
+			if @libraryHash == libraryOnFile[:hash] || confirm("Library file has changed since last load. Overwrite?")
+				libraryInfo = processLibraryJSON libraryJSON
+				File.write(@libraryFilePath, libraryJSON)
+				@libraryHash = libraryInfo[:hash]
+				puts "Saved change to library file."
+			end
 		end
 
 		def searchYouTube query, offset = 0, count = 20
@@ -867,7 +892,7 @@ module Tunewich
 							if playlistName
 								libraryCleanupSegment.keys.each { |id| addTrackReferenceToPlaylist id, playlistName }
 							elsif confirm "No existing playlist matching '#{playlistQuery}'. Create one?"
-								createPlaylist playlistName, libraryCleanupSegment.keys
+								createPlaylist playlistQuery, libraryCleanupSegment.keys
 							else
 								playlistName = nil
 							end
@@ -881,7 +906,6 @@ module Tunewich
 						else
 							puts "#{@library['playlists'].map { |name, p| name } .join "\n"}\n\nPlease specify a playlist name (new or existing)."
 						end
-
 					}
 				},
 				'keep' => {
@@ -938,6 +962,22 @@ module Tunewich
 						checksumString = "#{initialLibraryLength} - #{libraryCleanupSegment.length} == #{@library['library'].length}"
 						puts "#{checksumString} ... #{checksum ? 'OK' : 'Mismatch'}"
 						libraryCleanupSegment = {}
+					}
+				},
+				'rmlist' => {
+					'info' => '<playlistName> remove a playlist.',
+					'action' => Proc.new { |playlistQuery|
+						if playlistQuery && playlistQuery.length > 0
+							playlistName = findPlaylistName playlistQuery
+
+							if playlistName
+								@library['playlists'].delete playlistName
+								puts "removed playlist #{playlistName}"
+							end
+
+						else
+							puts "#{@library['playlists'].map { |name, p| name } .join "\n"}\n\nPlease specify a playlist name (new or existing)."
+						end
 					}
 				}
 			}
