@@ -92,6 +92,7 @@ module Tunewich
 			@streamingServerType = nil
 			@youtubeDLTrackTypes = ['youtube', 'soundcloud']
 			@isPlayerPlaying = false
+			@logFile = nil
 
 			getConfigFiles
 
@@ -135,6 +136,8 @@ module Tunewich
 			whisper("@speed: #{@speed}", 3)
 			@currentSpeed = @speed
 			trigger 'speed_change'
+
+			# listenForExternalCommands # 1gOsMN this thread is blocking, for some reason
 
 			if @userMode == Player::MODES['playing']
 				interactivePlayback
@@ -225,8 +228,14 @@ module Tunewich
 			# 2: very verbose user output
 			# 3: errors
 			# 4: debug
+			formattedMessage = "	#{"-" * verbosity} #{message}"
 			if @configuredVerbosity >= verbosity
-				STDERR.puts "	#{"-" * verbosity} #{message}"
+				STDERR.puts formattedMessage
+			end
+			if @logFile
+				open(@logFile, 'a') { |f|
+					f.puts formattedMessage
+				}
 			end
 		end
 
@@ -1534,15 +1543,6 @@ module Tunewich
 		def interactivePlayback
 			bindingGroupName = 'interactivePlayback'
 
-			@externalCommandStream = makeStream 'tunewich-commmand-queue'
-			@externalCommandThread = Thread.new {
-				externalCommand = tailTempFile @externalCommandStream
-				if externalCommand
-					whisper("externalCommand: '#{externalCommand}'") # TODO: 1gOsMN
-				end
-				sleep 1
-			}
-
 			shouldExitPlayerLoop = false
 			bindOnce 'request_exit', Proc.new {
 				shouldExitPlayerLoop = true
@@ -2575,7 +2575,7 @@ module Tunewich
 			if File.exist? path
 				whisper("read tmp #{name}: exists", 5)
 				contents = File.read path
-				whisper("read tmp #{name}, contents: #{contents}", 5)
+				# whisper("read tmp #{name}, contents: #{contents}", 5)
 				return contents
 			else
 				whisper("read tmp #{name}: missing", 5)
@@ -3338,6 +3338,10 @@ module Tunewich
 				@loop = true
 			end
 
+			parser.on("-L FILE", "--log FILE", "Log most verbose output to FILE. This includes events and crosstalk between the script and player", " ") do |logFile|
+				@logFile = logFile
+			end
+
 			parser.on("-m MODE", "--mode MODE", "Choose a player mode: #{Player::MODES.keys.join ', '}", " ") do |modeName|
 				if Player::MODES.has_key? modeName
 					@userMode = modeName
@@ -3851,6 +3855,84 @@ module Tunewich
 			whisper("waiting for user input on STDIN", 3)
 			input = nil
 			commandHistoryIndex = nil
+
+			processCommandsWithInput = Proc.new { |commandLoopInput|
+				while commandLoopInput && !commandLoopInput.empty? && commandLoopInput[0] == '/'
+					whisper("parsing commands", 3)
+					commandParts = commandLoopInput.match(/^\/([^\s]*)\s*(.*)/)
+					if commandParts
+						commandName = commandParts[1]
+						commandInput = commandParts[2]
+
+						if !commands.has_key? commandName
+							possibleCommands = []
+							commands.each { |name, command|
+								if name.start_with? commandName
+									possibleCommands << name
+								end
+							}
+							if possibleCommands.length == 1
+								whisper("matched #{commandName} -> #{possibleCommands[0]}", 1)
+								commandName = possibleCommands[0]
+							else
+								commandName = ''
+								commandLoopInput = nil
+								putsRealtime "Did you mean #{possibleCommands.join ", or "}?" if possibleCommands.length > 1
+							end
+						end
+					else
+						commandName = ''
+					end
+
+					if commands.has_key? commandName
+						commandInfo = {
+							:name => commandName,
+							:commandLoopInput => commandInput,
+							:output => nil
+						}
+						begin
+							commandInfo[:output] = commands[commandName]['action'].call(commandInput)
+						rescue Exception => e
+							putsRealtime "There was a problem running '#{commandName}' with input '#{commandInput}'"
+							whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 3)
+						end
+						response[:commands] << commandInfo
+						whisper("command info: #{commandInfo}", 3)
+						if commandInfo[:output] && commandInfo[:output][:action]
+							whisper("chained command calling action (#{commandInfo[:output][:action]})", 3)
+							action.call commandInfo[:output][:action]
+						end
+						if commandInfo[:output] && commandInfo[:output][:chainedInput] && commandInfo[:output][:chainedInput].length > 0
+							whisper("chained commandLoopInput: #{commandInfo[:output][:chainedInput]}", 3)
+							if commandInfo[:output][:bindChainToEvent]
+								commandLoopInput = nil
+								whisper("binding deferred chained commands to event '#{commandInfo[:output][:bindChainToEvent]}'", 3)
+								bindOnce commandInfo[:output][:bindChainToEvent], Proc.new {
+									whisper("running deferred chained commands", 1)
+									whisper("deferred commands: #{commandInfo[:output][:chainedInput]}", 2)
+									commandLoopInput = processCommandsWithInput.call commandInfo[:output][:chainedInput]
+								}, commandInfo[:output][:bindingGroupName]
+								break
+							else
+								commandLoopInput = commandInfo[:output][:chainedInput]
+							end
+						else
+							whisper("no chained commandLoopInput", 3)
+							commandLoopInput = nil
+							break
+						end
+					end
+
+					break if shouldBreakCommandLoop
+				end
+
+				whisper("no more commands to execute (for now)", 3)
+
+				commandLoopInput
+			}
+
+			externalCommandHandlerId = bind('external_command', processCommandsWithInput);
+
 			while inputCharacter = readCharacter
 				if inputCharacter == "" # control-c character
 					whisper("interrupt character, is that you?", 3)
@@ -3882,80 +3964,6 @@ module Tunewich
 					response[:input] = input
 					whisper("received input: #{input}", 3)
 					if commands
-						processCommandsWithInput = Proc.new { |commandLoopInput|
-							while commandLoopInput && !commandLoopInput.empty? && commandLoopInput[0] == '/'
-								whisper("parsing commands", 3)
-								commandParts = commandLoopInput.match(/^\/([^\s]*)\s*(.*)/)
-								if commandParts
-									commandName = commandParts[1]
-									commandInput = commandParts[2]
-
-									if !commands.has_key? commandName
-										possibleCommands = []
-										commands.each { |name, command|
-											if name.start_with? commandName
-												possibleCommands << name
-											end
-										}
-										if possibleCommands.length == 1
-											whisper("matched #{commandName} -> #{possibleCommands[0]}", 1)
-											commandName = possibleCommands[0]
-										else
-											commandName = ''
-											commandLoopInput = nil
-											putsRealtime "Did you mean #{possibleCommands.join ", or "}?" if possibleCommands.length > 1
-										end
-									end
-								else
-									commandName = ''
-								end
-
-								if commands.has_key? commandName
-									commandInfo = {
-										:name => commandName,
-										:commandLoopInput => commandInput,
-										:output => nil
-									}
-									begin
-										commandInfo[:output] = commands[commandName]['action'].call(commandInput)
-									rescue Exception => e
-										putsRealtime "There was a problem running '#{commandName}' with input '#{commandInput}'"
-										whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 3)
-									end
-									response[:commands] << commandInfo
-									whisper("command info: #{commandInfo}", 3)
-									if commandInfo[:output] && commandInfo[:output][:action]
-										whisper("chained command calling action (#{commandInfo[:output][:action]})", 3)
-										action.call commandInfo[:output][:action]
-									end
-									if commandInfo[:output] && commandInfo[:output][:chainedInput] && commandInfo[:output][:chainedInput].length > 0
-										whisper("chained commandLoopInput: #{commandInfo[:output][:chainedInput]}", 3)
-										if commandInfo[:output][:bindChainToEvent]
-											commandLoopInput = nil
-											whisper("binding deferred chained commands to event '#{commandInfo[:output][:bindChainToEvent]}'", 3)
-											bindOnce commandInfo[:output][:bindChainToEvent], Proc.new {
-												whisper("running deferred chained commands", 1)
-												whisper("deferred commands: #{commandInfo[:output][:chainedInput]}", 2)
-												commandLoopInput = processCommandsWithInput.call commandInfo[:output][:chainedInput]
-											}, commandInfo[:output][:bindingGroupName]
-											break
-										else
-											commandLoopInput = commandInfo[:output][:chainedInput]
-										end
-									else
-										whisper("no chained commandLoopInput", 3)
-										commandLoopInput = nil
-										break
-									end
-								end
-
-								break if shouldBreakCommandLoop
-							end
-
-							whisper("no more commands to execute (for now)", 3)
-
-							commandLoopInput
-						}
 						input = processCommandsWithInput.call input
 					end
 
@@ -4023,6 +4031,8 @@ module Tunewich
 
 				break if shouldBreakCommandLoop
 			end
+
+			unbind(externalCommandHandlerId)
 
 			whisper("closing command \"#{message}\" prompt (response #{response})", 3)
 
@@ -4149,6 +4159,30 @@ module Tunewich
 			library = {}
 			inputTracks.each { |t| library[t['id']] = t }
 			library
+		end
+
+		def listenForExternalCommands # 1gOsMN
+			externalCommandStream = makeStream 'tunewich-command-queue'
+			whisper("external command stream: #{externalCommandStream}", 2)
+			externalCommandStreamHandle = File.open(externalCommandStream, 'r');
+			externalCommandThread = Thread.new {
+				externalCommand = ""
+				while ($_ = externalCommandStreamHandle.read(1)) do
+					if $_ != "\n"
+						externalCommand << $_
+					else
+						if externalCommand && externalCommand.length > 0
+							whisper("external command: '#{externalCommand}'")
+							trigger 'external_command', externalCommand
+							externalCommand = ""
+						end
+					end
+				end
+			}
+			bindOnce 'request_exit', Proc.new{
+				externalCommandStreamHandle.close
+				externalCommandThread.kill if externalCommandThread.alive?
+			}
 		end
 
 	end

@@ -1,0 +1,17 @@
+#!/bin/bash
+
+[[ -z "$@" ]] && {
+	echo "No command given. Run 'tunewich --help' to see the list of interactive commands."
+	exit 1
+}
+
+queueFile="$(ls -t ~/.tunewich/tmp/*-tunewich-command-queue | head -1)"
+
+[[ -z "$queueFile" ]] && {
+	echo "No command queue file found"
+	exit 2
+}
+
+echo -n "queueFile: $queueFile"
+
+echo "$@" > "$queueFile"
