@@ -68,7 +68,8 @@ module Tunewich
 		def getEnvironmentConfig
 			if ENV.key? 'TUNEWICH_PLAYER_OPTS'
 				@mplayerDefaultOptions = ENV['TUNEWICH_PLAYER_OPTS']
-				@volume = getMplayerConfigVolume
+				@volume = getMplayerConfigNumericProperty('volume')
+        @speed = getMplayerConfigNumericProperty('speed', 1.0)
 			else
 				puts "You can add `export TUNEWICH_PLAYER_OPTS=\"<player options>\"` to your ~/.profile or similar file. Default player is #{Player::PLAYER_APPLICATION}."
 			end
@@ -309,8 +310,6 @@ module Tunewich
 				'ramp' => {
 					'info' => 'Ramp speed (/ramp SPEED [DURATION])',
 					'action' => Proc.new { |properties|
-						# TODO: set a global value, like volume, and apply to each track.
-						# option to start each track at the same bpm if it's defined for that track
 						rampCommandMatch = /^(out|in|[0-9.]+(bpm)?)( [0-9.]+)?( .+)?$/.match properties
 						#                    1              2      3          4
 						output = {}
@@ -327,7 +326,9 @@ module Tunewich
 								elsif targetRampSpeed == 'in'
 									targetRampSpeed = speedBeforeRampingOut
 								else
-									targetRampSpeed = targetRampSpeed.to_f
+                  targetRampSpeed = targetRampSpeed.to_f
+                  @speed = targetRampSpeed
+                  # does this work? # @speed = targetRampSpeed.to_f!
 								end
 								speedRampInterval = 0.02
 								speedRampStepCount = duration / speedRampInterval
@@ -502,11 +503,19 @@ module Tunewich
 						{:chainedInput => input}
 					}
 				},
+				'fixbpm' => {
+          'info' => "TODO: [Toggle ON/off] Change next track's playback speed to BPM of a current track. If either track does not have BPM metadata, then the curent playback speed is maintained.",
+					'action' => Proc.new { |input|
+            @fixbpm = !@fixbpm
+            puts "TODO: fixbpm #{@fixbpm ? "on" : "off"}"
+						{:chainedInput => input}
+					}
+				},
 				'defvolume' => {
-					'info' => "TODO: save current volume relative to default in library.",
+					'info' => "FIXME: save current volume relative to default in library.",
 					'action' => Proc.new { |input|
 						track = @tracks[@trackIndex]
-						track['loudness'] = getMplayerConfigVolume / getCurrentMplayerVolume
+						track['loudness'] = getMplayerConfigNumericProperty('volume') / getCurrentMplayerVolume
 						writeLibraryToFile true
 						{:chainedInput => input}
 					}
@@ -872,9 +881,10 @@ module Tunewich
 			mplayerStartupOptions += [@mplayerDefaultOptions] if @mplayerDefaultOptions
 			mplayerStartupOptions += @mplayerOverrideCommands
 			mplayerStartupOptions += ["-volume #{@volume}"]
+			mplayerStartupOptions += ["-speed #{@speed}"]
 
 			if track['loudness']
-				mplayerStartupOptions += ["-volume #{(getMplayerConfigVolume / track['loudness']).round}"]
+				mplayerStartupOptions += ["-volume #{(getMplayerConfigNumericProperty('volume') / track['loudness']).round}"]
 			end
 
 			response[:startTime] = Time.now.to_f
@@ -939,19 +949,19 @@ module Tunewich
 			getMplayerProperty('speed', /^(ANS_speed=|.*Speed: )(.*?)(\?)?$/).to_f
 		end
 
-		def getMplayerConfigVolume
+    def getMplayerConfigNumericProperty(propertyName, defaultValue = 0.0)
 			mplayerCommands = []
 			mplayerCommands += @mplayerOverrideCommands if @mplayerOverrideCommands
 			mplayerCommands += [@mplayerDefaultOptions] if @mplayerDefaultOptions
-			mplayerConfigVolume = 25.0 # factory default
+			propertyValue = defaultValue
 
 			mplayerCommands.each { |command|
-				if command.include? 'volume'
-					mplayerConfigVolume = command.match(/.*-volume ([0-9.]+)/)[1].to_f
+				if command.include? propertyName
+					propertyValue = command.match(/.*-#{propertyName} ([0-9.]+)/)[1].to_f
 				end
 			}
 
-			mplayerConfigVolume.to_f
+			propertyValue.to_f
 		end
 
 		def nextTrack
