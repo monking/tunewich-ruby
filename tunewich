@@ -63,7 +63,7 @@ module Tunewich
 			while playbackSuccessful do
 				break if !@trackIndex || !@tracks[@trackIndex]
 
-				if @updateAllPlayedTrackInfo
+				if @updateAllPlayedTrackInfo || !@tracks[@trackIndex].has_key?('duration') # TODO: remove the 'duration' check: it's here just until the library is more up-to-date
 					printRepeat "Getting latest track information..."
 					updateTrackInfo @tracks[@trackIndex]
 					writeLibraryToFile
