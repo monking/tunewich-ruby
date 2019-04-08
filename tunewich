@@ -15,6 +15,7 @@ module Tunewich
 			@trackIndex = nil
 			@tracks = nil
 			@trackFilters = nil
+			@trackExcludeFilters = nil
 			@playlistName = nil
 			@playlist = nil
 			@enableDownload = false
@@ -44,6 +45,10 @@ module Tunewich
 
 			if @trackFilters
 				@tracks = filterTracks @tracks, @trackFilters
+			end
+
+			if @trackExcludeFilters
+				@tracks = filterTracks @tracks, @trackExcludeFilters, true
 			end
 
 			if @trackIndex == nil
@@ -230,6 +235,10 @@ module Tunewich
 
 			parser.on("-w", "--write-after TIME", "Save tracks to the library when played for the given number of seconds. Use with -q. If a playlist is specified, it will also be added to that playlist.") do |time|
 				@playthroughThreshold = time.to_f
+			end
+
+			parser.on("-x", "--exclude-filter RULES", "Excludes tracks matching the rules. " + Player::HELP_FILTER) do |rules|
+				@trackExcludeFilters = parseOptionParameters rules
 			end
 
 			@mplayerOverrideCommands = parser.parse(ARGV)
@@ -633,24 +642,26 @@ module Tunewich
 			url.sub(/^.*v=/, '')
 		end
 
-		def filterTracks tracks, filters
+		def filterTracks tracks, filters, invert = false
+
+			action = invert ? 'delete_if' : 'keep_if'
 
 			if filters['rating']
-				tracks.keep_if { |track| track['rating'] && track['rating'] == filters['rating'].to_i }
+				tracks.send(action) { |track| track['rating'] && track['rating'] == filters['rating'].to_i }
 			end
 
 			if filters['min-rating']
-				tracks.keep_if { |track| track['rating'] && track['rating'] >= filters['min-rating'].to_i }
+				tracks.send(action) { |track| track['rating'] && track['rating'] >= filters['min-rating'].to_i }
 			end
 
 			if filters['max-rating']
-				tracks.keep_if { |track| !track['rating'] || track['rating'] <= filters['max-rating'].to_i }
+				tracks.send(action) { |track| !track['rating'] || track['rating'] <= filters['max-rating'].to_i }
 			end
 
 			if filters['tag']
 				taggedPlaylistTrackIds = []
 				@library['playlists'].each { |name, p| taggedPlaylistTrackIds += p['tracks'] if p['tags'] && p['tags'].find_index(filters['tag']) }
-				tracks.keep_if { |t| taggedPlaylistTrackIds.find_index(t['src']) }
+				tracks.send(action) { |t| taggedPlaylistTrackIds.find_index(t['src']) }
 
 				if tracks.length === 0 # list available tags if no matches
 					allTags = []
@@ -661,15 +672,15 @@ module Tunewich
 
 			if filters['title']
 				matches = fuzzyStringSearchInList(filters['title'], getTrackTitles(tracks))
-				oldTracks = tracks
-				tracks = []
+				matchedIds = []
 				matches.each { |match|
-					tracks << oldTracks[match[:index]]
+					matchedIds << tracks[match[:index]]['id']
 				}
+				tracks.send(action) { |t| matchedIds.index t['id'] }
 			end
 
 			if filters.has_key? 'chapters'
-				tracks.keep_if { |track|
+				tracks.send(action) { |track|
 					if track
 						track.has_key? 'chapters'
 					else
@@ -811,8 +822,8 @@ module Tunewich
 			libraryCleanupSegment = {}
 
 			commands = {
-				'unlisted' => {
-					'info' => 'select all tracks not in any playlist',
+				'ul' => {
+					'info' => '"unlisted", select all tracks not in any playlist',
 					'action' => Proc.new {
 
 						unattachedTracks = {}
@@ -867,12 +878,21 @@ module Tunewich
 
 					}
 				},
-				'filter' => {
+				'keep' => {
 					'info' => Player::HELP_FILTER,
 					'action' => Proc.new { |filterString|
 						libraryCleanupSegment = cloneLibrary @library['library'] if libraryCleanupSegment.length == 0
 						# FIXME: lots of back and forth from arrays to hashes here. Want to pick one?
 						libraryCleanupSegment = cloneTracksToLibrary filterTracks cloneLibraryToTracks(libraryCleanupSegment), parseOptionParameters(filterString)
+						puts "#{libraryCleanupSegment.length} tracks selected"
+					}
+				},
+				'drop' => {
+					'info' => "Excludes tracks matching the rules. " + Player::HELP_FILTER,
+					'action' => Proc.new { |filterString|
+						libraryCleanupSegment = cloneLibrary @library['library'] if libraryCleanupSegment.length == 0
+						# FIXME: lots of back and forth from arrays to hashes here. Want to pick one?
+						libraryCleanupSegment = cloneTracksToLibrary filterTracks cloneLibraryToTracks(libraryCleanupSegment), parseOptionParameters(filterString), true
 						puts "#{libraryCleanupSegment.length} tracks selected"
 					}
 				},
