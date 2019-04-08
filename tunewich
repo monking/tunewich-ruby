@@ -198,6 +198,28 @@ module Tunewich
 						nil
 					}
 				},
+				'tagall' => {
+					'info' => "Tag all tracks in the current tracklist. (not chainable)",
+					'action' => Proc.new { |tags|
+						if tags && tags.length > 0
+							tagsToAdd = tags.split(/[, ]+/)
+							tagsToRemove = []
+							tagsToAdd.each { |tagName|
+								if /^-/.match tagName
+									tagsToRemove << tagName.gsub(/^-/, '')
+									tagsToAdd.delete tagName
+								end
+							}
+							@tracks.each { |t|
+								addTrackToTags t, tagsToAdd
+								removeTagsFromTrack t, tagsToRemove
+								addTrackToLibrary t if t['unattached']
+							}
+							writeLibraryToFile true
+						end
+						nil
+					}
+				},
 				'go' => {
 					'info' => "Go to a track in the current list.",
 					'action' => Proc.new { |input|
@@ -2179,10 +2201,10 @@ module Tunewich
 		def getTracksFromTitleList(titleList)
 			tracks = []
 			titleList.each { |line|
-				matches = line.match(/^.*\[(.*)\]$/)
+				matches = line.match(/^(.*) \[(.*)\]$/)
 				if matches
-					id = matches[1]
-					track = @library['library'][id]
+					track = matchExistingLibraryTrack createTrack matches[2], 'youtube'
+					track['title'] ||= matches[1]
 					tracks << track if track
 				end
 			}
