@@ -277,6 +277,16 @@ module Tunewich
 			mplayerCommands += [@mplayerDefaultOptions] if @mplayerDefaultOptions
 			mplayerCommands += @mplayerOverrideCommands
 
+			if track['volume']
+				mplayerCurrentVolume = 25.0
+				mplayerCommands.each { |command|
+					if command.include? 'volume'
+						mplayerCurrentVolume = command.match(/.*-volume ([0-9]+)$/)[1].to_f
+					end
+				}
+				mplayerCommands += ["-volume #{(mplayerCurrentVolume / track['volume']).round}"]
+			end
+
 			mplayerStartTime = Time.now.to_f
 
 			mplayerStatus = system "mplayer \"#{mediaFilePath}\" #{mplayerCommands.join ' '}"
@@ -300,6 +310,8 @@ module Tunewich
 		end
 
 		def nextTrack
+			filterTracksOnDeck
+
 			if @shuffle
 				shuffleIndex()
 			else
@@ -325,7 +337,10 @@ module Tunewich
 
 		def addTracks tracks
 			@tracks += tracks
+			filterTracksOnDeck
+		end
 
+		def filterTracksOnDeck
 			if @trackFilters
 				@tracks = filterTracks @tracks, @trackFilters
 			end
@@ -786,7 +801,7 @@ module Tunewich
 				matches.each { |match|
 					matchedIds << tracks[match[:index]]['id']
 				}
-				tracks.send(action) { |t| matchedIds.index t['id'] }
+				tracks.send(action) { |t| matchedIds.include? t['id'] }
 			end
 
 			if filters['last']
@@ -880,7 +895,7 @@ module Tunewich
 			playlistTracks = @library['playlists'][playlistName]['tracks']
 			track = @library['library'][trackReference]
 
-			if not playlistTracks.index trackReference
+			if not playlistTracks.include? trackReference
 				playlistTracks << trackReference
 				puts "Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'"
 			else
@@ -1001,8 +1016,8 @@ module Tunewich
 				@youtubeSearch = query
 			end
 
-			parser.on("-r", "--rating-prompt SECONDS", "Prompt for a rating after every track plays, waiting SECONDS before continuing to the next track", " ") do |seconds|
-				@ratingsPromptDuration = seconds.to_i
+			parser.on("-r", "--rating-prompt [SECONDS]", "Prompt for a rating after every track plays, waiting 5 (or the number given) seconds before continuing to the next track", " ") do |seconds|
+				@ratingsPromptDuration = seconds ? seconds.to_i : 5
 			end
 
 			parser.on("-s", "--shuffle", "Enable shuffle.", " ") do
