@@ -13,6 +13,7 @@ module Tunewich
 			@sessionID = Random.rand(1024)
 			@trackIndex = nil
 			@tracks = nil
+			@trackFilters = nil
 			@playlistName = nil
 			@playlist = nil
 
@@ -38,6 +39,10 @@ module Tunewich
 				end
 			end
 
+			if @trackFilters
+				applyTrackFilters @trackFilters
+			end
+
 			if @trackIndex == nil
 				if @shuffle
 					shuffleIndex()
@@ -45,7 +50,6 @@ module Tunewich
 					@trackIndex = 0
 				end
 			elsif @trackIndex.is_a? String and @trackIndex != '0'
-				puts "@trackIndex: #{@trackIndex}" # XXX
 				@trackIndex = findTrackIndex @trackIndex
 			else
 				@trackIndex = @trackIndex.to_i
@@ -68,7 +72,7 @@ module Tunewich
 				# FIXME: always process this option first, even if it's provided last
 				setLibraryPath inputDir
 			end
-			parser.on("-t", "--track INDEX/QUERY", "If a number is given, seek to that track. If a string, the title of the track is searched for.") do |trackQuery|
+			parser.on("-t", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).") do |trackQuery|
 				if trackQuery.to_i != 0
 					@trackIndex = trackQuery.to_i - 1
 				else
@@ -98,8 +102,12 @@ module Tunewich
 				writeLibraryToFile
 				usePlaylist playlistName
 			end
-			parser.on("-r", "--rating MIN_RATING", "Only play tracks rated at least the minimum given.") do |rating|
-				filterTracksByRating rating.to_i
+			parser.on("-f", "--filter RULES", "Filter by rules, in the format 'name=value,name=value'. Available rules are: min-rating=[0-5],title=[query].") do |rules|
+				@trackFilters = {}
+				rules.split(',').each { |clump|
+					pair = clump.split '='
+					@trackFilters[pair[0]] = pair[1]
+				}
 			end
 			parser.on("-d", "--enable-download", "Enable downloading files when encountering a playlist file without a cached file already download.") do
 				@enableDownload = true
@@ -167,9 +175,12 @@ module Tunewich
 			selectedListName
 		end
 
+		def getTrackTitles
+			@tracks.map{|t| t['title']}
+		end
+
 		def findTrackIndex(query)
-			trackTitles = @tracks.map{|t| t['title']}
-			match = firstFuzzyMatch query, trackTitles
+			match = firstFuzzyMatch query, getTrackTitles
 			match ? match[:index] : false
 		end
 
@@ -292,7 +303,10 @@ module Tunewich
 			mplayerPlayTime = mplayerEndTime - mplayerStartTime
 			if (@playthroughThreshold && mplayerPlayTime > @playthroughThreshold)
 				puts "Played more than #{@playthroughThreshold}s, ading to playlist '#{@playlistName}'."
-				track['title'] = getTrackTitle track['src'] # FIXME: assuming this is from a search, and the title was not fetched yet
+				if track['get_info']
+					delete track['get_info']
+					track = updateTrackInfo track
+				end
 				addTrackToPlaylist track, @playlistName if @playlistName
 				writeLibraryToFile
 			end
@@ -385,8 +399,26 @@ module Tunewich
 			url.sub(/^.*v=/, '')
 		end
 
+		def applyTrackFilters filters
+			if filters['min-rating']
+				filterTracksByRating filters['min-rating'].to_i
+			end
+			if filters['title']
+				filterTracksByTitle filters['title']
+			end
+		end
+
 		def filterTracksByRating rating
 			@tracks.keep_if { |track| track['rating'] && track['rating'] >= rating }
+		end
+
+		def filterTracksByTitle query
+			matches = fuzzyStringSearchInList(query, getTrackTitles)
+			oldTracks = @tracks
+			@tracks = []
+			matches.each { |match|
+				@tracks.push oldTracks[match[:index]]
+			}
 		end
 
 		def createPlaylist name, tracks = [], description = ''
@@ -398,7 +430,7 @@ module Tunewich
 			@library['playlists'][name] = newPlaylist
 		end
 
-		def getTrackTitle id
+		def getTrackInfo id
 			puts "Fetching title for YouTube ID #{id}..."
 			title = `youtube-dl --get-title -- #{id}`.chomp
 
@@ -410,11 +442,50 @@ module Tunewich
 			title
 		end
 
-		def createTrack id, title = nil
-			{
-				'src' => id,
-				'title' => title || getTrackTitle(id)
+		def getTrackDescription id
+			puts "Fetching description for YouTube ID #{id}..."
+			description = `youtube-dl --get-description -- #{id}`.chomp
+
+			if description.empty?
+				description = 'Unknown'
+				puts "Video not found. Cannot get description."
+			end
+
+			description
+		end
+
+		def createTrack id, getInfo = true
+			track = {
+				'src' => id
 			}
+
+			if getInfo
+				track = updateTrackInfo track
+			end
+
+			track
+		end
+
+		def updateTrackInfo track
+			trackInfo = getTrackInfo track['src']
+			track['title'] = trackInfo['title']
+
+			if trackInfo['description']
+				chapters = getChaptersFromDescription trackInfo['description']
+				track['chapters'] = chapters if chapters
+			end
+
+			track
+		end
+
+		def getChaptersFromDescription description
+			description.grep(/[0-9]+:[0-9:.]+/).map! do |line|
+				matches = line[/^(.*?) *([0-9]+:[0-9:.]+) *(.*)$/]
+				{
+					'time' => matches[2],
+					'name' => "#{matches[1]} #{matches[3]}".strip
+				}
+			end
 		end
 
 		def addTrackToLibrary track
@@ -428,7 +499,6 @@ module Tunewich
 			trackReference = addTrackToLibrary track
 
 			tracks = @library['playlists'][playlistName]['tracks']
-			puts "tracks.index trackReference: #{tracks.index trackReference}" # XXX
 			if not tracks.index trackReference
 				tracks.push trackReference
 				puts "Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'"
@@ -461,7 +531,10 @@ module Tunewich
 
 			resultTracks = []
 			queryResultIds.slice(0, count).each_with_index do |id, index|
-				resultTracks.push createTrack id, "Search '#{query}': (#{id})"
+				track = createTrack id, false
+				track.title = "Search '#{query}': (#{id})"
+				track.get_info = true
+				resultTracks.push track
 			end
 
 			resultTracks
