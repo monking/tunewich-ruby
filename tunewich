@@ -110,21 +110,25 @@ module Tunewich
 			interactiveCommands = {
 				'rate' => {
 					'info' => "Rate this track.",
-					'action' => Proc.new { |new_rating|
-						if !new_rating || new_rating.length < 1
-							puts "current rating: #{@tracks[@trackIndex]['rating']}"
-						else
-							@tracks[@trackIndex]['rating'] = new_rating.to_i
-							if !@tracks[@trackIndex]['unattached'] || @tracks[@trackIndex]['rating'] > 0
-								addTrackToLibrary @tracks[@trackIndex] if @tracks[@trackIndex]['unattached']
-								writeLibraryToFile true
+					'action' => Proc.new { |input|
+						chunks = input.split ' '
+						if chunks[0].match /^[0-9]/
+							newRating = chunks.shift
+							if !newRating || newRating.length < 1
+								puts "current rating: #{@tracks[@trackIndex]['rating']}"
+							else
+								@tracks[@trackIndex]['rating'] = newRating.to_i
+								if !@tracks[@trackIndex]['unattached'] || @tracks[@trackIndex]['rating'] > 0
+									addTrackToLibrary @tracks[@trackIndex] if @tracks[@trackIndex]['unattached']
+									writeLibraryToFile true
+								end
 							end
 						end
-						nil
+						{:chainedInput => chunks.join(' ')}
 					}
 				},
 				'bpm' => {
-					'info' => "Interactively set the beats-per-minute of the track. Do '/bpm 0' to remove",
+					'info' => "Interactively set the beats-per-minute of the track. Do '/bpm 0' to remove (not chainable)",
 					'action' => Proc.new { |newBPM|
 						commitBPM = false
 
@@ -173,7 +177,7 @@ module Tunewich
 					}
 				},
 				'tag' => {
-					'info' => "Tag this track.",
+					'info' => "Tag this track. (not chainable)",
 					'action' => Proc.new { |tags|
 						if !tags || tags.length < 1
 							puts "current tags: #{getTrackTags @tracks[@trackIndex]}"
@@ -196,35 +200,37 @@ module Tunewich
 				},
 				'go' => {
 					'info' => "Go to a track in the current list.",
-					'action' => Proc.new { |trackIndex|
+					'action' => Proc.new { |input|
+						chunks = input.split ' '
+						trackIndex = chunks.shift
 						if trackIndex.to_i == 0
 							@trackIndex = findTrackIndex trackIndex
 						else
 							@trackIndex = trackIndex.to_i - 1 % @tracks.length
 						end
 						commandRequiresNext = true
-						nil
+						{:chainedInput => chunks.join(' ')}
 					}
 				},
 				'clear' => {
 					'info' => 'Clear current tracklist',
-					'action' => Proc.new {
+					'action' => Proc.new { |input|
 						@clearTracks
-						nil
+						{:chainedInput => input}
 					}
 				},
 				'all' => {
 					'info' => "Load entire library.",
-					'action' => Proc.new {
+					'action' => Proc.new { |input|
 						useEntireLibrary
-						nil
+						{:chainedInput => input}
 					}
 				},
 				'fade' => {
-					'info' => 'Fade volume (/fade VOLUME [DURATION] [NEXT ACTION])',
+					'info' => 'Fade volume (/fade VOLUME [DURATION])',
 					'action' => Proc.new { |properties|
 						output = {}
-						fadeCommandMatch = /^(out|in|[0-9.]+)( [0-9.]+)?( .+)?$/.match properties
+						fadeCommandMatch = /^(out|in|[0-9.]+x?)( [0-9.]+)?( .+)?$/.match properties
 						if fadeCommandMatch
 							whisper "fade command"
 							duration = fadeCommandMatch[2] && fadeCommandMatch[2].length > 0 ? fadeCommandMatch[2].to_f : 2.0
@@ -238,6 +244,10 @@ module Tunewich
 							elsif targetFadeVolume == 'in'
 								targetFadeVolume = volumeBeforeFadingOut
 								whisper "fading in volume (to #{targetFadeVolume})"
+							elsif targetFadeVolume.match /x$/
+								multiplier = targetFadeVolume.to_f
+								targetFadeVolume = volume * multiplier
+								whisper "fading volume #{multiplier}x (to #{targetFadeVolume})"
 							else
 								@volume = targetFadeVolume
 								whisper "fading to volume #{targetFadeVolume}"
@@ -259,7 +269,7 @@ module Tunewich
 					}
 				},
 				'ramp' => {
-					'info' => 'Ramp speed (/ramp SPEED [DURATION] [NEXT ACTION])',
+					'info' => 'Ramp speed (/ramp SPEED [DURATION])',
 					'action' => Proc.new { |properties|
 						# TODO: set a global value, like volume, and apply to each track.
 						# option to start each track at the same bpm if it's defined for that track
@@ -307,7 +317,7 @@ module Tunewich
 					}
 				},
 				'list' => {
-					'info' => "Load a playlist.",
+					'info' => "Load a playlist. (not chainable)",
 					'action' => Proc.new { |playlistQuery|
 						# TODO: generalized function to list playlists, their track count, and the average rating among rated tracks
 						whisper "playlistQuery: #{playlistQuery}"
@@ -329,9 +339,18 @@ module Tunewich
 						nil
 					}
 				},
+				'edit' => {
+					'info' => 'Edit playing tracklist in Vim.',
+					'action' => Proc.new { |input|
+						editedTracklisit = getTracksFromTitleList editListInVim(listTrackTitles(@tracks), "remove or comment any tracks you want to deselect")
+						useTracks editedTracklisit, false
+						puts "#{@tracks.length} tracks selected"
+						{:chainedInput => input}
+					}
+				},
 				'more' => {
 					'info' => "Play all tracks on this video's page.",
-					'action' => Proc.new {
+					'action' => Proc.new { |input|
 						# FIXME: diagnose: I updated youtube-dl, and I still get errors all the time, and it'll quit afterward (2016 Feb 29 Mon 11:37:51)
 						tracks = getYouTubeTracksFromPage(@tracks[@trackIndex]['src'])
 						tracks.shift # remove the first track, which will be the main video on the page
@@ -340,12 +359,14 @@ module Tunewich
 						useTracks tracks, false
 						@trackIndex = 1
 						commandRequiresNext = true
-						nil
+						{:chainedInput => input}
 					}
 				},
 				'info' => {
 					'info' => "Show track info",
-					'action' => Proc.new { |index|
+					'action' => Proc.new { |input|
+						chunks = input.split ' '
+						index = chunks.shift
 						if index && index.length > 0
 							index = index.to_i - 1
 						else
@@ -374,11 +395,11 @@ module Tunewich
 						end
 
 						puts "url: #{info['url']}"
-						nil
+						{:chainedInput => chunks.join(' ')}
 					}
 				},
 				'search' => {
-					'info' => "<query> Search YouTube.",
+					'info' => "<query> Search YouTube. (not chainable)",
 					'action' => Proc.new { |query|
 						if query and query.length > 1
 							useTracks searchYouTube(query), false
@@ -393,44 +414,46 @@ module Tunewich
 				},
 				'loop' => {
 					'info' => 'Toggle loop.',
-					'action' => Proc.new {
+					'action' => Proc.new { |input|
 						@loop = !@loop
 						commandRequiresNext = true if @loop
 						puts "loop: #{@loop ? 'on' : 'off'}"
-						nil
+						{:chainedInput => input}
 					}
 				},
 				'shuffle' => {
 					'info' => 'Toggle shuffle.',
-					'action' => Proc.new {
+					'action' => Proc.new { |input|
 						@shuffle = !@shuffle
 						puts "shuffle: #{@shuffle ? 'on' : 'off'}"
-						nil
+						{:chainedInput => input}
 					}
 				},
 				'defvolume' => {
 					'info' => "TODO: save current volume relative to default in library.",
-					'action' => Proc.new { |new_rating|
+					'action' => Proc.new { |input|
 						track = @tracks[@trackIndex]
 						track['loudness'] = getMplayerConfigVolume / getCurrentMplayerVolume
 						writeLibraryToFile true
-						nil
+						{:chainedInput => input}
 					}
 				},
 				'download' => {
 					'info' => "Download the current track for faster play in the future.",
-					'action' => Proc.new {
+					'action' => Proc.new { |input|
 						if not trackFileExists? @tracks[@trackIndex]
 							downloadTrack @tracks[@trackIndex]
 						else
 							puts "This file is already downloaded."
 						end
-						nil
+						{:chainedInput => input}
 					}
 				},
 				'add' => {
 					'info' => 'Add a track by id.',
-					'action' => Proc.new { |videoID|
+					'action' => Proc.new { |input|
+						chunks = input.split ' '
+						videoID = chunks.shift
 						if videoID.length > 0
 							puts "Adding #{videoID} to track list. Playing next."
 							@tracks << matchExistingLibraryTrack(createTrack(videoID, 'youtube'))
@@ -439,7 +462,7 @@ module Tunewich
 							@trackIndex = @tracks.length - 1
 							commandRequiresNext = true
 						end
-						nil
+						{:chainedInput => chunks.join(' ')}
 					}
 				},
 				'again' => {
@@ -489,8 +512,9 @@ module Tunewich
 				'format' => {
 					'info' => 'Choose the file format to download (e.g. "mp4"; default "m4a").',
 					'action' => Proc.new { |input|
-						@preferredFileFormat = input
-						nil
+						chunks = input.split ' '
+						@preferredFileFormat = chunks.shift
+						{:chainedInput => chunks.join(' ')}
 					}
 				},
 				'commands' => {
@@ -1326,6 +1350,7 @@ module Tunewich
 				'edit' => {
 					'info' => 'edit selection in Vim',
 					'action' => Proc.new {
+						whisper "FIXME: this may be broken, while listTrackTitles and getTracksFromTitleList are changing for interactive use"
 						cleanupSelection = getTracksFromTitleList editListInVim(listTrackTitles(cleanupSelection), "remove or comment any tracks you want to deselect")
 						puts "#{listTrackTitles(cleanupSelection).join "\n"}\n\n(#{cleanupSelection.length} tracks selected)"
 					}
@@ -2155,19 +2180,17 @@ module Tunewich
 		end
 
 		def listTrackTitles(tracks)
-			tracks.map { |id, t| "#{t['title']} [#{id}]" }
+			tracks.map { |t| "#{t['title']} [#{t['id']}]" }
 		end
 
 		def getTracksFromTitleList(titleList)
-			tracks = {}
+			tracks = []
 			titleList.each { |line|
 				matches = line.match(/^.*\[(.*)\]$/)
 				if matches
 					id = matches[1]
 					track = @library['library'][id]
-					tracks[id] = track if track
-				else
-					puts "IGNORING: #{line}"
+					tracks << track if track
 				end
 			}
 
