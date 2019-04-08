@@ -168,12 +168,25 @@ module Tunewich
 						commandRequiresNext = true
 					}
 				},
+				'info' => {
+					'info' => "Show track info",
+					'action' => Proc.new { |query|
+						info = getTrackInfo @tracks[@trackIndex]['id']
+						puts "duration: #{info['duration']}"
+						puts "=============================="
+						puts info['description']
+					}
+				},
 				'search' => {
 					'info' => "<query> Search YouTube.",
 					'action' => Proc.new { |query|
-						useTracks searchYouTube(query), false
-						@trackIndex = 0
-						commandRequiresNext = true
+						if query and query.length > 1
+							useTracks searchYouTube(query), false
+							@trackIndex = 0
+							commandRequiresNext = true
+						else
+							puts "Enter a search term of at least 2 characters."
+						end
 					}
 				},
 				'loop' => {
@@ -269,7 +282,7 @@ module Tunewich
 
 				track = @tracks[@trackIndex]
 
-				titleBlock "[#{@trackIndex + 1}] - #{track['title']}"
+				titleBlock "[#{@trackIndex + 1}] - #{track['title']} (#{track['duration']})"
 
 				if @updateAllPlayedTrackInfo && !@noNetwork
 					printRepeat "Getting latest track information..."
