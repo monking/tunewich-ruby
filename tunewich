@@ -1926,7 +1926,7 @@ module Tunewich
 		end
 
 		def play(track, interactiveCommands)
-			fileAlreadyExists = !@forceStreaming && trackFileExists?(track) # TODO: 1gG4j4
+			fileAlreadyExists = !@forceStreaming && trackFileExists?(track) # TODO: 1gG4j4: I shouldn't need to check twice
 			liveStreaming = doesTrackHaveTag(track, 'live-radio') # TODO: 1gSke5
 			streaming = @forceStreaming || (!fileAlreadyExists && !@enableDownload)
 
@@ -2200,11 +2200,11 @@ module Tunewich
 
 		def getMplayerProperty property, pattern = nil, responseDelay = nil
 			output = nil
-			if @isPlayerPlaying # TODO: 1gG4j9
+			if @isPlayerPlaying # TODO: 1gG4j9 get time position without unpausing
 				pattern ||= /^()(.*)$/
 				command = "#{property}"
 				command = "get_property #{command}" if not property.match(/^get_/)
-				# TODO: 1gG4jB
+				# TODO: 1gG4jB maybe this needs pausing_keep (http://www.mplayerhq.hu/DOCS/tech/slave.txt). doesn't quite work in my testing
 				sendPlayerCommand command
 				sleep responseDelay if responseDelay
 				lastPlayerOutput = tailTempFile "#{Player::MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"

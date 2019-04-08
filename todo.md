@@ -23,8 +23,6 @@
 - [ ] 1gG4iz: add @currentTrack to queue
 - [ ] 1gG4j1: catch SIGINT (ctrl+c) & prompt for playlist again
 - [ ] 1gG4j4: I shouldn't need to check twice
-- [ ] 1gG4j9: get time position without unpausing
-- [ ] 1gG4jB: maybe this needs pausing_keep (http://www.mplayerhq.hu/DOCS/tech/slave.txt). doesn't quite work in my testing
 - [ ] 1gG4jL: find places where stuff is not being saved, and do matchExistingLibraryTrack first
 - [ ] 1gG4jN: add a tag fuzzy factor: include tags of tracks that have the current tag (only 1 degree separation to start)
 - [ ] 1gG4jP: make a list of IDs and filter tracks against it once, rather than filtering separately for each tag
