@@ -3357,8 +3357,9 @@ module Tunewich
       if options['streamPath']
         downloadPid = spawn(downloadCommand) # spawn: non-blocking
       else
-        trigger 'download_begin', track
         runAndHandleDownloadCommand = Proc.new {
+          trigger 'download_begin', track # Unsure of the diff triggering in new thread vs. calling inline
+          whisper("download begin", 3)
           downloadPid = system(downloadCommand) # system: blocking
           if trackFileExists? track
             loadLibrary
