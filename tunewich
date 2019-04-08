@@ -668,6 +668,9 @@ module Tunewich
 		end
 
 		def interactiveCleanup
+			tracksToDelete = {}
+
+			# find tracks which are not included in any playlist
 			unattachedTracks = @library['library']
 			@library['playlists'].each do |name, playlist|
 				playlist['tracks'].each do |id|
@@ -677,17 +680,27 @@ module Tunewich
 			if unattachedTracks.length > 0
 				puts "The following tracks are not in any playlist:"
 				puts "#{unattachedTracks.map { |id, t| "#{t['title']}" } .join "\n"}"#{t.title}" }}"
-				print "\nRemove these tracks? (y/N): "
-				confirmation = STDIN.gets.chomp
-				if confirmation.match(/^[Yy]/)
-					unattachedTracks.each do |id, track|
-						@library['library'].delete id
-					end
-					writeLibraryToFile
+
+				if confirm "\nRemove these tracks?"
+					unattachedTracks.each { |id, track| tracksToDelete[id] = track }
 				end
 			else
 				puts "Every track is assigned to a playlist. No suggestions for deletion."
 			end
+
+			# delete chosen tracks from library
+			if tracksToDelete.length > 0
+				tracksToDelete.each do |id, track|
+					@library['library'].delete id
+				end
+
+				confirmMsg = "\nLibrary now contains #{@library['library'].length} tracks. Write to file?"
+				writeLibraryToFile if confirm confirmMsg
+			else
+				puts "No tracks to delete."
+			end
+
+			puts "Cleanup finished."
 		end
 
 		def getSecondsFromDurationString durationString
@@ -730,6 +743,11 @@ module Tunewich
 			end
 
 			@cliRotateCharacters[@cliRotateIndex]
+		end
+
+		def confirm message
+			print "#{message} (y/N): "
+			STDIN.gets.chomp.match(/^[Yy]/)
 		end
 
 		alias deleteStream deleteTempFile
