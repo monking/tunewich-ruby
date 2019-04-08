@@ -10,12 +10,14 @@ module Tunewich
 	class Player
 		def initialize
 			@sessionID = Random.rand(1024)
-			@scriptDir = File.dirname(__FILE__)
 			@playlistName = nil
 			@trackIndex = nil
 			@tracks = []
-			@libraryFilePath = "#{@scriptDir}/../library.json"
-			@library = JSON.parse(File.read(@libraryFilePath))
+			if ENV.key? 'TUNEWICH_DIR'
+				setLibraryPath ENV['TUNEWICH_DIR']
+			else
+				puts "Please add `export TUNEWICH_DIR=\"<path/to/your/music/directory>\"` to your ~/.profile or similar file."
+			end
 
 			parseOptions
 
@@ -44,7 +46,7 @@ module Tunewich
 			elsif @trackIndex.to_i === 0
 				@trackIndex = findTrackIndex @trackIndex
 			else
-				@trackIndex = @trackIndex.to_i - 1
+				@trackIndex = @trackIndex.to_i
 			end
 
 			# TODO: catch SIGINT (ctrl+c) & prompt for playlist again
@@ -60,6 +62,10 @@ module Tunewich
 		def parseOptions
 			parser = OptionParser.new
 
+			parser.on("-i", "--input-dir DIR", "Directory from which to read the playlist and files. This option must come first. Recommended to define TUNEWICH_DIR instead.") do |inputDir|
+				# TODO: always process this option first, even if it's provided last
+				setLibraryPath inputDir
+			end
 			parser.on("-t", "--track INDEX/QUERY", "If a number is given, seek to that track. If a string, the title of the track is searched for.") do |trackQuery|
 				if trackQuery.to_i != 0
 					@trackIndex = trackQuery.to_i - 1
@@ -67,14 +73,16 @@ module Tunewich
 					@trackIndex = trackQuery
 				end
 			end
-			parser.on("-a", "--all", "Play entire library.") do
-				useEntireLibrary
+			parser.on("-a", "--add-track YOUTUBE_ID", "Add a track to the playlist and save.") do |id|
+				promptForPlaylist if not @playlistName
+				getIdFromYoutubeUrl! id
+				newTrack = createTrack id
+				addTrackToPlaylist newTrack, @playlistName
+				writeLibraryToFile
+				exit
 			end
 			parser.on("-p", "--playlist QUERY", "Partial or full name of a playlist.") do |playlistQuery|
 				@playlistName = findPlaylistName playlistQuery
-			end
-			parser.on("-i", "--input-dir DIR", "Directory from which to read the playlist files.") do |inputDir|
-				@fileDirectory = inputDir
 			end
 			parser.on("-r", "--rating MIN_RATING", "Only play tracks rated at least the minimum given.") do |rating|
 				filterTracksByRating rating.to_i
@@ -88,14 +96,6 @@ module Tunewich
 			parser.on("-l", "--loop", "Loop, even if a track doesn't have an A/B loop defined.") do
 				@loop = true
 			end
-			parser.on("-n", "--new-track YOUTUBE_ID", "Add a track to the playlist and save.") do |id|
-				promptForPlaylist if not @playlistName
-				getIdFromYoutubeUrl! id
-				newTrack = createTrack id
-				addTrackToPlaylist newTrack, @playlistName
-				writeLibraryToFile
-				exit
-			end
 			parser.on("-q", "--query QUERY", "Search YouTube for a video.") do |query|
 				@tracks = searchYouTube query
 			end
@@ -107,11 +107,34 @@ module Tunewich
 			@mplayerOverrideCommands = parser.parse(ARGV)
 		end
 
+		def setLibraryPath libraryPath
+			@tunewichDirectory = libraryPath
+			if not Dir.exist? @tunewichDirectory
+				puts "Please create the directory '#{@tunewichDirectory}'."
+				exit
+			end
+
+			@fileDirectory = "#{@tunewichDirectory}/music"
+			Dir.mkdir @fileDirectory if not Dir.exist? @fileDirectory
+
+			@libraryFilePath = "#{@tunewichDirectory}/tunewich-library.json"
+			if not File.exist? @libraryFilePath
+				raise "TODO: create library file at #{@libraryFilePath}"
+			end
+
+			@library = JSON.parse(File.read(@libraryFilePath))
+		end
+
 		def promptForPlaylist
-			puts "Please choose a playlist:\n  #{@library['playlists'].keys.join "\n  "}"
+			puts "Please choose a playlist (leave blank to play all):\n  #{@library['playlists'].keys.join "\n  "}"
 			selectedListName = nil
 			while !selectedListName do
-				selectedListName = findPlaylistName STDIN.gets.chomp
+				playlistQuery = STDIN.gets.chomp
+				if not playlistQuery
+					useEntireLibrary
+					break
+				end
+				selectedListName = findPlaylistName playlistQuery
 				if !selectedListName
 					puts "No matches. Try again"
 				end
@@ -295,14 +318,14 @@ module Tunewich
 
 		def deleteTempFile(name)
 			path = getTempFilePath name
-			if File.exists? path
+			if File.exist? path
 				File.delete path
 			end
 		end
 
 		def makeStream(name)
 			path = getTempFilePath name
-			if File.exists? path
+			if File.exist? path
 				raise "The temp file '#{name}' already exists. (#{path})"
 			end
 			if not system "mkfifo \"#{path}\""
