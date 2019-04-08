@@ -2781,21 +2781,27 @@ module Tunewich
 					whisper("looping to target '#{@currentTrack[noteType][currentIndex]['loop_target']}'", 2)
 					@currentlySkipping = "#{noteType}:#{currentIndex}"
 
+					isLooping = false
 					loopTargetSeconds = getSecondsFromDurationString loopTarget
 					if loopTargetSeconds
+						isLooping = true
 						seek loopTargetSeconds
 					else
 						targetNoteIndex = getNoteIndexByQuery loopTarget, @currentTrack[noteType]
+						isLooping = true
 						if targetNoteIndex
-							if @loopHistory.has_key?(loopTarget)
-								@loopHistory[loopTarget] += 1
-							else
-								@loopHistory[loopTarget] = 1;
-							end
 							whisper("\nLoop ##{getLoopLimitStatusMessage}", 1)
 							seekTime = @currentTrack[noteType][targetNoteIndex]['time']
 							seekSeconds = getSecondsFromDurationString seekTime
 							seek seekSeconds
+						end
+					end
+
+					if isLooping
+						if @loopHistory.has_key?(loopTarget)
+							@loopHistory[loopTarget] += 1
+						else
+							@loopHistory[loopTarget] = 1;
 						end
 					end
 
