@@ -7,6 +7,7 @@ require "open-uri" # URI
 require "optparse" # OptionParser
 require "json" # JSON
 require "digest" # Digest
+require "nokogiri" # Nokogiri::XML
 
 $clearLineCharacter = "\033[0K"
 $disableWrapCharacter = "\033[?7l"
@@ -97,7 +98,9 @@ module Tunewich
 			# 2: very verbose user output
 			# 3: errors
 			# 4: debug
-			putsRealtime "  #{"-" * verbosity} #{message}" if @configuredVerbosity >= verbosity
+      if @configuredVerbosity >= verbosity
+        STDERR.puts "  #{"-" * verbosity} #{message}"
+      end
 		end
 
 		def getEnvironmentConfig
@@ -203,8 +206,8 @@ module Tunewich
 				'rate' => {
 					'description' => "Rate this track.",
 					'action' => Proc.new { |input|
-						chunks = input.split ' '
-						newRating = chunks.shift if (chunks.length > 0) && (chunks[0].match /^[0-9]/)
+						inputParts = input.match(/^([^\/]*)(.*)$/)
+						newRating = inputParts[1] if (inputParts[1].length > 0) && (inputParts[1].match /^[0-9]/)
 						if !newRating || newRating.length < 1
 							putsRealtime "current rating: #{@currentTrack['rating']}"
 						else
@@ -215,7 +218,7 @@ module Tunewich
 								writeLibraryToFile
 							end
 						end
-						{:chainedInput => chunks.join(' ')}
+						{:chainedInput => inputParts[2]}
 					}
 				},
 				'bpm' => {
@@ -326,7 +329,7 @@ module Tunewich
 					'action' => Proc.new { |input|
 						inputParts = input.match(/^([^\/]*)(.*)$/)
 						trackIndex = inputParts[1]
-						if trackIndex && trackIndex.length
+						if trackIndex && trackIndex.length > 0
 							if trackIndex.to_i == 0
 								@trackIndex = findTrackIndex trackIndex
 							else
@@ -394,11 +397,11 @@ module Tunewich
 				'wait' => {
 					'description' => 'Wait some number of seconds to execute following chained commands',
 					'action' => Proc.new { |input|
-						chunks = input.split ' '
-						if chunks.length > 0 && chunks[0].match(/^[0-9.]+$/)
-							sleep chunks.shift.to_f
+						inputParts = input.match(/^([^\/]*)(.*)$/)
+						if inputParts[1].length > 0 && inputParts[1].match(/^[0-9.]+$/)
+							sleep inputParts[1].to_f
 						end
-						{:chainedInput => chunks.join(' ')}
+						{:chainedInput => inputParts[2]}
 					}
 				},
 				'list' => {
@@ -474,10 +477,14 @@ module Tunewich
 				'info' => {
 					'description' => "Show track info",
 					'action' => Proc.new { |input|
-						chunks = input.split ' '
-						index = chunks.shift
-						if index && index.length > 0
-							track = @tracks[index.to_i - 1]
+						inputParts = input.match(/^([^\/]*)(.*)$/)
+						index = inputParts[1]
+						if inputParts[1] && inputParts[1].length > 0
+							if inputParts[1].to_i == 0
+								track = @tracks[findTrackIndex(inputParts[1])]
+							else
+								track = @tracks[inputParts[1].to_i - 1]
+							end
 						else
 							track = @currentTrack
 						end
@@ -545,7 +552,7 @@ module Tunewich
 						outputMessageLines << "------------------------------"
 						putsRealtime outputMessageLines.join "\n"
 
-						{:chainedInput => chunks.join(' ')}
+						{:chainedInput => inputParts[2]}
 					}
 				},
 				'search' => {
@@ -708,19 +715,19 @@ module Tunewich
 					}
 				},
 				'add' => {
-					'description' => 'Add a track by id.',
+					'description' => 'Add a new track to the play queue. Input: audio URL, page URL containing links to media, YouTube video ID.',
 					'action' => Proc.new { |input|
-						chunks = input.split ' '
-						if chunks.length > 0
-							videoID = chunks.shift
-							tracks = getTracksFromURLs videoID
+            inputParts = input.match(/^(.*?)( \/.*)?$/)
+						urls = inputParts[1].split ','
+						if urls.length > 0
+							tracks = getTracksFromURLs urls
 							putsRealtime "Adding #{tracks.length} tracks to queue. Playing next."
 							@tracks += tracks
 
 							@trackIndex = @tracks.length - tracks.length
 							commandRequiresNext = true
 						end
-						{:chainedInput => chunks.join(' ')}
+						{:chainedInput => inputParts[2]}
 					}
 				},
 				'again' => {
@@ -941,13 +948,13 @@ module Tunewich
 				'format' => {
 					'description' => 'Choose the file format to download (e.g. "mp4"; default "m4a").',
 					'action' => Proc.new { |input|
-						chunks = input.split ' '
-						if chunks.length > 0
-							@preferredFileFormat = chunks.shift
+						inputParts = input.match(/^([^\/]*)(.*)$/)
+						if inputParts[1].length > 0
+							@preferredFileFormat = inputParts[1]
 						else
 							putsRealtime "preferred file format: #{@preferredFileFormat}"
 						end
-						{:chainedInput => chunks.join(' ')}
+						{:chainedInput => inputParts[2]}
 					}
 				},
 				'commands' => {
@@ -1120,7 +1127,6 @@ module Tunewich
 				for stepIndex in 1..speedRampStepCount
 					speed += speedStep
 					@currentSpeed = speed
-					# showPlaybackInfo true # XXX
 					putInTempFile "#{Player::MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "speed_set #{speed}\n"
 					sleep speedRampInterval
 				end
@@ -1171,7 +1177,7 @@ module Tunewich
 			whisper "removing tags: #{tagNames}", 2
 			tagNames.each { |tagName|
 				matchingTag = findTag tagName
-				if matchingTag
+				if matchingTag && matchingTag['tracks']
 					matchingTag['tracks'].delete track['id'] if matchingTag['tracks'].include? track['id']
 				end
 			}
@@ -1182,10 +1188,13 @@ module Tunewich
 
 			if firstTag
 				tagNames.each { |collapsingTagName|
-					tag = findTag collapsingTagName
-					if tag && tag != firstTag
+					collapsingTag = findTag collapsingTagName
+					if collapsingTag && collapsingTag != firstTag
 						firstTag['aliases'] << collapsingTagName
-						firstTag['tracks'].concat tag['tracks']
+						if collapsingTag['tracks'] && collapsingTag['tracks'].length > 0
+							firstTag['tracks'] ||= []
+							firstTag['tracks'].concat collapsingTag['tracks']
+						end
 						deleteTag collapsingTagName
 					end
 				}
@@ -1577,7 +1586,7 @@ module Tunewich
 		def getTrackTags track
 			tags = []
 			@library['tags'].each { |name, tag|
-				tags << name if tag['tracks'].include? track['id']
+				tags << name if tag.has_key?('tracks') && tag['tracks'].include?(track['id'])
 			}
 			tags
 		end
@@ -1862,8 +1871,10 @@ module Tunewich
 			@playlistName = name
 			tracks = []
 
-			@library['playlists'][@playlistName]['tracks'].each do |trackReference|
-				tracks << @library['library'][trackReference]
+			if @library['playlists'][@playlistName]['tracks']
+				@library['playlists'][@playlistName]['tracks'].each do |trackReference|
+					tracks << @library['library'][trackReference]
+				end
 			end
 
 			useTracks tracks, append
@@ -1920,16 +1931,16 @@ module Tunewich
 
 		def removeTrackFromLibrary(id)
 			@library['library'].delete id
-			@library['playlists'].each { |playlistName, p|
-				index = p['tracks'].index id
+			@library['playlists'].each { |playlistName, playlist|
+				index = playlist['tracks'].index id
 				if index
-					p['tracks'].delete_at index
+					playlist['tracks'].delete_at index
 				end
 			}
-			@library['tags'].each { |tagName, t|
-				index = t['tracks'].index id
+			@library['tags'].each { |tagName, tag|
+				index = tag.has_key('tracks') ? tag['tracks'].index(id) : nil
 				if index
-					t['tracks'].delete_at index
+					tag['tracks'].delete_at index
 				end
 			}
 		end
@@ -1947,6 +1958,7 @@ module Tunewich
 						@library['library'].map { |id, t| unattachedTracks[id] = t }
 
 						@library['playlists'].each do |name, playlist|
+							next if !playlist['tracks']
 							playlist['tracks'].each do |id|
 								unattachedTracks.delete id if unattachedTracks.has_key? id
 							end
@@ -2211,7 +2223,7 @@ module Tunewich
 						tagName.sub!(unionPattern, '') if isUnionTag
 						if @library['tags'].has_key? tagName
 							selectedTags << {:name => tagName, :tag => @library['tags'][tagName], :union => isUnionTag}
-							if isUnionTag
+							if isUnionTag && @library['tags'][tagName]['tracks']
 								unionTagTracks += @library['tags'][tagName]['tracks'];
 							end
 						else
@@ -2220,8 +2232,8 @@ module Tunewich
 									libraryTag['aliases'].each { |tagAlias|
 										if tagAlias == tagName
 											selectedTags << {:name => name, :tag => libraryTag, :union => isUnionTag}
-											if isUnionTag
-												unionTagTracks += @library['tags'][tagName]['tracks'];
+											if isUnionTag && @library['tags'][tagName]['tracks']
+												unionTagTracks += @library['tags'][tagName]['tracks']
 											end
 										end
 									}
@@ -2234,7 +2246,7 @@ module Tunewich
 					if selectedTags.length > 0
 						# TODO: make a list of IDs and filter tracks against it once, rather than filtering separately for each tag
 						selectedTags.each { |tagInfo|
-							tracks.send(action) { |t| tagInfo[:tag]['tracks'].index(t['id']) || unionTagTracks.index(t['id']) }
+							tracks.send(action) { |t| tagInfo[:tag]['tracks'] && tagInfo[:tag]['tracks'].index(t['id']) || unionTagTracks.index(t['id']) }
 						}
 
 						if unionTagTracks.length > 0
@@ -2246,7 +2258,7 @@ module Tunewich
 				else
 					@library['tags'].each { |name, libraryTag|
 						tracks.send(action) { |t|
-							libraryTag['tracks'].index(t['id'])
+							libraryTag['tracks'] && libraryTag['tracks'].index(t['id'])
 						}
 					}
 				end
@@ -2341,23 +2353,26 @@ module Tunewich
 		end
 
 		def createTrack url, type
-			if type == 'youtube'
-				src = looksLikeAYouTubeID?(url) ? url : getYoutubeIdFromUrl(url)
-				id = src
-			elsif type == 'ocremix'
-				src = getOCRemixSource url
-				id = getIDFromOCRemixURL url
-			else
-				src = url
-				id = Digest::MD5.hexdigest(url).to_s
-				whisper "MD5 digest of url: #{id}", 3
-			end
-			{
-				'id' => id,
+      newTrack = {
 				'type' => type,
-				'src' => src,
 				'unattached' => true
-			}
+      }
+
+			if type == 'youtube'
+				newTrack['src'] = looksLikeAYouTubeID?(url) ? url : getYoutubeIdFromUrl(url)
+				newTrack['id'] = newTrack['src']
+			elsif type == 'ocremix'
+				newTrack['src'] = getOCRemixSource url
+				newTrack['id'] = getIDFromOCRemixURL url
+			elsif type == 'podcast'
+				newTrack['src'] = url
+				newTrack['id'] = Digest::MD5.hexdigest(url).to_s
+			else
+				newTrack['src'] = url
+				newTrack['id'] = Digest::MD5.hexdigest(url).to_s
+			end
+
+      newTrack
 		end
 
 		def getYouTubeTrackInfo id
@@ -2425,11 +2440,11 @@ module Tunewich
 		end
 
 		def addTrackReferenceToPlaylist trackReference, playlistName
-			playlistTracks = @library['playlists'][playlistName]['tracks']
 			track = @library['library'][trackReference]
 
-			if not playlistTracks.include? trackReference
-				playlistTracks << trackReference
+			if !@library['playlists'][playlistName].has_key?('tracks') || !@library['playlists'][playlistName]['tracks'].include?(trackReference)
+				@library['playlists'][playlistName]['tracks'] ||= []
+				@library['playlists'][playlistName]['tracks'] << trackReference
 				puts "Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'"
 			else
 				puts "Track '#{track['title']}' (#{trackReference}) is already in playlist '#{playlistName}'"
@@ -2775,7 +2790,7 @@ module Tunewich
 		def getTracksFromURLs(urls)
 			tracks = []
 
-			urls.split(',').each { |url|
+			urls.each { |url|
 				urlCanBeScraped = true # assuming this for now
 				if url.match(/ocremix\.org\/remix/)
 					tracks << matchExistingLibraryTrack(createTrack(url, 'ocremix'))
@@ -2790,7 +2805,8 @@ module Tunewich
 					tracks << updateTrackInfo(matchExistingLibraryTrack(createTrack(youtubeId, 'youtube')))
 					puts "This URL contains a YouTube ID. Adding."
 				else
-					urlContentType = `curl -sL --head "#{url}" | grep Content-Type | tail -1`.chomp.sub 'Content-Type: ', ''
+          urlHTTPHead = `curl -sL --head "#{url}"`
+          urlContentType = urlHTTPHead.lines.keep_if { |line| line.match(/^Content-Type:/i) }.last.chomp.sub 'Content-Type: ', ''
 					whisper "urlContentType: #{urlContentType}", 3
 					if urlContentType.match /^audio\//
 						urlCanBeScraped = false
@@ -2801,6 +2817,39 @@ module Tunewich
 						whisper "track (after matching existing): #{track}", 3
 						tracks << track
 						whisper "added: #{tracks.last}", 3
+          elsif urlContentType.match /^text\/xml/
+            whisper "WIP: try to load podcast feed"
+						urlCanBeScraped = false
+            feedXML = `curl -sL "#{url}"`
+            feedDoc = Nokogiri::XML(feedXML)
+            if not feedDoc
+              whisper "bad feed XML", 3
+              whisper feedXML, 4
+              break
+            end
+            podcastName = feedDoc.at_xpath('/rss/channel/title')
+            podcastPlaylist = {
+              'description' => feedDoc.at_xpath('/rss/channel/description'),
+              'tags' => ['podcast'],
+              'tracks' => []
+            }
+            podcastTracks = []
+            feedDoc.xpath('//rss/channel/item').each { |itemElement|
+              whisper "itemElement: #{itemElement}", 4
+              enclosure = itemElement.at_xpath('enclosure')
+              if enclosure
+                newTrack = createTrack(enclosure['url'], enclosure['type'])
+                newTrack['title'] = itemElement.at_xpath('title').content.chomp
+                newTrack['description'] = itemElement.at_xpath('itunes:summary').content.chomp
+                whisper "newTrack: #{newTrack}", 4
+                podcastTracks << newTrack
+              else
+                whisper "This RSS item does not have an enclosure, i.e. no link to the audio", 3
+              end
+            }
+            podcastPlaylist['tracks'] = podcastTracks.map { |track| track['id'] }
+            whisper "podcastPlaylist: #{JSON.pretty_generate podcastPlaylist}", 3
+            tracks += podcastTracks
 					end
 				end
 
