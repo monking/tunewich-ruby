@@ -144,6 +144,14 @@ module Tunewich
 				#  d: download
 				playbackSuccessful = play @tracks[@trackIndex], chapterIndex
 
+				if @ratingsPromptDuration
+					new_rating = timedCommandPrompt @ratingsPromptDuration, "rating (#{@tracks[@trackIndex]['rating']}): "
+					if new_rating && new_rating.length > 0
+						@tracks[@trackIndex]['rating'] = new_rating.to_i
+						writeLibraryToFile
+					end
+				end
+
 				nextTrack() if not chapterIndex # if a chapter was selected, prompt again in the next iteration
 
 			end
@@ -226,6 +234,10 @@ module Tunewich
 				@tracks = searchYouTube @youtubeSearch
 			end
 
+			parser.on("-r", "--rating-prompt SECONDS", "Prompt for a rating after every track plays, waiting SECONDS before continuing to the next track") do |seconds|
+				@ratingsPromptDuration = seconds.to_i
+			end
+
 			parser.on("-s", "--shuffle", "Enable shuffle.") do
 				@shuffle = true
 			end
@@ -297,12 +309,11 @@ module Tunewich
 			selectedChapterIndex = nil
 
 			chapterList = chapters.map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
-			puts "Please choose a chapter (leave blank to play first):\n  #{chapterList.join "\n  "}"
-			puts message if message
+			promptMessage = "  #{chapterList.join "\n  "}\nPlease choose a chapter (leave blank to play first):"
+			promptMessage += "\n#{message}" if message
 
 			while not selectedChapterIndex do
-
-				chapterResponse = commandPrompt commands
+				chapterResponse = commandPrompt promptMessage commands
 				chapterQuery = chapterResponse[:input]
 				break if not chapterQuery or chapterQuery.length === 0
 
@@ -1036,10 +1047,29 @@ module Tunewich
 
 		def confirm message, commands = nil
 			confirmMessage = "#{message} (y/N): "
-			commandPrompt(commands, confirmMessage)[:input].match(/^[Yy]/)
+			commandPrompt(confirmMessage, commands)[:input].match(/^[Yy]/)
 		end
 
-		def commandPrompt commands = nil, message = nil
+		def timedCommandPrompt timeout, message = nil, commands = nil
+			input = nil
+
+			thr = Thread.new {
+				input = STDIN.gets.chomp # doesn't keep the thread alive...
+				# input = commandPrompt message, commands # doesn't keep the thread alive...
+			}
+
+			timer = 0
+			while thr.alive?
+				printRepeat "(#{timeout - timer}) #{message}"
+				sleep 1
+				timer += 1
+				Thread.kill thr if timer >= timeout
+			end
+
+			input
+		end
+
+		def commandPrompt message = nil, commands = nil
 			if commands
 				commands['help'] = {
 					'info' => 'show this info',
