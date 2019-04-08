@@ -33,8 +33,8 @@ module Tunewich
 		FILTER_HELP_2 = "Available rules are: [min-,max-]rating=<#0-5>,title=<query>,tag=<tag>,chapters,last=<[[[DD:]HH:]MM:]SS>,ab."
 		FILTER_HELP_3 = "Prepend an '-' to your rule to add it to exclude matches (e.g. '-tag=' vs 'tag=')."
 		MODES = {
-			'playing' => 'playing',
-			'editing' => 'editing'
+			'play' => 'play',
+			'edit' => 'edit'
 		}
 		TAG_INPUT_SPLIT = /[,\s]+/
 		PLAYER_APPLICATION = 'mplayer'
@@ -43,7 +43,7 @@ module Tunewich
 		UNAME = `uname`.chomp
 
 		def initialize
-			@userMode = Player::MODES['playing']
+			@userMode = Player::MODES['play']
 			@library = nil
 			@libraryHash = nil
 			@eventBindings = {}
@@ -163,6 +163,8 @@ module Tunewich
 			trigger 'speed_change'
 
 			listenForExternalCommands
+
+			main
 		end
 
 		def cleanup
@@ -195,14 +197,13 @@ module Tunewich
 			sendPlayerCommand @isPlayerPlaying ? 'pause' : 'play'
 		end
 
-		def interactivePlayback
+		def main
 			bindingGroupName = 'interactivePlayback'
 
-			shouldExitPlayerLoop = false
+			shouldExitMainLoop = false
 			bindOnce 'before_exit', Proc.new {
-				whisper "before_exist: quitting mplayer", 3
-				shouldExitPlayerLoop = true
-				sendPlayerCommand "q"
+				shouldExitMainLoop = true
+				exitPlayerCommand
 			}, bindingGroupName
 
 			if @tracks && @tracks.length > 0
@@ -214,11 +215,12 @@ module Tunewich
 			# TODO: 1gG4j1
 			playerOutput = nil
 
+			initialUserMode = @userMode
 			interactiveCommands = getInteractiveCommands [@userMode], bindingGroupName
 
 			# chaptersNotPlayed = []
 
-			while not playerOutput or playerOutput[:exit] do
+			while @userMode == 'edit' or not playerOutput or playerOutput[:exit] do
 				if @trackIndex && @tracks[@trackIndex]
 					previousTrack = @currentTrack
 					@currentTrack = matchExistingLibraryTrack @tracks[@trackIndex]
@@ -240,27 +242,43 @@ module Tunewich
 						next
 					end
 
-					playerOutput = play @currentTrack, interactiveCommands
+					if @userMode != initialUserMode
+						interactiveCommands = getInteractiveCommands [@userMode], bindingGroupName
+						initialUserMode = @userMode
+					end
 
-					trackDurationInSeconds = getSecondsFromDurationString(@currentTrack['duration'])
+					case @userMode
 
-					if trackDurationInSeconds && !@currentTrack['unattached']
-						loadLibrary
-						@currentTrack = matchExistingLibraryTrack(@currentTrack)
-						@currentTrack['playTime'] ||= 0
-						@currentTrack['playTime'] += playerOutput[:playTime].to_i
-						minimumPlayTime = [30, trackDurationInSeconds - 10].min
-						if playerOutput[:playTime] >= minimumPlayTime
-							@currentTrack['lastPlayed'] = playerOutput[:endTime].to_i
-							@currentTrack['playCount'] ||= 0
-							@currentTrack['playCount'] += 1
-							whisper("listened for #{playerOutput[:playTime]} (>= min #{minimumPlayTime}): bumping play count to #{@currentTrack['playCount']}", 1)
-						else
-							@currentTrack['skipCount'] ||= 0
-							@currentTrack['skipCount'] += 1
-							whisper("listened for #{playerOutput[:playTime]} (< min #{minimumPlayTime}): bumping SKIP count to #{@currentTrack['skipCount']}", 1)
+					when 'play'
+						playerOutput = play @currentTrack, interactiveCommands
+						if @tracks.empty? || !@trackIndex || 0 > @trackIndex || @trackIndex > @tracks.length - 1
+							setUserMode 'edit'
 						end
-						writeLibraryToFile
+					when 'edit'
+						commandPrompt 'edit', interactiveCommands
+					end
+
+					if @currentTrack && playerOutput
+						trackDurationInSeconds = getSecondsFromDurationString(@currentTrack['duration'])
+
+						if trackDurationInSeconds && !@currentTrack['unattached']
+							loadLibrary
+							@currentTrack = matchExistingLibraryTrack(@currentTrack)
+							@currentTrack['playTime'] ||= 0
+							@currentTrack['playTime'] += playerOutput[:playTime].to_i
+							minimumPlayTime = [30, trackDurationInSeconds - 10].min
+							if playerOutput[:playTime] >= minimumPlayTime
+								@currentTrack['lastPlayed'] = playerOutput[:endTime].to_i
+								@currentTrack['playCount'] ||= 0
+								@currentTrack['playCount'] += 1
+								whisper("listened for #{playerOutput[:playTime]} (>= min #{minimumPlayTime}): bumping play count to #{@currentTrack['playCount']}", 1)
+							else
+								@currentTrack['skipCount'] ||= 0
+								@currentTrack['skipCount'] += 1
+								whisper("listened for #{playerOutput[:playTime]} (< min #{minimumPlayTime}): bumping SKIP count to #{@currentTrack['skipCount']}", 1)
+							end
+							writeLibraryToFile
+						end
 					end
 				else
 					whisper("Empty tracklist", 3)
@@ -269,7 +287,7 @@ module Tunewich
 					commandPrompt "empty", interactiveCommands, emptyAction
 				end
 
-				if shouldExitPlayerLoop
+				if shouldExitMainLoop
 					whisper("Exiting player loop", 3)
 					break
 				end
@@ -292,10 +310,6 @@ module Tunewich
 					}
 				}
 			end
-		end
-
-		def	interactiveEdit
-			commandPrompt @userMode, getInteractiveCommands([@userMode], 'editingModeBindingGroup')
 		end
 
 		def trigger eventName, data = nil
@@ -706,6 +720,13 @@ module Tunewich
 			# TODO: 1gG4fU @refactor
 			interactiveCommands = {
 				'base' => {
+					'play' => {
+						'description' => 'Start playing (enter "play" mode).',
+						'action' => Proc.new {
+							setUserMode 'play'
+							false
+						}
+					},
 					'wait' => {
 						'description' => 'Wait for an event, or some number of seconds, to execute following chained commands. Events: chapter_change, play_start, play_end, fade_start, fade_end, speed_ramp_start, speed_ramp_end, download_success. You may use fuzzy substrings of the event names, e.g. "ch" will match "chapter_change", and "ple" will match "play_end".',
 						'args' => [
@@ -762,7 +783,7 @@ module Tunewich
 					'clear' => {
 						'description' => 'Clear current tracklist',
 						'action' => Proc.new { |input, command|
-							@useTracks []
+							useTracks []
 							{:chainedInput => input}
 						}
 					},
@@ -770,6 +791,27 @@ module Tunewich
 						'description' => "Load entire library.",
 						'action' => Proc.new { |input, command|
 							useEntireLibrary
+							{:chainedInput => input}
+						}
+					},
+					'turn' => {
+						# TODO: 1gG4hV
+						'description' => "Use all this track's tags to populate the track list.",
+						'action' => Proc.new { |input, command|
+							trackTags = getTrackTags @currentTrack
+							if trackTags.length > 0
+								putsRealtime "Playing tracks with similar tags: #{trackTags.join ', '}"
+								@trackFilters ||= {}
+								@trackFilters['tag'] = "+#{trackTags.join ' +'}"
+								useEntireLibrary
+								@trackIndex = 1 # next track (current track will almost certainly be at index 0)
+								if @shuffle
+									@shuffle = false
+									putsRealtime "shuffle: off"
+								end
+							else
+								putsRealtime "Add some tags to this track to find similar tracks."
+							end
 							{:chainedInput => input}
 						}
 					},
@@ -1070,20 +1112,6 @@ module Tunewich
 							nil
 						}
 					},
-					'shuffle' => {
-						'description' => 'Toggle shuffle.',
-						'args' => ['on', 'off'],
-						'showStatus' => Proc.new {
-							putsRealtime "shuffle: #{@shuffle ? 'on' : 'off'}" if @configuredVerbosity >= 1
-						},
-						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
-							@shuffle = getToggledValueByInput.call(@shuffle, inputParts[:query])
-							shuffleIndex() if @shuffle
-							command['showStatus'].call
-							{:chainedInput => inputParts[:remainder]}
-						}
-					},
 					'net' => {
 						'description' => 'Toggle network enabled.',
 						'args' => ['on', 'off'],
@@ -1213,6 +1241,14 @@ module Tunewich
 						},
 						'tabComplete' => Proc.new { |input, command| noteTabComplete.call(input, command, 'chapters') }
 					},
+					'note' => {
+						'description' => "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing).",
+						'args' => noteCommandArgs,
+						'action' => Proc.new { |input, command|
+							handleNoteCommand.call input, command, 'notes'
+						},
+						'tabComplete' => Proc.new { |input, command| noteTabComplete.call(input, command, 'notes') }
+					},
 					'filter' => {
 						'description' => 'Set filters (same as -f/--filter). With no arguments, the filters are edited in Vim.',
 						'listFilters' => Proc.new {
@@ -1314,13 +1350,6 @@ module Tunewich
 								command['showStatus'].call
 							end
 							{:chainedInput => inputParts[:remainder]}
-						}
-					},
-					'commands' => {
-						'description' => "List #{Player::PLAYER_APPLICATION} commands.",
-						'action' => Proc.new { |input, command|
-							system "#{Player::PLAYER_APPLICATION} -input cmdlist"
-							{:chainedInput => input}
 						}
 					},
 					'relatetags' => {
@@ -1499,11 +1528,107 @@ module Tunewich
 							@currentTrack = matchExistingLibraryTrack @currentTrack
 							{:chainedInput => inputParts[:remainder]}
 						}
+					},
+					'player' => {
+						'description' => 'Define player startup options. Takes effect on the next track being played',
+						'action' => Proc.new { |input, command|
+							samplePlayerCommands = [];
+							samplePlayerCommands << 'Some sample options:';
+							samplePlayerCommands << 'small video window in the corner: -geometry 100%:100% -xy 150';
+							samplePlayerCommands << 'mix stereo to mono (same as /mono command): -af pan=1:0.5:0.5';
+							@playerOverrideCommands = editListInVim(@playerOverrideCommands, samplePlayerCommands.join("\n"))
+							{:chainedInput => input}
+						}
+					},
+					'stream' => {
+						'description' => "Ignore downloaded files. This is useful if you want to play a different format than the one downloaded (e.g. audio vs. video).",
+						'showStatus' => Proc.new {
+							putsRealtime "force streaming: #{@forceStreaming ? 'on' : 'off'}"
+						},
+						'action' => Proc.new { |input, command|
+							inputParts = getCommandInputParts(input)
+							@forceStreaming = getToggledValueByInput.call(@forceStreaming, inputParts[:query])
+							if @forceStreaming && !@networkEnabled
+								if confirm("Enable network activity?")
+									@networkEnabled = true
+								else
+									putsRealtime("Cannot prefer streaming while network is enabled.")
+									@forceStreaming = false
+								end
+							end
+							command['showStatus'].call
+							{:chainedInput => inputParts[:remainder]}
+						}
+					},
+					'commands' => {
+						'description' => "List #{Player::PLAYER_APPLICATION} commands.",
+						'action' => Proc.new { |input, command|
+							system "#{Player::PLAYER_APPLICATION} -input cmdlist"
+							{:chainedInput => input}
+						}
+					},
+					'mono' => {
+						'description' => 'Toggle downmixing to mono. If mono is enabled before the track starts, toggling will have no effect until the player starts again (e.g. `/again / q`).',
+						'showStatus' => Proc.new {
+							putsRealtime "downmix to mono: #{@downmixMono ? 'on' : 'off'}"
+						},
+						'action' => Proc.new { |input, command|
+							inputParts = getCommandInputParts(input)
+							if inputParts[:query] != 'status' # if status, fall though
+								@downmixMono = getToggledValueByInput.call(@downmixMono, inputParts[:remainder])
+								sendPlayerCommand 'af_del pan'
+								sendPlayerCommand 'af_add pan=1:0.5:0.5' if @downmixMono # assuming stereo source
+							end
+
+							command['showStatus'].call
+
+							{:chainedInput => inputParts[:remainder]}
+						}
+					},
+					'loudness' => { # TODO 1gzQHH
+						'description' => "Save current volume relative to default in library.",
+						'action' => Proc.new { |input, command|
+							inputParts = getCommandInputParts(input)
+							loudness = inputParts[:query].to_f
+							if loudness > 0.0
+								loadLibrary
+								@currentTrack = matchExistingLibraryTrack @currentTrack
+
+								@currentTrack['loudness'] = loudness
+								@volumeMultipliers['track_loudness'] = loudness
+								writeLibraryToFile
+							end
+							{:chainedInput => inputParts[:remainder]}
+						}
+					},
+					'video' => {
+						'description' => 'Shortcut to enable/disable video-related settings. Toggles between mp4/bestaudio youtube-dl formats (regardless of your previous settings).',
+						'showStatus' => Proc.new {
+							isVideoEnabled = !@playerOverrideCommands.join(' ').match('-novideo')
+							putsRealtime "Video: #{isVideoEnabled ? 'on' : 'off'}"
+							isVideoEnabled
+						},
+						'action' => Proc.new { |input, command|
+							inputParts = getCommandInputParts(input)
+							isVideoEnabled = getToggledValueByInput.call(command['showStatus'].call(), inputParts[:query])
+
+							if isVideoEnabled
+								@playerOverrideCommands.delete_if { |option| option.match(/-novideo\b/) }
+								@preferredFileFormat = 'mp4'
+							else
+								@playerOverrideCommands << '-novideo'
+								@preferredFileFormat = 'bestaudio'
+							end
+
+							command['showStatus'].call
+
+							{:chainedInput => inputParts[:remainder]}
+						}
 					}
 				},
-				'editing' => {
+				'edit' => {
 				},
-				'playing' => {
+				'play' => {
 					'' => {
 						'description' => "Chainable player commands (empty command, i.e. '/').",
 						'action' => Proc.new { |input, command|
@@ -1519,13 +1644,28 @@ module Tunewich
 							output
 						}
 					},
-					'note' => {
-						'description' => "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing).",
-						'args' => noteCommandArgs,
+					'stop' => {
+						'description' => 'Stop playing (enter "edit" mode).',
 						'action' => Proc.new { |input, command|
-							handleNoteCommand.call input, command, 'notes'
+							setUserMode Tunewich::Player::MODES['edit']
+							exitPlayerCommand
+
+							false
+						}
+					},
+					'shuffle' => {
+						'description' => 'Toggle shuffle.',
+						'args' => ['on', 'off'],
+						'showStatus' => Proc.new {
+							putsRealtime "shuffle: #{@shuffle ? 'on' : 'off'}" if @configuredVerbosity >= 1
 						},
-						'tabComplete' => Proc.new { |input, command| noteTabComplete.call(input, command, 'notes') }
+						'action' => Proc.new { |input, command|
+							inputParts = getCommandInputParts(input)
+							@shuffle = getToggledValueByInput.call(@shuffle, inputParts[:query])
+							shuffleIndex() if @shuffle
+							command['showStatus'].call
+							{:chainedInput => inputParts[:remainder]}
+						}
 					},
 					'noteOld' => {
 						'description' => "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing).",
@@ -1736,7 +1876,7 @@ module Tunewich
 						'description' => '/ramp SPEED [DURATION] - Ramp speed',
 						'action' => Proc.new { |input, command|
 							output = nil
-							rampCommandMatch = /^(out|in|[0-9.]*(bpm)?)( [0-9.]+)?[^\/]*(.*)$/.match input
+							rampCommandMatch = /^(out|in|[0-9.]*(bpm)?)( [0-9:.]+)?[^\/]*(.*)$/.match input
 							#                    1              2      3                4
 							if rampCommandMatch
 								output = {:chainedInput => rampCommandMatch[4]}
@@ -1797,27 +1937,6 @@ module Tunewich
 								addMarkToTrack @currentTrack, @commandinputStartPlayerTime
 							end
 							writeLibraryToFile
-							{:chainedInput => input}
-						}
-					},
-					'turn' => {
-						# TODO: 1gG4hV
-						'description' => "Use all this track's tags to populate the track list.",
-						'action' => Proc.new { |input, command|
-							trackTags = getTrackTags @currentTrack
-							if trackTags.length > 0
-								putsRealtime "Playing tracks with similar tags: #{trackTags.join ', '}"
-								@trackFilters ||= {}
-								@trackFilters['tag'] = "+#{trackTags.join ' +'}"
-								useEntireLibrary
-								@trackIndex = 1 # next track (current track will almost certainly be at index 0)
-								if @shuffle
-									@shuffle = false
-									putsRealtime "shuffle: off"
-								end
-							else
-								putsRealtime "Add some tags to this track to find similar tracks."
-							end
 							{:chainedInput => input}
 						}
 					},
@@ -1883,22 +2002,6 @@ module Tunewich
 							{:chainedInput => input}
 						}
 					},
-					'loudness' => { # TODO 1gzQHH
-						'description' => "Save current volume relative to default in library.",
-						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
-							loudness = inputParts[:query].to_f
-							if loudness > 0.0
-								loadLibrary
-								@currentTrack = matchExistingLibraryTrack @currentTrack
-
-								@currentTrack['loudness'] = loudness
-								@volumeMultipliers['track_loudness'] = loudness
-								writeLibraryToFile
-							end
-							{:chainedInput => inputParts[:remainder]}
-						}
-					},
 					'again' => {
 						'description' => "Play this track again, next.",
 						'action' => Proc.new { |input, command|
@@ -1910,77 +2013,17 @@ module Tunewich
 							end
 							{:chainedInput => input}
 						}
-					},
-					'stream' => {
-						'description' => "Ignore downloaded files. This is useful if you want to play a different format than the one downloaded (e.g. audio vs. video).",
-						'showStatus' => Proc.new {
-							putsRealtime "force streaming: #{@forceStreaming ? 'on' : 'off'}"
-						},
-						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
-							@forceStreaming = getToggledValueByInput(@forceStreaming, inputParts[:query])
-							command['showStatus'].call
-							{:chainedInput => inputParts[:remainder]}
-						}
-					},
-					'player' => {
-						'description' => 'Define player startup options. Takes effect on the next track being played',
-						'action' => Proc.new { |input, command|
-							samplePlayerCommands = [];
-							samplePlayerCommands << 'Some sample options:';
-							samplePlayerCommands << 'small video window in the corner: -geometry 100%:100% -xy 150';
-							samplePlayerCommands << 'mix stereo to mono (same as /mono command): -af pan=1:0.5:0.5';
-							@playerOverrideCommands = editListInVim(@playerOverrideCommands, samplePlayerCommands.join("\n"))
-							{:chainedInput => input}
-						}
-					},
-					'mono' => {
-						'description' => 'Toggle downmixing to mono. If mono is enabled before the track starts, toggling will have no effect until the player starts again (e.g. `/again / q`).',
-						'showStatus' => Proc.new {
-							putsRealtime "downmix to mono: #{@downmixMono ? 'on' : 'off'}"
-						},
-						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
-							if inputParts[:query] != 'status' # if status, fall though
-								@downmixMono = getToggledValueByInput.call(@downmixMono, inputParts[:remainder])
-								sendPlayerCommand 'af_del pan'
-								sendPlayerCommand 'af_add pan=1:0.5:0.5' if @downmixMono # assuming stereo source
-							end
-
-							command['showStatus'].call
-
-							{:chainedInput => inputParts[:remainder]}
-						}
-					},
-					'video' => {
-						'description' => 'Shortcut to enable/disable video-related settings. Toggles between mp4/bestaudio youtube-dl formats (regardless of your previous settings).',
-						'showStatus' => Proc.new {
-							isVideoEnabled = !@playerOverrideCommands.join(' ').match('-novideo')
-							putsRealtime "Video: #{isVideoEnabled ? 'on' : 'off'}"
-							isVideoEnabled
-						},
-						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input)
-							isVideoEnabled = getToggledValueByInput.call(command['showStatus'].call(), inputParts[:query])
-
-							if isVideoEnabled
-								@playerOverrideCommands.delete_if { |option| option.match(/-novideo\b/) }
-								@preferredFileFormat = 'mp4'
-							else
-								@playerOverrideCommands << '-novideo'
-								@preferredFileFormat = 'bestaudio'
-							end
-
-							command['showStatus'].call
-
-							{:chainedInput => inputParts[:remainder]}
-						}
 					}
 				}
 			}
 
-			modes << 'base'
-			modes.uniq!
+			if modes.empty?
+				modes = Tunewich::Player::MODES.keys 
+			else
+				modes << 'base'
+				modes.uniq!
+			end
+
 			requestedCommandSet = {}
 
 			modes.each { |modeName|
@@ -1997,6 +2040,10 @@ module Tunewich
 			end
 
 			requestedCommandSet
+		end
+
+		def setUserMode mode
+			@userMode = mode if Tunewich::Player::MODES.has_key?(mode)
 		end
 
 		def getNoteIndexAtTime chapters, seconds
@@ -2381,7 +2428,7 @@ module Tunewich
 			else
 				whisper("Skipping chapter #{fromIndex + 1}; no more playable chapters; skipping track.", 0)
 				fadeVolume 'out', 0.25, @currentPlayerIndex
-				sendPlayerCommand "q"
+				exitPlayerCommand
 			end
 		end
 
@@ -2616,7 +2663,7 @@ module Tunewich
 
 					bindOnce(['note_change', 'chapter_change'], Proc.new {
 						@currentlySkipping = nil
-					})
+					}, bindingGroupName)
 				elsif (
 						!@currentlySkipping &&
 						@currentTrack[noteType][currentIndex] &&
@@ -2629,7 +2676,7 @@ module Tunewich
 
 					bindOnce(['note_change', 'chapter_change'], Proc.new {
 						@currentlySkipping = nil
-					})
+					}, bindingGroupName)
 				else
 					whisper("#{noteType}: #{@currentTrack[noteType][currentIndex]['text']}", 1)
 				end
@@ -2671,6 +2718,11 @@ module Tunewich
 
 			response[:exit] = playerStatus
 			response
+		end
+
+		def exitPlayerCommand
+			whisper "exiting mplayer", 3
+			sendPlayerCommand "q"
 		end
 
 		def getLoopLimitStatusMessage
@@ -3962,7 +4014,7 @@ module Tunewich
 			parser.on("-h", "--help", "Show this help.", " ") do
 				puts parser.help()
 				puts "INTERACTIVE COMMANDS"
-				interactiveCommands = getInteractiveCommands(['playing'], 'help')
+				interactiveCommands = getInteractiveCommands([], 'help')
 				showInteractiveCommandHelp(interactiveCommands)
 				exit
 			end
@@ -4528,7 +4580,6 @@ module Tunewich
 						break
 					end
 				end
-				# break if shouldBreakCommandLoop # leftover from bad refactor
 			end
 
 			whisper("no more commands to execute (for now)", 3)
@@ -4937,14 +4988,6 @@ end
 
 begin
 	player = Tunewich::Player.new
-
-	if player.instance_variable_get(:@userMode) == Tunewich::Player::MODES['playing']
-		player.interactivePlayback
-	else
-		player.interactiveEdit
-	end
-
-	player.kill
 rescue Exception => e
 	message = "Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}"
 	puts message
