@@ -95,22 +95,17 @@ module Tunewich
 			commandRequiresNext = false
 
 			interactiveCommands = {
-				'quit' => {
+				'related' => {
 					'action' => Proc.new {
-						puts "quitting..."
-						commandRequiresBreak = true
-					}
-				},
-				'skip' => {
-					'action' => Proc.new {
-						puts "skipping..."
-						nextTrack()
+						@tracks = getYouTubeTracksFromPage @tracks[@trackIndex]['src']
+						@trackIndex = 0
 						commandRequiresNext = true
 					}
 				},
 				'loop' => {
 					'action' => Proc.new {
 						@loop = !@loop
+						commandRequiresNext = true if @loop
 						puts "loop: #{@loop ? 'on' : 'off'}"
 					}
 				},
@@ -127,10 +122,15 @@ module Tunewich
 			while not playerOutput or playerOutput[:exit] do
 				break if !@trackIndex || !@tracks[@trackIndex]
 
+				commandRequiresBreak = false
+				commandRequiresNext = false
+
 				track = @tracks[@trackIndex]
 
 				titleBlock "[#{@trackIndex + 1}] - #{track['title']}"
 
+				trackShouldBeAddedToLibrary = false
+				trackShouldBeAddedToPlaylist = false
 				changesToWrite = false
 
 				if @updateAllPlayedTrackInfo && !@noNetwork
@@ -182,13 +182,18 @@ module Tunewich
 						loadLibrary
 						track = matchExistingLibraryTrack track
 						track['played'] = Time.now.to_i
-						trackReference = addTrackToLibrary track
-						addTrackReferenceToPlaylist trackReference, @playlistName if @playlistName
-						changesToWrite = true
+						trackShouldBeAddedToPlaylist = true
 					end
 
 					if @ratingsPromptDuration
-						input = timedTextPrompt @ratingsPromptDuration, "rating/tags (#{track['rating']}): "
+						# FIXME: disabling timed prompt in favor of commands for now
+						# input = timedTextPrompt @ratingsPromptDuration, "rating/tags (#{track['rating']}): "
+						response = commandPrompt "rating/tags (#{track['rating']}): ", interactiveCommands
+
+						next if commandRequiresNext
+						break if commandRequiresBreak
+
+						input = response[:input]
 
 						if input && input.length
 							tags = []
@@ -204,14 +209,23 @@ module Tunewich
 							if new_rating
 								track['rating'] = new_rating
 								@tracks[@trackIndex] = track # FIXME: set up @tracks to reference @library
-								changesToWrite = true if !track['unattached'] || new_rating > 0
+								if track['unattached'] && new_rating > 0
+									trackShouldBeAddedToLibrary = true
+								end
 							end
 
 							if tags.length > 0
+								trackShouldBeAddedToLibrary = true
 								addTrackToTags track, tags
 								changesToWrite = true
 							end
 						end
+					end
+
+					if trackShouldBeAddedToLibrary || trackShouldBeAddedToPlaylist
+						trackReference = addTrackToLibrary track
+						addTrackReferenceToPlaylist trackReference, @playlistName if trackShouldBeAddedToPlaylist && @playlistName
+						changesToWrite = true
 					end
 				end
 
@@ -1078,8 +1092,12 @@ module Tunewich
 			getYouTubeTracksFromPage queryUrl
 		end
 
+		def getValidYouTubeURI uri
+			looksLikeAYouTubeID?(uri) ? "https://www.youtube.com/watch?v=#{uri}" : uri
+		end
+
 		def getYouTubeTracksFromPage url
-			url = "https://youtu.be/#{url}" if looksLikeAYouTubeID?(url)
+			url = getValidYouTubeURI url
 			queryResultIds = []
 			open(url) do |handle|
         html = []
@@ -1385,7 +1403,7 @@ module Tunewich
 			input = nil
 
 			thr = Thread.new {
-				input = STDIN.gets.chomp # doesn't keep the thread alive...
+				input = STDIN.gets.chomp
 				# input = commandPrompt message, commands # doesn't keep the thread alive...
 			}
 
