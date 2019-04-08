@@ -7,6 +7,22 @@ require "digest"
 
 module Tunewich
 
+	class UI
+
+	end
+
+	class Library
+
+	end
+
+	class Playlist
+
+	end
+
+	class YouTubeClient
+
+	end
+
 	class Player
 
 		HELP_FILTER = "Filter by rules, in the format 'title=Some Title,tag=fun,chapters'. Available rules are: [min-,max-]rating=[0-5],title=[query],tag=[tag],chapters."
@@ -106,7 +122,6 @@ module Tunewich
 			}
 
 			while playbackSuccessful do
-
 				break if !@trackIndex || !@tracks[@trackIndex]
 
 				titleBlock "[#{@trackIndex + 1}] - #{@tracks[@trackIndex]['title']}"
@@ -118,21 +133,22 @@ module Tunewich
 				end
 
 				chapterIndex = nil
-				if @tracks[@trackIndex]['chapters']
 
+				if @tracks[@trackIndex]['chapters']
 					commandRequiresBreak = false
 					commandRequiresNext = false
 
 					chapterPromptMessage = nil
+
 					if !fileExistsFromId?(@tracks[@trackIndex]['src']) && !@enableDownload # TODO: checking fileExists, and checking again inside self.play
 						chapterPromptMessage = "NOTE: Choosing a chapter will cause the file to download fully before playing."
 					end
+
 					chapterResponse = promptForChapterIndex @tracks[@trackIndex]['chapters'], interactiveCommands, chapterPromptMessage
 					chapterIndex = chapterResponse[:index]
 
 					next if commandRequiresNext
 					break if commandRequiresBreak
-
 				end
 
 				# TODO: catch C-t, or something like it, to pass commands to the script during playback
@@ -145,7 +161,9 @@ module Tunewich
 				playbackSuccessful = play @tracks[@trackIndex], chapterIndex
 
 				if @ratingsPromptDuration
+
 					new_rating = timedCommandPrompt @ratingsPromptDuration, "rating (#{@tracks[@trackIndex]['rating']}): "
+
 					if new_rating && new_rating.length > 0
 						@tracks[@trackIndex]['rating'] = new_rating.to_i
 						writeLibraryToFile
@@ -158,271 +176,6 @@ module Tunewich
 		end
 
 		private
-
-		def parseOptions
-			parser = OptionParser.new
-
-			parser.on("-a", "--add-track YOUTUBE_URL", "Add a track to the playlist and save.") do |url|
-				# TODO: add multiple by accepting space-separated list of URLs
-				@playlistName = promptForPlaylist if not @playlistName
-				id = getYoutubeIdFromUrl url
-				newTrack = createTrack id
-				trackReference = addTrackToLibrary updateTrackInfo newTrack
-				addTrackReferenceToPlaylist trackReference, @playlistName
-				writeLibraryToFile
-				exit
-			end
-
-			parser.on("-c", "--clean", "Enter an interactive cleanup mode, to remove unwanted items from the library.") do
-				interactiveCleanup
-				exit
-			end
-
-			parser.on("-d", "--enable-download", "Enable downloading files when encountering a playlist file without a cached file already download.") do
-				@enableDownload = true
-			end
-
-			parser.on("-D", "--keep-download", "Keep the downloaded file. Normally the file will be removed after playback, unless it belongs to a playlist.") do
-				@keepUnattachedDownload = true
-			end
-
-			parser.on("-f", "--filter RULES", Player::HELP_FILTER) do |rules|
-				@trackFilters = parseOptionParameters rules
-			end
-
-			parser.on("-h", "--help", "Show this help.") do
-				puts parser.help()
-				exit
-			end
-
-			parser.on("-i", "--input-dir DIR", "Directory from which to read the playlist and files. NOTE: when used, this must be the first option. Recommended to define TUNEWICH_DIR instead.") do |inputDir|
-				# FIXME: always process this option first, even if it's provided last
-				setLibraryPath inputDir
-			end
-
-			parser.on("-l", "--loop", "Loop, even if a track doesn't have an A/B loop defined.") do
-				@loop = true
-			end
-
-			parser.on("-p", "--playlist QUERY", "Partial or full name of a playlist.") do |playlistQuery|
-				playlistName = findPlaylistName playlistQuery
-
-				if playlistName
-					usePlaylist playlistName
-				else
-					puts "No playlist found to match query #{playlistQuery}."
-				end
-			end
-
-			parser.on("-P", "--create-playlist NAME", "Create a new playlist. Implies -p of the same playlist. When used with -w and -q, you may pass an empty string (\"\") to use the search query as the playlist name.") do |playlistName|
-				if !playlistName.empty?
-					createPlaylist playlistName
-					usePlaylist playlistName
-				elsif @youtubeSearch
-					createPlaylist @youtubeSearch
-					usePlaylist @youtubeSearch
-				else
-					puts "Please give a playlist name to -P"
-					exit
-				end
-
-				writeLibraryToFile
-			end
-
-			parser.on("-q", "--query QUERY", "Search YouTube for a video.") do |query|
-				@youtubeSearch = query
-				@tracks = searchYouTube @youtubeSearch
-			end
-
-			parser.on("-r", "--rating-prompt SECONDS", "Prompt for a rating after every track plays, waiting SECONDS before continuing to the next track") do |seconds|
-				@ratingsPromptDuration = seconds.to_i
-			end
-
-			parser.on("-s", "--shuffle", "Enable shuffle.") do
-				@shuffle = true
-			end
-
-			parser.on("-t", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).") do |trackQuery|
-				if trackQuery.to_i != 0
-					@trackIndex = trackQuery.to_i - 1
-				else
-					@trackIndex = trackQuery
-				end
-			end
-
-			parser.on("-u", "--update-track-info", "Fetch updated track information for every track played.") do
-				@updateAllPlayedTrackInfo = true
-			end
-
-			parser.on("-w", "--write-after TIME", "Save tracks to the library when played for the given number of seconds. Use with -q. If a playlist is specified, it will also be added to that playlist.") do |time|
-				@playthroughThreshold = time.to_f
-			end
-
-			parser.on("-x", "--exclude-filter RULES", "Excludes tracks matching the rules. " + Player::HELP_FILTER) do |rules|
-				@trackExcludeFilters = parseOptionParameters rules
-			end
-
-			@mplayerOverrideCommands = parser.parse(ARGV)
-		end
-
-		def setLibraryPath libraryPath
-			@tunewichDirectory = libraryPath
-			if not Dir.exist? @tunewichDirectory
-				puts "Please create the directory '#{@tunewichDirectory}'."
-				exit
-			end
-
-			@fileDirectory = "#{@tunewichDirectory}/music"
-			Dir.mkdir @fileDirectory if not Dir.exist? @fileDirectory
-
-			@libraryFilePath = "#{@tunewichDirectory}/tunewich-library.json"
-			if not File.exist? @libraryFilePath
-				raise "TODO: create library file at #{@libraryFilePath}"
-			end
-
-			loadLibrary
-		end
-
-		def promptForPlaylist
-			puts "Please choose a playlist (leave blank to play all):\n  #{@library['playlists'].keys.join "\n  "}"
-			selectedListName = nil
-			while !selectedListName do
-				playlistQuery = commandPrompt[:input]
-
-				if not playlistQuery or playlistQuery.length === 0
-					useEntireLibrary
-					break
-				end
-
-				selectedListName = findPlaylistName playlistQuery
-
-				if not selectedListName
-					puts "No matches. Try again"
-				end
-
-			end
-
-			selectedListName
-		end
-
-		def promptForChapterIndex chapters, commands = nil, message = nil
-			selectedChapterIndex = nil
-
-			chapterList = chapters.map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
-			promptMessage = "  #{chapterList.join "\n  "}\nPlease choose a chapter (leave blank to play first):"
-			promptMessage += "\n#{message}" if message
-
-			while not selectedChapterIndex do
-				chapterResponse = commandPrompt promptMessage commands
-				chapterQuery = chapterResponse[:input]
-				break if not chapterQuery or chapterQuery.length === 0
-
-				selectedChapter = firstFuzzyMatch chapterQuery, chapterList
-
-				if selectedChapter
-					selectedChapterIndex = selectedChapter[:index]
-					break
-				else
-					puts "No matches. Try again."
-				end
-
-			end
-
-			{
-				:index => selectedChapterIndex,
-				:commands => chapterResponse[:commands]
-			}
-		end
-
-		def getTrackTitles tracks
-			tracks.map{|t| t['title']}
-		end
-
-		def findTrackIndex(query)
-			match = firstFuzzyMatch query, getTrackTitles(@tracks)
-			match ? match[:index] : false
-		end
-
-		def findPlaylistName(query)
-			match = firstFuzzyMatch query, @library['playlists'].keys
-			match ? match[:value] : false
-		end
-
-		def fuzzyStringSearchInList(query, list)
-			queryPattern = Regexp.new(query + '|' + query.gsub(/\s+/, '').split('').join('.*'), Regexp::IGNORECASE)
-			matches = []
-			list.each_with_index do |value, index|
-				matchedPortion = queryPattern.match(value)
-
-				if matchedPortion
-					match = {
-						:index => index,
-						:value => value,
-						:matchLength => matchedPortion[0].length
-					};
-					match[:density] = query.length.to_f / match[:matchLength].to_f
-					match[:breadth] = match[:matchLength].to_f / match[:value].length.to_f
-					match[:score] = match[:density] * 10 + match[:breadth]
-					matches << match
-				end
-
-			end
-
-			if matches.length > 1
-				matches.sort! { |a,b| b[:score] <=> a[:score] }
-			end
-
-			matches
-		end
-
-		def firstFuzzyMatch(query, list)
-			matches = fuzzyStringSearchInList query, list
-			matches.length ? matches[0] : false
-		end
-
-		def usePlaylist(name)
-			@playlistName = name
-			@playlist = @library['playlists'][@playlistName]
-			@tracks = []
-
-			@playlist['tracks'].each do |trackReference|
-				@tracks << @library['library'][trackReference]
-			end
-		end
-
-		def useEntireLibrary
-			@tracks = []
-
-			@library['library'].keys.each do |trackKey|
-				@tracks << @library['library'][trackKey]
-			end
-		end
-
-		def nextTrack
-
-			if @shuffle
-				shuffleIndex()
-			else
-				@trackIndex += 1
-
-				if @trackIndex > @tracks.length - 1
-
-					if @youtubeSearchPage
-						@youtubeSearchPage += 1
-						@tracks += searchYouTube(@youtubeSearchQuery, (@youtubeSearchPage - 1) * 20)
-					else
-						@trackIndex %= @tracks.length
-					end
-
-				end
-
-			end
-
-		end
-
-		def shuffleIndex
-			@trackIndex = Random.rand(@tracks.length - 1) if @tracks.length > 1
-		end
 
 		def play(track, chapterIndex)
 			mplayerCommands = []
@@ -522,6 +275,94 @@ module Tunewich
 			mplayerStatus
 		end
 
+		def nextTrack
+			if @shuffle
+				shuffleIndex()
+			else
+				@trackIndex += 1
+
+				if @trackIndex > @tracks.length - 1
+
+					if @youtubeSearchPage
+						@youtubeSearchPage += 1
+						@tracks += searchYouTube(@youtubeSearchQuery, (@youtubeSearchPage - 1) * 20)
+					else
+						@trackIndex %= @tracks.length
+					end
+
+				end
+
+			end
+		end
+
+		def shuffleIndex
+			@trackIndex = Random.rand(@tracks.length - 1) if @tracks.length > 1
+		end
+
+		def setLibraryPath libraryPath
+			@tunewichDirectory = libraryPath
+			if not Dir.exist? @tunewichDirectory
+				puts "Please create the directory '#{@tunewichDirectory}'."
+				exit
+			end
+
+			@fileDirectory = "#{@tunewichDirectory}/music"
+			Dir.mkdir @fileDirectory if not Dir.exist? @fileDirectory
+
+			@libraryFilePath = "#{@tunewichDirectory}/tunewich-library.json"
+			if not File.exist? @libraryFilePath
+				raise "TODO: create library file at #{@libraryFilePath}"
+			end
+
+			loadLibrary
+		end
+
+		def getTrackTitles tracks
+			tracks.map{|t| t['title']}
+		end
+
+		def findTrackIndex(query)
+			match = firstFuzzyMatch query, getTrackTitles(@tracks)
+			match ? match[:index] : false
+		end
+
+		def findPlaylistName(query)
+			match = firstFuzzyMatch query, @library['playlists'].keys
+			match ? match[:value] : false
+		end
+
+		def fuzzyStringSearchInList(query, list)
+			queryPattern = Regexp.new(query + '|' + query.gsub(/\s+/, '').split('').join('.*'), Regexp::IGNORECASE)
+			matches = []
+			list.each_with_index do |value, index|
+				matchedPortion = queryPattern.match(value)
+
+				if matchedPortion
+					match = {
+						:index => index,
+						:value => value,
+						:matchLength => matchedPortion[0].length
+					};
+					match[:density] = query.length.to_f / match[:matchLength].to_f
+					match[:breadth] = match[:matchLength].to_f / match[:value].length.to_f
+					match[:score] = match[:density] * 10 + match[:breadth]
+					matches << match
+				end
+
+			end
+
+			if matches.length > 1
+				matches.sort! { |a,b| b[:score] <=> a[:score] }
+			end
+
+			matches
+		end
+
+		def firstFuzzyMatch(query, list)
+			matches = fuzzyStringSearchInList query, list
+			matches.length ? matches[0] : false
+		end
+
 		def deleteFileById(id)
 			`rm #{getFilePrefixFromId id}*`
 		end
@@ -609,6 +450,10 @@ module Tunewich
 			puts blockRow
 		end
 
+		##
+		# File Methods
+		##
+
 		def getTempFilePath(name)
 			"/tmp/tunewich-#{@sessionID}-#{name}"
 		end
@@ -659,135 +504,27 @@ module Tunewich
 			path
 		end
 
-		def getYoutubeIdFromUrl url
-			url.sub(/^.*v=/, '')
-		end
+		alias deleteStream deleteTempFile
 
-		def filterTracks tracks, filters, invert = false
+		##
+		# Library Methods
+		##
 
-			action = invert ? 'delete_if' : 'keep_if'
+		def usePlaylist(name)
+			@playlistName = name
+			@playlist = @library['playlists'][@playlistName]
+			@tracks = []
 
-			if filters['rating']
-				tracks.send(action) { |track| track['rating'] && track['rating'] == filters['rating'].to_i }
-			end
-
-			if filters['min-rating']
-				tracks.send(action) { |track| track['rating'] && track['rating'] >= filters['min-rating'].to_i }
-			end
-
-			if filters['max-rating']
-				tracks.send(action) { |track| !track['rating'] || track['rating'] <= filters['max-rating'].to_i }
-			end
-
-			if filters['tag']
-				taggedPlaylistTrackIds = []
-				@library['playlists'].each { |name, p| taggedPlaylistTrackIds += p['tracks'] if p['tags'] && p['tags'].find_index(filters['tag']) }
-				tracks.send(action) { |t| taggedPlaylistTrackIds.find_index(t['src']) }
-
-				if tracks.length === 0 # list available tags if no matches
-					allTags = []
-					@library['playlists'].each { |name, p| allTags += p['tags'] if p['tags'] }
-					puts "No matches. Available tags are: #{allTags.uniq.sort.join ", "}"
-				end
-			end
-
-			if filters['title']
-				matches = fuzzyStringSearchInList(filters['title'], getTrackTitles(tracks))
-				matchedIds = []
-				matches.each { |match|
-					matchedIds << tracks[match[:index]]['id']
-				}
-				tracks.send(action) { |t| matchedIds.index t['id'] }
-			end
-
-			if filters.has_key? 'chapters'
-				tracks.send(action) { |track|
-					if track
-						track.has_key? 'chapters'
-					else
-						false
-					end
-				}
-			end
-
-			tracks
-
-		end
-
-		def createPlaylist name, tracks = [], description = ''
-			newPlaylist = {
-				'description' => description,
-				'public' => true,
-				'tracks' => tracks
-			}
-			@library['playlists'][name] = newPlaylist
-		end
-
-		def createTrack id
-			{
-				'id' => id,
-				'src' => id, # NOTE: assuming ID is a YouTube video ID, so that it's also the "src"
-				'unattached' => true
-			}
-		end
-
-		def getTrackInfo id
-			rawInfo = `youtube-dl --get-title --get-description --get-duration -- #{id}`
-			return false if !rawInfo || rawInfo.length == 0
-
-			lines = rawInfo.chomp.lines
-			track = {
-				'title' => lines.shift.chomp, # first line
-				'duration' => lines.pop.chomp, # last line
-				'description' => lines.join("\n").chomp # everything else
-			}
-
-			track
-		end
-
-		def updateTrackInfo track
-			trackInfo = getTrackInfo track['src']
-			return false if !trackInfo
-
-			track['title'] = trackInfo['title']
-
-			if trackInfo['description']
-				chapters = getChaptersFromDescription trackInfo['description'].lines
-				track['chapters'] = chapters if chapters && chapters.length > 0
-			end
-
-			track['duration'] = trackInfo['duration'] if trackInfo['duration']
-
-			track
-		end
-
-		def getChaptersFromDescription description
-			description.grep(/[0-9]+:[0-9:.]+/).map! do |line|
-				matches = line.match(/^(.*?)[ (]*([0-9]+:[0-9:.]+)[ )]*(.*)$/)
-				{
-					'time' => matches[2],
-					'name' => "#{matches[1]} #{matches[3]}".gsub(/^[^0-z]/, '').strip
-				}
+			@playlist['tracks'].each do |trackReference|
+				@tracks << @library['library'][trackReference]
 			end
 		end
 
-		def addTrackToLibrary track
-			track.delete 'unattached' if track.has_key? 'unattached'
-			trackReference = track['src']
-			@library['library'][trackReference] ||= track
+		def useEntireLibrary
+			@tracks = []
 
-			trackReference
-		end
-
-		def addTrackReferenceToPlaylist trackReference, playlistName
-			tracks = @library['playlists'][playlistName]['tracks']
-			track = @library['library'][trackReference]
-
-			if not tracks.index trackReference
-				tracks << trackReference
-				puts "Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'"
-			else
-				puts "Track '#{track['title']}' (#{trackReference}) is already in playlist '#{playlistName}'"
+			@library['library'].keys.each do |trackKey|
+				@tracks << @library['library'][trackKey]
 			end
 		end
 
@@ -816,48 +553,6 @@ module Tunewich
 				@libraryHash = libraryInfo[:hash]
 				puts "Saved change to library file."
 			end
-		end
-
-		def searchYouTube query, offset = 0, count = 20
-			puts "Searching YouTube for '#{query}'"
-			resultsPerPage = 20
-			page = (offset.to_f / resultsPerPage.to_f).to_i + 1
-			queryParameter = URI::encode(query)
-			queryUrl="https://www.youtube.com/results?search_query=#{queryParameter}&page=#{page}"
-
-			queryResultIds = []
-			open(queryUrl) do |handle|
-				html = []
-				handle.each_line { |line| html << line }
-
-				queryResultIds = html.grep(/href="\/watch/).map! do |line|
-					line.sub!(/^.*watch\?v=([^\"&<]+).*\n/, '\1')
-				end
-
-				queryResultIds.uniq!
-			end
-
-			threads = []
-			resultTracks = []
-			receivedCount = 0
-			printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
-
-			queryResultIds.each_with_index do |id, index|
-				track = createTrack id
-				resultTracks << track
-				threads << Thread.new {
-					if not updateTrackInfo track
-						resultTracks.delete track
-					end
-					receivedCount += 1
-					printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
-				}
-			end
-
-			threads.each { |thr| thr.join }
-			print "\n"
-
-			resultTracks
 		end
 
 		def interactiveCleanup
@@ -1003,6 +698,186 @@ module Tunewich
 			puts "Cleanup finished."
 		end
 
+		def filterTracks tracks, filters, invert = false
+			action = invert ? 'delete_if' : 'keep_if'
+
+			if filters['rating']
+				tracks.send(action) { |track| track['rating'] && track['rating'] == filters['rating'].to_i }
+			end
+
+			if filters['min-rating']
+				tracks.send(action) { |track| track['rating'] && track['rating'] >= filters['min-rating'].to_i }
+			end
+
+			if filters['max-rating']
+				tracks.send(action) { |track| !track['rating'] || track['rating'] <= filters['max-rating'].to_i }
+			end
+
+			if filters['tag']
+				taggedPlaylistTrackIds = []
+				@library['playlists'].each { |name, p| taggedPlaylistTrackIds += p['tracks'] if p['tags'] && p['tags'].find_index(filters['tag']) }
+				tracks.send(action) { |t| taggedPlaylistTrackIds.find_index(t['src']) }
+
+				if tracks.length === 0 # list available tags if no matches
+					allTags = []
+					@library['playlists'].each { |name, p| allTags += p['tags'] if p['tags'] }
+					puts "No matches. Available tags are: #{allTags.uniq.sort.join ", "}"
+				end
+			end
+
+			if filters['title']
+				matches = fuzzyStringSearchInList(filters['title'], getTrackTitles(tracks))
+				matchedIds = []
+				matches.each { |match|
+					matchedIds << tracks[match[:index]]['id']
+				}
+				tracks.send(action) { |t| matchedIds.index t['id'] }
+			end
+
+			if filters.has_key? 'chapters'
+				tracks.send(action) { |track|
+					if track
+						track.has_key? 'chapters'
+					else
+						false
+					end
+				}
+			end
+
+			tracks
+		end
+
+		def createPlaylist name, tracks = [], description = ''
+			newPlaylist = {
+				'description' => description,
+				'public' => true,
+				'tracks' => tracks
+			}
+			@library['playlists'][name] = newPlaylist
+		end
+
+		def createTrack id
+			{
+				'id' => id,
+				'src' => id, # NOTE: assuming ID is a YouTube video ID, so that it's also the "src"
+				'unattached' => true
+			}
+		end
+
+		def getTrackInfo id
+			rawInfo = `youtube-dl --get-title --get-description --get-duration -- #{id}`
+			return false if !rawInfo || rawInfo.length == 0
+
+			lines = rawInfo.chomp.lines
+			track = {
+				'title' => lines.shift.chomp, # first line
+				'duration' => lines.pop.chomp, # last line
+				'description' => lines.join("\n").chomp # everything else
+			}
+
+			track
+		end
+
+		def updateTrackInfo track
+			trackInfo = getTrackInfo track['src']
+			return false if !trackInfo
+
+			track['title'] = trackInfo['title']
+
+			if trackInfo['description']
+				chapters = getChaptersFromDescription trackInfo['description'].lines
+				track['chapters'] = chapters if chapters && chapters.length > 0
+			end
+
+			track['duration'] = trackInfo['duration'] if trackInfo['duration']
+
+			track
+		end
+
+		def getChaptersFromDescription description
+			description.grep(/[0-9]+:[0-9:.]+/).map! do |line|
+				matches = line.match(/^(.*?)[ (]*([0-9]+:[0-9:.]+)[ )]*(.*)$/)
+				{
+					'time' => matches[2],
+					'name' => "#{matches[1]} #{matches[3]}".gsub(/^[^0-z]/, '').strip
+				}
+			end
+		end
+
+		def addTrackToLibrary track
+			track.delete 'unattached' if track.has_key? 'unattached'
+			trackReference = track['src']
+			@library['library'][trackReference] ||= track
+
+			trackReference
+		end
+
+		def addTrackReferenceToPlaylist trackReference, playlistName
+			tracks = @library['playlists'][playlistName]['tracks']
+			track = @library['library'][trackReference]
+
+			if not tracks.index trackReference
+				tracks << trackReference
+				puts "Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'"
+			else
+				puts "Track '#{track['title']}' (#{trackReference}) is already in playlist '#{playlistName}'"
+			end
+		end
+
+		##
+		# YouTube Methods
+		##
+
+		def getYoutubeIdFromUrl url
+			url.sub(/^.*v=/, '')
+		end
+
+		def searchYouTube query, offset = 0, count = 20
+			puts "Searching YouTube for '#{query}'"
+			resultsPerPage = 20
+			page = (offset.to_f / resultsPerPage.to_f).to_i + 1
+			queryParameter = URI::encode(query)
+			queryUrl="https://www.youtube.com/results?search_query=#{queryParameter}&page=#{page}"
+
+			queryResultIds = []
+			open(queryUrl) do |handle|
+				html = []
+				handle.each_line { |line| html << line }
+
+				queryResultIds = html.grep(/href="\/watch/).map! do |line|
+					line.sub!(/^.*watch\?v=([^\"&<]+).*\n/, '\1')
+				end
+
+				queryResultIds.uniq!
+			end
+
+			threads = []
+			resultTracks = []
+			receivedCount = 0
+			printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
+
+			queryResultIds.each_with_index do |id, index|
+				track = createTrack id
+				resultTracks << track
+				threads << Thread.new {
+					if not updateTrackInfo track
+						resultTracks.delete track
+					end
+					receivedCount += 1
+					printRepeat "Getting track information (#{receivedCount}/#{queryResultIds.length})"
+				}
+			end
+
+			threads.each { |thr| thr.join }
+			print "\n"
+
+			resultTracks
+		end
+
+		##
+		# Utility Methods
+		##
+
 		def getSecondsFromDurationString durationString
 			seconds = 0
 			factor = 1
@@ -1014,6 +889,116 @@ module Tunewich
 			}
 
 			seconds
+		end
+
+		##
+		# UI Methods
+		##
+
+		def parseOptions
+			parser = OptionParser.new
+
+			parser.on("-a", "--add-track YOUTUBE_URL", "Add a track to the playlist and save.") do |url|
+				# TODO: add multiple by accepting space-separated list of URLs
+				@playlistName = promptForPlaylist if not @playlistName
+				id = getYoutubeIdFromUrl url
+				newTrack = createTrack id
+				trackReference = addTrackToLibrary updateTrackInfo newTrack
+				addTrackReferenceToPlaylist trackReference, @playlistName
+				writeLibraryToFile
+				exit
+			end
+
+			parser.on("-c", "--clean", "Enter an interactive cleanup mode, to remove unwanted items from the library.") do
+				interactiveCleanup
+				exit
+			end
+
+			parser.on("-d", "--enable-download", "Enable downloading files when encountering a playlist file without a cached file already download.") do
+				@enableDownload = true
+			end
+
+			parser.on("-D", "--keep-download", "Keep the downloaded file. Normally the file will be removed after playback, unless it belongs to a playlist.") do
+				@keepUnattachedDownload = true
+			end
+
+			parser.on("-f", "--filter RULES", Player::HELP_FILTER) do |rules|
+				@trackFilters = parseOptionParameters rules
+			end
+
+			parser.on("-h", "--help", "Show this help.") do
+				puts parser.help()
+				exit
+			end
+
+			parser.on("-i", "--input-dir DIR", "Directory from which to read the playlist and files. NOTE: when used, this must be the first option. Recommended to define TUNEWICH_DIR instead.") do |inputDir|
+				# FIXME: always process this option first, even if it's provided last
+				setLibraryPath inputDir
+			end
+
+			parser.on("-l", "--loop", "Loop, even if a track doesn't have an A/B loop defined.") do
+				@loop = true
+			end
+
+			parser.on("-p", "--playlist QUERY", "Partial or full name of a playlist.") do |playlistQuery|
+				playlistName = findPlaylistName playlistQuery
+
+				if playlistName
+					usePlaylist playlistName
+				else
+					puts "No playlist found to match query #{playlistQuery}."
+				end
+			end
+
+			parser.on("-P", "--create-playlist NAME", "Create a new playlist. Implies -p of the same playlist. When used with -w and -q, you may pass an empty string (\"\") to use the search query as the playlist name.") do |playlistName|
+				if !playlistName.empty?
+					createPlaylist playlistName
+					usePlaylist playlistName
+				elsif @youtubeSearch
+					createPlaylist @youtubeSearch
+					usePlaylist @youtubeSearch
+				else
+					puts "Please give a playlist name to -P"
+					exit
+				end
+
+				writeLibraryToFile
+			end
+
+			parser.on("-q", "--query QUERY", "Search YouTube for a video.") do |query|
+				@youtubeSearch = query
+				@tracks = searchYouTube @youtubeSearch
+			end
+
+			parser.on("-r", "--rating-prompt SECONDS", "Prompt for a rating after every track plays, waiting SECONDS before continuing to the next track") do |seconds|
+				@ratingsPromptDuration = seconds.to_i
+			end
+
+			parser.on("-s", "--shuffle", "Enable shuffle.") do
+				@shuffle = true
+			end
+
+			parser.on("-t", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).") do |trackQuery|
+				if trackQuery.to_i != 0
+					@trackIndex = trackQuery.to_i - 1
+				else
+					@trackIndex = trackQuery
+				end
+			end
+
+			parser.on("-u", "--update-track-info", "Fetch updated track information for every track played.") do
+				@updateAllPlayedTrackInfo = true
+			end
+
+			parser.on("-w", "--write-after TIME", "Save tracks to the library when played for the given number of seconds. Use with -q. If a playlist is specified, it will also be added to that playlist.") do |time|
+				@playthroughThreshold = time.to_f
+			end
+
+			parser.on("-x", "--exclude-filter RULES", "Excludes tracks matching the rules. " + Player::HELP_FILTER) do |rules|
+				@trackExcludeFilters = parseOptionParameters rules
+			end
+
+			@mplayerOverrideCommands = parser.parse(ARGV)
 		end
 
 		def parseOptionParameters serialized
@@ -1043,30 +1028,6 @@ module Tunewich
 			end
 
 			@cliRotateCharacters[@cliRotateIndex]
-		end
-
-		def confirm message, commands = nil
-			confirmMessage = "#{message} (y/N): "
-			commandPrompt(confirmMessage, commands)[:input].match(/^[Yy]/)
-		end
-
-		def timedCommandPrompt timeout, message = nil, commands = nil
-			input = nil
-
-			thr = Thread.new {
-				input = STDIN.gets.chomp # doesn't keep the thread alive...
-				# input = commandPrompt message, commands # doesn't keep the thread alive...
-			}
-
-			timer = 0
-			while thr.alive?
-				printRepeat "(#{timeout - timer}) #{message}"
-				sleep 1
-				timer += 1
-				Thread.kill thr if timer >= timeout
-			end
-
-			input
 		end
 
 		def commandPrompt message = nil, commands = nil
@@ -1129,6 +1090,81 @@ module Tunewich
 			response
 		end
 
+		def confirm message, commands = nil
+			confirmMessage = "#{message} (y/N): "
+			commandPrompt(confirmMessage, commands)[:input].match(/^[Yy]/)
+		end
+
+		def timedCommandPrompt timeout, message = nil, commands = nil
+			input = nil
+
+			thr = Thread.new {
+				input = STDIN.gets.chomp # doesn't keep the thread alive...
+				# input = commandPrompt message, commands # doesn't keep the thread alive...
+			}
+
+			timer = 0
+			while thr.alive?
+				printRepeat "(#{timeout - timer}) #{message}"
+				sleep 1
+				timer += 1
+				Thread.kill thr if timer >= timeout
+			end
+
+			input
+		end
+
+		def promptForPlaylist
+			puts "Please choose a playlist (leave blank to play all):\n  #{@library['playlists'].keys.join "\n  "}"
+			selectedListName = nil
+			while !selectedListName do
+				playlistQuery = commandPrompt[:input]
+
+				if not playlistQuery or playlistQuery.length === 0
+					useEntireLibrary
+					break
+				end
+
+				selectedListName = findPlaylistName playlistQuery
+
+				if not selectedListName
+					puts "No matches. Try again"
+				end
+
+			end
+
+			selectedListName
+		end
+
+		def promptForChapterIndex chapters, commands = nil, message = nil
+			selectedChapterIndex = nil
+
+			chapterList = chapters.map { |chapter| "#{chapter['time']} - #{chapter['name']}" }
+			promptMessage = "  #{chapterList.join "\n  "}\nPlease choose a chapter (leave blank to play first):"
+			promptMessage += "\n#{message}" if message
+
+			while not selectedChapterIndex do
+				chapterResponse = commandPrompt promptMessage, commands
+				chapterQuery = chapterResponse[:input]
+				break if not chapterQuery or chapterQuery.length === 0
+
+				selectedChapter = firstFuzzyMatch chapterQuery, chapterList
+
+				if selectedChapter
+					selectedChapterIndex = selectedChapter[:index]
+					break
+				else
+					puts "No matches. Try again."
+				end
+
+			end
+
+			{
+				:index => selectedChapterIndex,
+				:commands => chapterResponse[:commands]
+			}
+		end
+
 		def listTrackTitles(tracks)
 			tracks.map { |id, t| "#{t['title']} [#{id}]" } .join "\n"
 		end
@@ -1139,7 +1175,8 @@ module Tunewich
 				matches = line.match(/^.*\[(.*)\]$/)
 				if matches
 					id = matches[1]
-					tracks[id] = @library['library'][id]
+					track = @library['library'][id]
+					tracks[id] = track if track
 				else
 					puts "IGNORING: #{line}"
 				end
@@ -1171,8 +1208,6 @@ module Tunewich
 			inputTracks.each { |t| library[t['id']] = t }
 			library
 		end
-
-		alias deleteStream deleteTempFile
 
 	end
 
