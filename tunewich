@@ -457,7 +457,7 @@ module Tunewich
 
 		def getInteractiveCommands modes = [], bindingGroupName
 
-			chapterTabAction = Proc.new { |input|
+			chapterTabComplete = Proc.new { |input|
 				inputParts = input.match(/^([^\/]*)(.*)$/)
 				if @currentTrack.has_key?('chapters')
 					if inputParts[1] && inputParts[1].length > 0
@@ -475,7 +475,7 @@ module Tunewich
 				input
 			}
 
-			tagTabAction = Proc.new { |input|
+			tagTabComplete = Proc.new { |input|
 				inputParts = input.match(/^([^\/]*)(.*)$/)
 				if inputParts[1] && inputParts[1].length > 0
 					lastInputToken = inputParts[1].sub(/^.* /, '')
@@ -562,7 +562,7 @@ module Tunewich
 							'speed_ramp_end',
 							'download_success'
 						],
-						'tabAction' => Proc.new { |input|
+						'tabComplete' => Proc.new { |input|
 							inputParts = input.match(/^([^\/]*)(.*)$/)
 							availableWaitEvents = [ # @refactor store 1 copy only
 								'chapter_change',
@@ -684,7 +684,7 @@ module Tunewich
 							end
 							{:chainedInput => inputParts[2]}
 						},
-						'tabAction' => tagTabAction
+						'tabComplete' => tagTabComplete
 					},
 					'tagall' => {
 						'description' => "Tag all tracks in the current tracklist.",
@@ -709,7 +709,7 @@ module Tunewich
 							end
 							{:chainedInput => inputParts[2]}
 						},
-						'tabAction' => tagTabAction
+						'tabComplete' => tagTabComplete
 					},
 					'list' => {
 						'description' => "Load a playlist. (not chainable)",
@@ -1065,7 +1065,7 @@ module Tunewich
 
 							{:chainedInput => inputParts[2]}
 						},
-						'tabAction' => chapterTabAction
+						'tabComplete' => chapterTabComplete
 					},
 					'mkchapter' => {
 						'description' => "Make a chapter, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing). Input: name.",
@@ -1101,7 +1101,7 @@ module Tunewich
 
 							{:chainedInput => inputParts[2]}
 						}
-						# 'tabAction' => chapterTabAction # TODO 1gzTHg: take input to choose a chapter
+						# 'tabComplete' => chapterTabComplete # TODO 1gzTHg: take input to choose a chapter
 					},
 					'skipchapter' => {
 						'description' => "Mark the current chapter as to be skipped every time.",
@@ -1486,6 +1486,21 @@ module Tunewich
 								enablePlaybackInfo
 							end
 							{:chainedInput => inputParts[2]}
+						},
+						'tabComplete' => Proc.new { |input|
+							inputParts = input.match(/^([^\/]*)(.*)$/)
+							presetNames = @library['player']['equalizer_presets'].keys
+
+							if inputParts[1] && inputParts[1].length > 0
+								presetGuess = firstFuzzyMatchValue(inputParts[1], presetNames)
+								if presetGuess && presetGuess.length > 0
+									input = input.sub!(inputParts[1], presetGuess)
+								end
+							else
+								putsRealtime "\nEQ presets: #{presetNames.join(", ")}"
+							end
+
+							input
 						}
 					},
 					'fade' => {
@@ -4307,9 +4322,9 @@ module Tunewich
 								commandInput = inputParts[3] || ''
 								if (
 									commands.has_key?(commandName) &&
-									commands[commandName].has_key?('tabAction')
+									commands[commandName].has_key?('tabComplete')
 								)
-									modifiedCommandInput = commands[commandName]['tabAction'].call(commandInput)
+									modifiedCommandInput = commands[commandName]['tabComplete'].call(commandInput)
 									commandInput = modifiedCommandInput if modifiedCommandInput
 								end
 
