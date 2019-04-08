@@ -3522,9 +3522,23 @@ module Tunewich
 
       if @library['playlists'][name]['tracks']
         @playlistName = name
+        anyUnrecognizedTracks = false
         @library['playlists'][@playlistName]['tracks'].each do |trackReference|
           track = @library['tracks'][trackReference]
+          if not track && looksLikeAYouTubeID?(trackReference)
+            track = createTrack trackReference, 'youtube'
+          else
+            whisper("Track not in library, and ID is not recognized: '#{trackReference}'", 2)
+          end
           tracks << track if track
+        end
+        if anyUnrecognizedTracks
+          message = [
+            "Note: for non-YouTube tracks, the ID is an md5 hash of the media URL.",
+            "Unfortunately that is not a reversible hash, but you could hash other",
+            "known URLs and use matches to repair this playlist."
+          ].join(' ')
+          whisper(message, 2)
         end
       end
 
