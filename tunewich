@@ -2710,7 +2710,7 @@ module Tunewich
 
 			if trackIndexOffset
 				newTrackIndex += trackIndexOffset
-			elsif query.to_i == 0
+			elsif query.match(/^[0-9]/)
 				newTrackIndex = @tracks.index(query) || firstFuzzyMatchIndex(query, getTrackTitles(@tracks))
 			else
 				newTrackIndex = (query.to_i - 1) % @tracks.length
