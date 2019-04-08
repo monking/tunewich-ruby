@@ -4114,10 +4114,10 @@ module Tunewich
 			end
 		end
 
-		def getTracksFromURLs(urls)
+		def getTracksFromURLs(urls, onePerUrl = true)
 			tracks = []
 
-			def getHTTPHeaderByPattern(head, pattern)
+			getHTTPHeaderByPattern = Proc.new { |head, pattern|
 				value = nil
 				if head
 					matchingLines = head.lines.keep_if { |line| line.match(pattern) }
@@ -4126,7 +4126,7 @@ module Tunewich
 					end
 				end
 				value
-			end
+			}
 
 			urls.each { |url|
 				urlCanBeScraped = true # assuming this for now
@@ -4144,8 +4144,8 @@ module Tunewich
 					whisper("This URL contains a YouTube ID. Adding.", 0)
 				else
 					urlHTTPHead = `curl -sL --head "#{url}"`
-					urlContentType = getHTTPHeaderByPattern urlHTTPHead, /^Content-Type: ([^;]*).*/i
-					cookieDomain = getHTTPHeaderByPattern urlHTTPHead, /^Set-Cookie:.*domain=([^;]*).*/i
+					urlContentType = getHTTPHeaderByPattern.call(urlHTTPHead, /^Content-Type: ([^;]*).*/i)
+					cookieDomain = getHTTPHeaderByPattern.call(urlHTTPHead, /^Set-Cookie:.*domain=([^;]*).*/i)
 					whisper("urlContentType: #{urlContentType}, cookieDomain: #{cookieDomain}", 3)
 					if 'text/html' == urlContentType && (cookieDomain == '.bandcamp.com' || url.match(/(https?:\/\/)([^\.]+)\.bandcamp\.com.*/))
 						whisper("WIP: scraping bandcamp page")
@@ -4175,7 +4175,7 @@ module Tunewich
 				end
 
 				begin
-					if urlCanBeScraped && confirm("Look for all tracks on this page?")
+					if urlCanBeScraped && !onePerUrl
 						youTubeTracks = getYouTubeTracksFromPage url
 						tracks.concat youTubeTracks if youTubeTracks
 					end
