@@ -561,7 +561,7 @@ module Tunewich
 					false
 				end
 			}
-			editedNotes.keep_if { |c| c }
+			editedNotes.keep_if { |note| note }
 			whisper("from:\n#{JSON.pretty_generate(notes)}\nto:\n#{JSON.pretty_generate(editedNotes)}", 3)
 			editedNotes
 		end
@@ -730,7 +730,7 @@ module Tunewich
 
 				if @currentTrack.has_key?(noteType)
 					if inputParts[:query] && inputParts[:query].length > 0
-						noteTexts = @currentTrack[noteType].map { |c| c['text'] }
+						noteTexts = @currentTrack[noteType].map { |note| note['text'] }
 						guessChapterTexts = fuzzyStringSearchInListValues(inputParts[:query], noteTexts) if inputParts[:query].length > 0
 						if guessChapterTexts && guessChapterTexts.length == 1
 							input = input.sub!(inputParts[:query], guessChapterTexts[0])
@@ -1175,7 +1175,7 @@ module Tunewich
 						}
 					},
 					'download' => {
-						'description' => "options) get: show the command, or the path to the file if already downloaded; auto: download any file upon playing. With no options, downloads the current track for faster play in the future.",
+						'description' => "OPTIONS\nget: show the command, or the path to the file if already downloaded.\nauto: download any file upon playing.\nWith no options, downloads the current track for faster play in the future.",
 						'args' => ['get', 'auto'],
 						'showStatus' => Proc.new {
 							putsRealtime "Auto download: #{@autoDownload ? 'on' : 'off'}"
@@ -1232,7 +1232,7 @@ module Tunewich
 						'description' => "[FORMAT] [FFMPEG_OPTIONS]  Transcode downloaded file to another format (default Ogg/Vorbis). This is the same as doing '/format FORMAT /download'.",
 						'args' => ['vorbis'],
 						'action' => Proc.new { |input, command|
-							inputParts = getCommandInputParts(input, /^(?<format>\w+)?( (?<options>.*?))?( (?<remainder>\/.*))?$/)
+							inputParts = getCommandInputParts(input, /^(?<format>\w+)?( (?<options>[^\/].*?))?( *(?<remainder>\/.*))?$/)
 
 							outputFormat = inputParts[:format] && inputParts[:format].length > 0 ? inputParts[:format] : 'vorbis'
 
@@ -2182,7 +2182,7 @@ module Tunewich
 		end
 
 		def getNoteIndexAtTime notes, seconds
-			noteIndex = -1
+			noteIndex = -1 # @confirm: -1 instead of nil, so that adding 1 gets you a valid next index (the first one)
 			if !seconds
 				whisper("getNoteIndexAtTime: nil seconds", 3)
 			else
@@ -2703,7 +2703,7 @@ module Tunewich
 			end
 
 			if !streamName
-				playerStartupOptions << "-loop #{@loopLimit}" if @loop && !@innerLoopsOnly && !doesTrackHaveLoopingChapters?(@currentTrack)
+				playerStartupOptions << "-loop #{@loopLimit}" if @loop && !@innerLoopsOnly && !doesTrackHaveInternalLoops?(@currentTrack)
 			end
 
 			@speed = 1 if @speed < 0.01
@@ -3108,19 +3108,26 @@ module Tunewich
 			tags
 		end
 
-		def doesTrackHaveLoopingChapters? track
-			hasLoopingChapters = false
+		def doesTrackHaveInternalLoops? track
+			hasInternalLoops = false
 
-			if track && track.has_key?('chapters')
-				track['chapters'].each { |c|
-					if c && c['loop_target']
-						hasLoopingChapters = true 
+			notesAndChapters = []
+
+			if track
+				notesAndChapters += track['chapters'] if track.has_key?('chapters')
+				notesAndChapters += track['notes'] if track.has_key?('notes')
+			end
+
+			if notesAndChapters.length > 0
+				notesAndChapters.each { |note|
+					if note && note['loop_target']
+						hasInternalLoops = true 
 						break
 					end
 				}
 			end
 
-			hasLoopingChapters
+			hasInternalLoops
 		end
 
 		def doesTrackHaveTag(track, *tagNames)
@@ -4151,14 +4158,18 @@ module Tunewich
 			seconds = nil
 			timecodeRegExpPattern = /^[0-9:.]+$/
 
-			if durationString && durationString.kind_of?(String) && durationString.length > 0 && durationString.match(timecodeRegExpPattern)
-				seconds = 0
-				factor = 1
-				factors = [1,60,60,24]
-				durationString.split(':').reverse.each_with_index { |unit, index|
-					factor *= factors[index]
-					seconds += unit.to_f * factor
-				}
+			if durationString
+				if durationString.kind_of?(String) && durationString.length > 0 && durationString.match(timecodeRegExpPattern)
+					seconds = 0
+					factor = 1
+					factors = [1.0, 60.0, 60.0, 24.0]
+					durationString.split(':').reverse.each_with_index { |unit, index|
+						factor *= factors[index]
+						seconds += unit.to_f * factor
+					}
+				else
+					seconds = durationString.to_f
+				end
 			end
 
 			seconds
@@ -5073,15 +5084,16 @@ module Tunewich
 		end
 
 		def getFormattedNoteList notes, emphasizeNoteIndex = nil, emphasisLine = "# ^"
-			formattedNotes = notes.map { |c|
-				output = "#{" " * ([16-c['time'].length, 0].max)}#{c['time']} #{c['text']}"
+			formattedNotes = notes.map { |note|
+				time = note['time'].to_s
+				output = "#{" " * ([16-time.length, 0].max)}#{time} #{note['text']}"
 
-				if c.has_key?('skip')
-					output = "#{c.has_key?('skip') && c['skip'] ? 'skip' : '    '}" + output
+				if note.has_key?('skip')
+					output = "#{note.has_key?('skip') && note['skip'] ? 'skip' : '    '}" + output
 				end
 
-				if c.has_key?('loop_target')
-					output += " (loop to \"#{c['loop_target']}\")"
+				if note.has_key?('loop_target')
+					output += " (loop to \"#{note['loop_target']}\")"
 				end
 
 				output
