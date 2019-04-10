@@ -42,6 +42,8 @@ module Tunewich
     PLAYER_APP_TERMUX = 'termux'
     MPLAYER_STDOUT_BUFFER_NAME = 'mplayer-stdout'
     MPLAYER_INPUT_FIFO_NAME = 'mplayer-input'
+    MPV_STDOUT_BUFFER_NAME = 'mpv-stdout'
+    MPV_INPUT_FIFO_NAME = 'mpv-input'
     UNAME = `uname`.chomp
 
     def initialize
@@ -70,8 +72,9 @@ module Tunewich
       @trackExcludeFilters = nil
       @networkEnabled = true
       @playlistName = nil
-      @volume = 25 # volume stored as state (the "intended" volume)
-      @currentVolume = 25 # actual volume heard (change during fading, or changing track loudness)
+      @volume = 25 # user's intended volume
+      @currentVolume = 25 # temporary, internal volume state (e.g. changes during fading)
+      @actualVolume = 25 # actual volume heard (after being affected by @volumeMultipliers)
       @currentSpeed = 1
       @currentVisualEffects = {
         'brightness' => 0,
@@ -108,6 +111,7 @@ module Tunewich
       @loopLimit = 0
       @breakLoop = false
       @commandBeforePlayer = nil
+      @hasMpv = nil
 
       getConfigFiles
 
@@ -173,10 +177,9 @@ module Tunewich
         end
       }
 
-      @volume = 100
-      @volume = getMplayerConfigNumericProperty('volume') if @playerApplicationThreads == PLAYER_APP_DEFAULT
+      @actualVolume = getPlayerConfiguredVolume
+      @volume = @currentVolume = getStateSpaceVolume(@actualVolume)
       whisper("@volume: #{@volume}", 3)
-      @currentVolume = @volume
       trigger 'volume_change'
       @speed = 1.0
       @speed = getMplayerConfigNumericProperty('speed', 1.0)
@@ -202,6 +205,27 @@ module Tunewich
       $uniqueId = $uniqueId + 1
     end
 
+    def getPlayerConfiguredVolume
+      configuredVolume = 10.0 # "safe" default
+
+      case @playerApplication
+      when PLAYER_APP_DEFAULT
+        configuredVolume = getMplayerConfigNumericProperty('volume')
+      when PLAYER_APP_TERMUX
+        volumeJson = `termux-volume` # get the various Android volume levels
+        volumeData = JSON.parse(volumeJson)
+        streamIndex = volumeData.find_index { |s| s.has_key?('stream') && s['stream'] == 'music' } if volumeData
+        streamData = volumeData[streamIndex] if streamIndex
+        if streamData
+          @volumeMultipliers['system_max'] = streamData['max_volume'].to_f / 100.0 if streamData.has_key?('max_volume')
+          whisper("Got _actual_ system volume: #{streamData['volume']}", 3)
+          configuredVolume = streamData['volume'].to_f
+        end
+      end
+
+      configuredVolume
+    end
+
     def sendMplayerCommand command, playerIndex = nil
       case @playerApplication
       when PLAYER_APP_DEFAULT
@@ -219,14 +243,25 @@ module Tunewich
       end
     end
 
+    def sendMpvCommand command, playerIndex = nil
+      whisper("sending to mpv: '#{command}'", 4)
+      playerIndex ||= @currentPlayerIndex
+      putInTempFile "#{MPV_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
+    end
+
     def togglePlay
       whisper("before togglePlay, @isPlayerPlaying: #{@isPlayerPlaying}", 2)
       case @playerApplication
       when PLAYER_APP_DEFAULT
+        # @isPlayerPlaying is set in sendMplayerCommand
         sendMplayerCommand @isPlayerPlaying ? 'pause' : 'play'
-      # when PLAYER_APP_TERMUX
-        # `termux-media-player #{@isPlayerPlaying ? 'pause' : 'play'}`
-        # `mpv #{@isPlayerPlaying ? 'pause' : 'play'}`
+      when PLAYER_APP_TERMUX
+        @isPlayerPlaying = !@isPlayerPlaying
+        if @hasMpv
+          sendMpvCommand ' '
+        else
+          `termux-media-player #{@isPlayerPlaying ? 'pause' : 'play'}`
+        end
       end
     end
 
@@ -528,6 +563,9 @@ module Tunewich
     def getEnvironmentConfig
       if ENV.key? 'TUNEWICH_PLAYER_APP'
         @playerApplication = ENV['TUNEWICH_PLAYER_APP'] # @refactor: player interface
+        if @playerApplication == PLAYER_APP_TERMUX
+          @hasMpv = (`command -v mpv 2>&1 >/dev/null && echo -n 1 || echo -n 0` == '1')
+        end
       end
 
       if ENV.key? 'TUNEWICH_PLAYER_OPTS'
@@ -1346,7 +1384,7 @@ module Tunewich
                   outputMessageLines << "      link : #{info['link']}" if info
 
                   outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
-                  outputMessageLines << "    volume : #{@currentVolume}/100" if track == @currentTrack
+                  outputMessageLines << "    volume : #{@volume}/100" if track == @currentTrack
 
                   if @configuredVerbosity > 1 && tagNames.length > 0
                     whisper("about to loop through tagNames", 4)
@@ -2461,22 +2499,40 @@ module Tunewich
     end
 
     def getMultipliedVolume newVolume
-      @volumeMultipliers.each { |m|
+      whisper("@volumeMultipliers: #{@volumeMultipliers}", 4)
+      @volumeMultipliers.each { |key, m|
         newVolume *= m
       }
 
       newVolume
     end
 
-    # def setActualVolume newVolume
-    #   @volume = newVolume
-    #   @currentVolume = getMultipliedVolume newVolume
-    #   sendMplayerCommand "volume #{@currentVolume} 1", @currentPlayerIndex
-    # end
+    def getStateSpaceVolume actualVolume
+      stateVolume = actualVolume
+      @volumeMultipliers.each { |key, m|
+        stateVolume /= m
+      }
 
-    def tween a, b, duration, onStep, interval = 0.02, curve = 'linear'
+      stateVolume
+    end
+
+    def setActualVolume newVolume, playerIndex = nil
+      playerIndex ||= @currentPlayerIndex
+      @currentVolume = newVolume
+      @actualVolume = getMultipliedVolume newVolume
+      case @playerApplication
+      when PLAYER_APP_DEFAULT
+        sendMplayerCommand "volume #{@actualVolume} 1", playerIndex
+      when PLAYER_APP_TERMUX
+        volumeCommand = "termux-volume music #{@actualVolume.round}"
+        whisper("volumeCommand", 5)
+        `#{volumeCommand}`
+      end
+    end
+
+    def tween a, b, duration, onStep, interval = nil, curve = 'linear'
       whisper("tween from #{a} to #{b}", 3)
-      interval = 0.02
+      interval ||= @playerApplication == PLAYER_APP_DEFAULT ? 0.02 : 1.0
       stepCount = (duration.to_f / interval).to_i
       transitionValue = a
       span = b - a
@@ -2532,24 +2588,15 @@ module Tunewich
       targetFadeVolume = [[targetFadeVolume, 0].max, 100].min
       whisper("fading from #{transitionVolume} to #{targetFadeVolume} in #{duration} seconds (playerIndex: #{playerIndex})", 4)
       curve = @isVolumeAlreadyLogarithmic ? 'linear' : 'logarithmic'
-      tweenInterval = @playerApplication == PLAYER_APP_DEFAULT ? 0.02 : 1.0
       tween(
         transitionVolume,
         targetFadeVolume,
         duration,
         Proc.new { |iVolume|
-          case @playerApplication
-          when PLAYER_APP_DEFAULT
-            sendMplayerCommand "volume #{iVolume} 1", playerIndex
-          when PLAYER_APP_TERMUX
-            volumeCommand = "termux-volume music #{iVolume.round}"
-            whisper("volumeCommand", 5)
-            `#{volumeCommand}`
-          end
-          @currentVolume = iVolume
+          setActualVolume iVolume
           trigger 'volume_change'
         },
-        tweenInterval,
+        nil, # use default interval
         curve
       )
 
@@ -2766,7 +2813,6 @@ module Tunewich
       playerStdoutFile = nil
       playerStartupOptions = []
 
-
       case @playerApplication
       when PLAYER_APP_DEFAULT
         playerInputStreamName = "#{MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
@@ -2777,12 +2823,27 @@ module Tunewich
         playerStdoutFile = getTempFilePath playerStdoutName
 
         # https://mplayerhq.hu/DOCS/tech/slave.txt
-        playerStartupOptions << ["-slave -quiet -input file=#{playerInputFile}"]
+        playerStartupOptions += ["-slave", "-quiet", "-input file=\"#{playerInputFile}\""]
 
         playerAction = Proc.new { |command|
           sendMplayerCommand command
           true
         }
+      when PLAYER_APP_TERMUX
+        if @hasMpv
+          # try to get slave mode to work, or use alternatives (e.g. https://mpv.io/manual/master/#lua-scripting)
+          playerInputStreamName = "#{MPV_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
+          deleteStream playerInputStreamName
+          playerInputFile = makeStream playerInputStreamName
+
+          playerStdoutName = "#{MPV_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
+          playerStdoutFile = getTempFilePath playerStdoutName
+
+          playerAction = Proc.new { |command|
+            sendMpvCommand command
+            true
+          }
+        end
       end
 
       firstPlayableChapterIndex = nil
@@ -2887,11 +2948,12 @@ module Tunewich
 
       if @currentVolume != @volume
         @currentVolume = @volume # they may differ, but at this point, only @volume matters
+        @actualVolume = getMultipliedVolume @currentVolume
         trigger 'volume_change'
       end
 
       playerStartupOptions += @playerOverrideCommands
-      playerStartupOptions << "-volume #{@volume}"
+      playerStartupOptions << "-volume #{@actualVolume}"
       playerStartupOptions << "-speed #{speed}"
       playerStartupOptions << "-af pan=1:0.5:0.5" if @downmixMono # @experimental Does this wipe out any previous -af, or add to it?
       @currentVisualEffects.each { |property, value|
@@ -2924,30 +2986,43 @@ module Tunewich
 
         case @playerApplication
         when PLAYER_APP_DEFAULT
-          playerCommandParts << "#{@playerApplication} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '} > #{playerStdoutFile}"
+          playerCommandParts << "#{@playerApplication} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '}"
         when PLAYER_APP_TERMUX
-          durationInSeconds = nil
-          if @currentTrack && @currentTrack.has_key?('duration') && @currentTrack['duration']
-            durationInSeconds = getSecondsFromDurationString(@currentTrack['duration'])
-          end
-
-          if durationInSeconds
-            playerCommandParts << "termux-media-player play \"#{mediaFilePath}\""
-            # playerCommandParts << "mpv #{playerStartupOptions.join ' '} \"#{mediaFilePath}\""
-            playerCommandParts << " > #{playerStdoutFile}" if playerStdoutFile
-            afterPlayer = Proc.new {
-              sleep getSecondsFromDurationString(@currentTrack['duration'])
+          if @hasMpv
+            mpvSupportedOptions = ['speed', 'quiet', 'af']
+            # ignoring supported options:
+            # -volume: using system music volume via termux-volume instead, since slave mode is not yet working for interactive volume control
+            mpvStartupOptions = playerStartupOptions.keep_if { |option, index|
+              optionKey = option.sub(/^-(\w+).*/, '$1')
+              mpvSupportedOptions.include?(optionKey) if optionKey
             }
+            playerCommandParts << "mpv #{mpvStartupOptions.join ' '} \"#{mediaFilePath}\""
+
+            playerCommandParts.unshift("cat \"#{playerInputFile}\" |") if playerInputFile
           else
-            playerCommandParts = []
-            whisper("termux-media-player doesn't wait around for nobody, and this track won't tell us how long to wait in its stead.", 0)
+            durationInSeconds = nil
+            if @currentTrack && @currentTrack.has_key?('duration') && @currentTrack['duration']
+              durationInSeconds = getSecondsFromDurationString(@currentTrack['duration'])
+            end
+
+            if durationInSeconds
+              playerCommandParts << "termux-media-player play \"#{mediaFilePath}\""
+              afterPlayer = Proc.new {
+                sleep durationInSeconds
+              }
+            else
+              playerCommandParts = []
+              whisper("termux-media-player doesn't wait around for nobody, and this track won't tell us how long to wait in its stead.", 0)
+            end
           end
         end
 
         if playerCommandParts.length > 0
+          playerCommandParts << " > #{playerStdoutFile}" if playerStdoutFile
           playerCommand = playerCommandParts.join ' '
           whisper(playerCommand, 3)
           playerStatus = `#{playerCommand} 2> /dev/null`
+          whisper("Player command finished", 3)
           afterPlayer.call if afterPlayer
         else
           playerStatus = nil
@@ -3073,7 +3148,11 @@ module Tunewich
       when PLAYER_APP_DEFAULT
         sendMplayerCommand "q"
       when PLAYER_APP_TERMUX
-        `termux-media-player stop`
+        if @hasMpv
+          `killall -9 mpv`
+        else
+          `termux-media-player stop`
+        end
       end
       # @future: only kill active thread; currently players don't overlap.
       @playerApplicationThreads.each { |thread|
