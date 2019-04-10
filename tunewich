@@ -38,12 +38,14 @@ module Tunewich
       'kill' => 'kill' # shutting down
     }
     TAG_INPUT_SPLIT = /[,\s]+/
-    PLAYER_APPLICATION = 'mplayer'
+    PLAYER_APP_DEFAULT = 'mplayer'
+    PLAYER_APP_TERMUX = 'termux'
     MPLAYER_STDOUT_BUFFER_NAME = 'mplayer-stdout'
     MPLAYER_INPUT_FIFO_NAME = 'mplayer-input'
     UNAME = `uname`.chomp
 
     def initialize
+      @playerApplication = PLAYER_APP_DEFAULT
       @userMode = MODES['play']
       @library = nil
       @libraryHash = nil
@@ -171,10 +173,12 @@ module Tunewich
         end
       }
 
-      @volume = getMplayerConfigNumericProperty('volume')
+      @volume = 100
+      @volume = getMplayerConfigNumericProperty('volume') if @playerApplicationThreads == PLAYER_APP_DEFAULT
       whisper("@volume: #{@volume}", 3)
       @currentVolume = @volume
       trigger 'volume_change'
+      @speed = 1.0
       @speed = getMplayerConfigNumericProperty('speed', 1.0)
       whisper("@speed: #{@speed}", 3)
       @currentSpeed = @speed
@@ -198,21 +202,31 @@ module Tunewich
       $uniqueId = $uniqueId + 1
     end
 
-    def sendPlayerCommand command, playerIndex = nil
-      playerIndex ||= @currentPlayerIndex
-      if playerIndex == @currentPlayerIndex
-        if /play/.match command
-          @isPlayerPlaying = true
-        elsif /pause/.match command
-          @isPlayerPlaying = false
+    def sendMplayerCommand command, playerIndex = nil
+      case @playerApplication
+      when PLAYER_APP_DEFAULT
+        playerIndex ||= @currentPlayerIndex
+        if playerIndex == @currentPlayerIndex
+          if /play/.match command
+            @isPlayerPlaying = true
+          elsif /pause/.match command
+            @isPlayerPlaying = false
+          end
         end
+        putInTempFile "#{MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
+      when PLAYER_APP_TERMUX
+        whisper("Not (yet) supported with termux: #{command}", 5)
       end
-      putInTempFile "#{MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
     end
 
     def togglePlay
       whisper("before togglePlay, @isPlayerPlaying: #{@isPlayerPlaying}", 2)
-      sendPlayerCommand @isPlayerPlaying ? 'pause' : 'play'
+      case @playerApplication
+      when PLAYER_APP_DEFAULT
+        sendMplayerCommand @isPlayerPlaying ? 'pause' : 'play'
+      when PLAYER_APP_TERMUX
+        `termux-media-player #{@isPlayerPlaying ? 'pause' : 'play'}`
+      end
     end
 
     def interactiveLoop
@@ -511,6 +525,10 @@ module Tunewich
     end
 
     def getEnvironmentConfig
+      if ENV.key? 'TUNEWICH_PLAYER_APP'
+        @playerApplication = ENV['TUNEWICH_PLAYER_APP'] # @refactor: player interface
+      end
+
       if ENV.key? 'TUNEWICH_PLAYER_OPTS'
         @playerOverrideCommands << ENV['TUNEWICH_PLAYER_OPTS']
       end
@@ -830,7 +848,12 @@ module Tunewich
               targetValue,
               duration,
               Proc.new { |x|
-                sendPlayerCommand "#{property} #{x} 1"
+                case @playerApplication
+                when PLAYER_APP_DEFAULT
+                  sendMplayerCommand "#{property} #{x} 1"
+                when PLAYER_APP_TERMUX
+                  whisper('no support for visual effects with termux-media-player', 5)
+                end
                 @currentVisualEffects[property] = x
               }
             )
@@ -1902,8 +1925,8 @@ module Tunewich
               inputParts = getCommandInputParts(input)
               if inputParts[:query] != 'status' # if status, fall though
                 @downmixMono = getToggledValueByInput.call(@downmixMono, inputParts[:remainder])
-                sendPlayerCommand 'af_del pan'
-                sendPlayerCommand 'af_add pan=1:0.5:0.5' if @downmixMono # assuming stereo source
+                sendMplayerCommand 'af_del pan'
+                sendMplayerCommand 'af_add pan=1:0.5:0.5' if @downmixMono # assuming stereo source
               end
 
               command['showStatus'].call
@@ -2034,7 +2057,7 @@ module Tunewich
                     @eqPreset = chosenEQPreset
                     @eqSetting = @library['player']['equalizer_presets'][chosenEQPreset]
                     is_success = true
-                    sendPlayerCommand "af_del equalizer\naf_add equalizer=#{@eqSetting}"
+                    sendMplayerCommand "af_del equalizer\naf_add equalizer=#{@eqSetting}"
                   else
                     putsRealtime "Unknown preset '#{eqInput}'."
                   end
@@ -2096,7 +2119,7 @@ module Tunewich
 
                   if inputCausedEQChange
                     @eqSetting = eqBands.join ':'
-                    sendPlayerCommand "af_clr\naf_add equalizer=#{@eqSetting}"
+                    sendMplayerCommand "af_clr\naf_add equalizer=#{@eqSetting}"
                   end
                 end
                 enablePlaybackInfo
@@ -2153,7 +2176,7 @@ module Tunewich
               output
             },
             'inputOptions' => Proc.new { |input, command|
-              `#{PLAYER_APPLICATION} -input cmdlist`.split("\n")
+              getPlayerCommands.split("\n")
             }
           },
           'stop' => {
@@ -2385,7 +2408,7 @@ module Tunewich
         @currentlySeeking = true
         fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
 
-        sendPlayerCommand "seek #{seekTimeInSeconds} 2"
+        sendMplayerCommand "seek #{seekTimeInSeconds} 2"
 
         fadeVolume 'in', fadeInPeriod, @currentPlayerIndex if fadeInPeriod > 0
 
@@ -2447,7 +2470,7 @@ module Tunewich
     def setActualVolume newVolume
       @volume = newVolume
       @currentVolume = getMultipliedVolume newVolume
-      sendPlayerCommand "volume #{@currentVolume} 1", @currentPlayerIndex
+      sendMplayerCommand "volume #{@currentVolume} 1", @currentPlayerIndex
     end
 
     def tween a, b, duration, onStep, interval = 0.02, curve = 'linear'
@@ -2513,7 +2536,14 @@ module Tunewich
         targetFadeVolume,
         duration,
         Proc.new { |iVolume|
-          sendPlayerCommand "volume #{iVolume} 1", playerIndex
+          case #playerApplication
+          when PLAYER_APP_DEFAULT
+            sendMplayerCommand "volume #{iVolume} 1", playerIndex
+          when PLAYER_APP_TERMUX
+            volumeCommand = "termux-volume music #{x}"
+            whisper("volumeCommand", 5)
+            `#{volumeCommand}`
+          end
           @currentVolume = iVolume
           trigger 'volume_change'
         },
@@ -2545,7 +2575,7 @@ module Tunewich
           targetRampSpeed,
           duration,
           Proc.new { |iSpeed|
-            sendPlayerCommand "speed_set #{iSpeed}", playerIndex
+            sendMplayerCommand "speed_set #{iSpeed}", playerIndex
             @currentSpeed = iSpeed
             trigger 'speed_change'
           }
@@ -2725,20 +2755,33 @@ module Tunewich
         :playTime => 0
       }
 
-      playerInputStreamName = "#{MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
-      deleteStream playerInputStreamName
-      playerInputFile = makeStream playerInputStreamName
-
-      playerStdoutName = "#{MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
-      playerStdoutFile = getTempFilePath playerStdoutName
-
-      # https://mplayerhq.hu/DOCS/tech/slave.txt
-      playerStartupOptions = ["-slave -quiet -input file=#{playerInputFile}"]
       playerStatus = nil
-      playerAction = Proc.new { |command|
-        sendPlayerCommand command
-        true
-      }
+      playerAction = nil
+
+      playerInputStreamName = nil
+      playerInputFile = nil
+      playerStdoutName = nil
+      playerStdoutFile = nil
+      playerStartupOptions = []
+
+
+      case @playerApplication
+      when PLAYER_APP_DEFAULT
+        playerInputStreamName = "#{MPLAYER_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
+        deleteStream playerInputStreamName
+        playerInputFile = makeStream playerInputStreamName
+
+        playerStdoutName = "#{MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
+        playerStdoutFile = getTempFilePath playerStdoutName
+
+        # https://mplayerhq.hu/DOCS/tech/slave.txt
+        playerStartupOptions << ["-slave -quiet -input file=#{playerInputFile}"]
+
+        playerAction = Proc.new { |command|
+          sendMplayerCommand command
+          true
+        }
+      end
 
       firstPlayableChapterIndex = nil
       if track.has_key?('chapters') && track['chapters'].length > 0 && track['chapters'][0]['time']
@@ -2861,19 +2904,53 @@ module Tunewich
         commandPrompt '', interactiveCommands, playerAction
         whisper("commandPrompt end", 4)
       }
-      if @playerTemporaryInteractiveCommands.length > 0
+      if playerAction && @playerTemporaryInteractiveCommands.length > 0
         playerAction.call @playerTemporaryInteractiveCommands.join("\n")
         @playerTemporaryInteractiveCommands = []
       end
+
       @playerApplicationThreads[@currentPlayerIndex] = Thread.new {
         @isPlayerPlaying = true
         # TODO 1gnyIc: fix missing input characters while paused
         @tempFiles[playerStdoutFile] = true
-        playerCommand = "#{PLAYER_APPLICATION} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '} > #{playerStdoutFile}"
-        playerCommand = "#{@commandBeforePlayer} #{playerCommand}" if @commandBeforePlayer
-        whisper(playerCommand, 3)
-        playerStatus = `#{playerCommand} 2> /dev/null`
-        whisper("#{PLAYER_APPLICATION} is finished. killing user input thread", 4)
+
+        playerCommandParts = []
+
+        playerCommandParts << @commandBeforePlayer if @commandBeforePlayer
+
+        afterPlayer = nil
+
+        case @playerApplication
+        when PLAYER_APP_DEFAULT
+          playerCommandParts << "#{@playerApplication} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '} > #{playerStdoutFile}"
+        when PLAYER_APP_TERMUX
+          durationInSeconds = nil
+          if @currentTrack && @currentTrack.has_key?('duration') && @currentTrack['duration']
+            durationInSeconds = getSecondsFromDurationString(@currentTrack['duration'])
+          end
+
+          if durationInSeconds
+            playerCommandParts << "termux-media-player play \"#{mediaFilePath}\""
+            playerCommandParts << " > #{playerStdoutFile}" if playerStdoutFile
+            afterPlayer = Proc.new {
+              sleep getSecondsFromDurationString(@currentTrack['duration'])
+            }
+          else
+            playerCommandParts = []
+            whisper("termux-media-player doesn't wait around for nobody, and this track won't tell us how long to wait in its stead.", 0)
+          end
+        end
+
+        if playerCommandParts.length > 0
+          playerCommand = playerCommandParts.join ' '
+          whisper(playerCommand, 3)
+          playerStatus = `#{playerCommand} 2> /dev/null`
+          afterPlayer.call if afterPlayer
+        else
+          playerStatus = nil
+          whisper("No player command, or aborted: '#{@playerApplication}", 3)
+        end
+
         @inputThread.kill if @inputThread
       }
 
@@ -2988,8 +3065,17 @@ module Tunewich
     end
 
     def exitPlayerCommand
-      whisper("exiting mplayer", 3)
-      sendPlayerCommand "q"
+      whisper("exiting player: #{@playerApplication}", 3)
+      case @playerApplication
+      when PLAYER_APP_DEFAULT
+        sendMplayerCommand "q"
+      when PLAYER_APP_TERMUX
+        `termux-media-player stop`
+      end
+      # @future: only kill active thread; currently players don't overlap.
+      @playerApplicationThreads.each { |thread|
+        thread.kill if thread && thread.alive?
+      }
     end
 
     def getLoopLimitStatusMessage
@@ -3067,7 +3153,7 @@ module Tunewich
         command = "#{property}"
         command = "get_property #{command}" if not property.match(/^get_/)
         # TODO: 1gG4jB maybe this needs pausing_keep (http://www.mplayerhq.hu/DOCS/tech/slave.txt). doesn't quite work in my testing
-        sendPlayerCommand command
+        sendMplayerCommand command
         sleep responseDelay if responseDelay
         lastPlayerOutput = tailTempFile "#{MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
         if lastPlayerOutput
@@ -5347,6 +5433,15 @@ module Tunewich
         whisper "before_exit: killing external commands listener (nerfed: will it allow stuff to continue?)", 3
         shouldListenForExternalCommands = false
       }
+    end
+
+    def getPlayerCommands
+      case @playerApplication
+      when PLAYER_APP_DEFAULT
+        `#{@playerApplication} -input cmdlist`
+      when PLAYER_APP_TERMUX
+        []
+      end
     end
 
   end
