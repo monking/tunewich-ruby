@@ -224,8 +224,9 @@ module Tunewich
       case @playerApplication
       when PLAYER_APP_DEFAULT
         sendMplayerCommand @isPlayerPlaying ? 'pause' : 'play'
-      when PLAYER_APP_TERMUX
-        `termux-media-player #{@isPlayerPlaying ? 'pause' : 'play'}`
+      # when PLAYER_APP_TERMUX
+        # `termux-media-player #{@isPlayerPlaying ? 'pause' : 'play'}`
+        # `mpv #{@isPlayerPlaying ? 'pause' : 'play'}`
       end
     end
 
@@ -2467,11 +2468,11 @@ module Tunewich
       newVolume
     end
 
-    def setActualVolume newVolume
-      @volume = newVolume
-      @currentVolume = getMultipliedVolume newVolume
-      sendMplayerCommand "volume #{@currentVolume} 1", @currentPlayerIndex
-    end
+    # def setActualVolume newVolume
+    #   @volume = newVolume
+    #   @currentVolume = getMultipliedVolume newVolume
+    #   sendMplayerCommand "volume #{@currentVolume} 1", @currentPlayerIndex
+    # end
 
     def tween a, b, duration, onStep, interval = 0.02, curve = 'linear'
       whisper("tween from #{a} to #{b}", 3)
@@ -2531,23 +2532,24 @@ module Tunewich
       targetFadeVolume = [[targetFadeVolume, 0].max, 100].min
       whisper("fading from #{transitionVolume} to #{targetFadeVolume} in #{duration} seconds (playerIndex: #{playerIndex})", 4)
       curve = @isVolumeAlreadyLogarithmic ? 'linear' : 'logarithmic'
+      tweenInterval = @playerApplication == PLAYER_APP_DEFAULT ? 0.02 : 1.0
       tween(
         transitionVolume,
         targetFadeVolume,
         duration,
         Proc.new { |iVolume|
-          case #playerApplication
+          case @playerApplication
           when PLAYER_APP_DEFAULT
             sendMplayerCommand "volume #{iVolume} 1", playerIndex
           when PLAYER_APP_TERMUX
-            volumeCommand = "termux-volume music #{x}"
+            volumeCommand = "termux-volume music #{iVolume.round}"
             whisper("volumeCommand", 5)
             `#{volumeCommand}`
           end
           @currentVolume = iVolume
           trigger 'volume_change'
         },
-        0.02,
+        tweenInterval,
         curve
       )
 
@@ -2931,6 +2933,7 @@ module Tunewich
 
           if durationInSeconds
             playerCommandParts << "termux-media-player play \"#{mediaFilePath}\""
+            # playerCommandParts << "mpv #{playerStartupOptions.join ' '} \"#{mediaFilePath}\""
             playerCommandParts << " > #{playerStdoutFile}" if playerStdoutFile
             afterPlayer = Proc.new {
               sleep getSecondsFromDurationString(@currentTrack['duration'])
