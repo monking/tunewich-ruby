@@ -514,12 +514,12 @@ module Tunewich
 
     def enablePlaybackInfo
       @shouldShowPlaybackInfo = true
-      whisper("DISABLING realtime playback info", 3)
+      whisper("ENABLING realtime playback info", 3)
     end
 
     def disablePlaybackInfo
       @shouldShowPlaybackInfo = false
-      whisper("ENABLING realtime playback info", 3)
+      whisper("DISABLING realtime playback info", 3)
     end
 
     def putsRealtime message
@@ -3230,7 +3230,7 @@ module Tunewich
     def getMplayerProperty property, pattern = nil, responseDelay = nil
       output = nil
 
-      if @isPlayerPlaying # TODO: 1gG4j9 get time position without unpausing
+      if @isPlayerPlaying && @playerApplication == PLAYER_APP_DEFAULT # TODO: 1gG4j9 get time position without unpausing
         pattern ||= /^()(.*)$/
         command = "#{property}"
         command = "get_property #{command}" if not property.match(/^get_/)
