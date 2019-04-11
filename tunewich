@@ -2998,11 +2998,12 @@ module Tunewich
             mpvSupportedOptions = ['speed', 'quiet', 'af', 'loop']
             # ignoring supported options:
             # -volume: using system music volume via termux-volume instead, since slave mode is not yet working for interactive volume control
-            mpvStartupOptions = playerStartupOptions.keep_if { |option, index|
-              optionKey = option.sub(/^-(\w+).*/, '$1')
+            playerStartupOptions.keep_if { |option, index|
+              optionKey = option.sub(/^-(\w+).*/, '\1')
+              # whisper("mpv keep option #{optionKey}? #{(mpvSupportedOptions.include?(optionKey) if optionKey) ? 'yes' : 'no'}", 4) # XXX
               mpvSupportedOptions.include?(optionKey) if optionKey
             }
-            playerCommandParts << "mpv #{mpvStartupOptions.join ' '} \"#{mediaFilePath}\""
+            playerCommandParts << "mpv #{playerStartupOptions.join ' '} \"#{mediaFilePath}\""
 
             # The input pipe isn't connecting to interactive input on mpv, and it's causing the command not to quit when playback is finished
             # playerCommandParts.unshift("cat \"#{playerInputFile}\" |") if playerInputFile
