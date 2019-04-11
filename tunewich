@@ -244,9 +244,15 @@ module Tunewich
     end
 
     def sendMpvCommand command, playerIndex = nil
-      whisper("sending to mpv: '#{command}'", 4)
-      playerIndex ||= @currentPlayerIndex
-      putInTempFile "#{MPV_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
+      case command.chomp.strip
+      when 'q'
+        exitPlayerCommand false # 1hEaID
+      end
+
+      ## TODO: get interactive input to mpv working
+      # whisper("sending to mpv: '#{command}'", 4)
+      # playerIndex ||= @currentPlayerIndex
+      # putInTempFile "#{MPV_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
     end
 
     def togglePlay
@@ -2989,7 +2995,7 @@ module Tunewich
           playerCommandParts << "#{@playerApplication} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '}"
         when PLAYER_APP_TERMUX
           if @hasMpv
-            mpvSupportedOptions = ['speed', 'quiet', 'af']
+            mpvSupportedOptions = ['speed', 'quiet', 'af', 'loop']
             # ignoring supported options:
             # -volume: using system music volume via termux-volume instead, since slave mode is not yet working for interactive volume control
             mpvStartupOptions = playerStartupOptions.keep_if { |option, index|
@@ -2998,7 +3004,8 @@ module Tunewich
             }
             playerCommandParts << "mpv #{mpvStartupOptions.join ' '} \"#{mediaFilePath}\""
 
-            playerCommandParts.unshift("cat \"#{playerInputFile}\" |") if playerInputFile
+            # The input pipe isn't connecting to interactive input on mpv, and it's causing the command not to quit when playback is finished
+            # playerCommandParts.unshift("cat \"#{playerInputFile}\" |") if playerInputFile
           else
             durationInSeconds = nil
             if @currentTrack && @currentTrack.has_key?('duration') && @currentTrack['duration']
@@ -3142,7 +3149,7 @@ module Tunewich
       response
     end
 
-    def exitPlayerCommand
+    def exitPlayerCommand hard = true
       whisper("exiting player: #{@playerApplication}", 3)
       case @playerApplication
       when PLAYER_APP_DEFAULT
@@ -3154,10 +3161,14 @@ module Tunewich
           `termux-media-player stop`
         end
       end
-      # @future: only kill active thread; currently players don't overlap.
-      @playerApplicationThreads.each { |thread|
-        thread.kill if thread && thread.alive?
-      }
+
+      ## 1hEaID: in termux, with mpv, killing the player threads causes tunewich to break the main loop. This is a hacky workaround for that problem.
+      if hard
+        # @future: only kill active thread; currently players don't overlap.
+        @playerApplicationThreads.each { |thread|
+          thread.kill if thread && thread.alive?
+        }
+      end
     end
 
     def getLoopLimitStatusMessage
