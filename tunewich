@@ -3539,15 +3539,27 @@ module Tunewich
       files.length ? files[0] : nil
     end
 
-    def findTrackFiles(track)
-      globString = "#{getTrackFilePrefix track}*"
-      files = Dir.glob(globString)
-      files.delete_if { |fileName| fileName.match(/\.part$/) }
+    def findTrackFiles(track, forceCacheRefresh = false)
+      files = []
+
+      # TODO: expire cache after some interval of time, maybe 1 minute
+
+      if !@mediaFilePathCache || forceCacheRefresh
+        @mediaFilePathCache = Dir.glob("#{@mediaDirectoryPath}/tunewich.*")
+        @mediaFilePathCache.delete_if { |fileName| fileName.match(/\.part$/) }
+      end
+
+      if @mediaFilePathCache && @mediaFilePathCache.length > 0
+        files += Array.new(@mediaFilePathCache).keep_if { |path|
+          path.split('/').last.start_with?("tunewich.#{track['id']}")
+        }
+      end
+
       files
     end
 
-    def trackFileExists?(track)
-      findTrackFiles(track).length > 0
+    def trackFileExists?(track, forceCacheRefresh = false)
+      findTrackFiles(track, forceCacheRefresh).length > 0
     end
 
     def getIdFromFileName(fileName)
