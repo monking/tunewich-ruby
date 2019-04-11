@@ -494,10 +494,10 @@ module Tunewich
         sessionDescriptors << filters.join(' ')
       end
 
-      sessionDescription += " (#{sessionDescriptors.join(', ')})" if sessionDescriptors.length > 0
+      sessionDescription << " (#{sessionDescriptors.join(', ')})" if sessionDescriptors.length > 0
 
       if @currentTrack && @currentTrack.has_key?('title')
-        sessionDescription += " playing: #{@currentTrack['title']}"
+        sessionDescription << " playing: #{@currentTrack['title']}"
       end
 
       putInTempFile 'session-description', sessionDescription
@@ -562,7 +562,7 @@ module Tunewich
       mplayerConfigFile = "#{$serviceConfigDir}/mplayer.options"
 
       if File.exist?(mplayerConfigFile)
-        @playerOverrideCommands += File.read(mplayerConfigFile).chomp.strip.gsub(/[\r\n]+/, ' ').split(/ (?=-)/)
+        @playerOverrideCommands.concat(File.read(mplayerConfigFile).chomp.strip.gsub(/[\r\n]+/, ' ').split(/ (?=-)/))
       end
     end
 
@@ -664,7 +664,7 @@ module Tunewich
           @tracks.each { |t|
             trackTitlesAndIds << "#{t.has_key?('title') ? t['title'] : "<untitled>"} [#{t['id']}]"
           }
-          matchingTitlesAndIds = [].concat(trackTitlesAndIds) # clone titles only for visual feedback to user
+          matchingTitlesAndIds = Array.new(trackTitlesAndIds) # clone titles only for visual feedback to user
           shouldShowTracks = true
 
           if inputParts[:query] && inputParts[:query].length > 0
@@ -1207,7 +1207,7 @@ module Tunewich
 
                   @library['playlists'][chosenName]['tracks'] ||= []
                   initialListLength = @library['playlists'][chosenName]['tracks'].length
-                  @library['playlists'][chosenName]['tracks'] += newTracks.map { |t| t['id'] }
+                  @library['playlists'][chosenName]['tracks'].concat(newTracks.map { |t| t['id'] })
                   @library['playlists'][chosenName]['tracks'].uniq!
                   lengthDiff = @library['playlists'][chosenName]['tracks'].length - initialListLength
                   whisper("Added #{lengthDiff} tracks to playlist '#{chosenName}'", 0)
@@ -1305,7 +1305,7 @@ module Tunewich
               trackIndexes = {}
               if inputParts[:arg] && inputParts[:arg] == 'all'
                 shouldUseInnerTrackIndex = true
-                tracks += @tracks
+                tracks.concat(@tracks)
               elsif inputParts[:query] && inputParts[:query].length > 0
                 if inputParts[:query] && inputParts[:query].length > 0
                   trackIndex = findTrackIndex(inputParts[:query])
@@ -1358,7 +1358,7 @@ module Tunewich
 
                   if track == @currentTrack
                     timeMessage = ""
-                    timeMessage += "			time : #{getDurationStringFromSeconds @currentPlayerTime}" if @currentPlayerTime
+                    timeMessage << "			time : #{getDurationStringFromSeconds @currentPlayerTime}" if @currentPlayerTime
                     if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
                       durationResponseFromPlayer = getMplayerProperty('get_time_length', /^(ANS_LENGTH=)(.*?)(\?)?$/, 0.1)
                       whisper("Got duration from player: '#{durationResponseFromPlayer}'", 2)
@@ -1366,12 +1366,12 @@ module Tunewich
                         track['duration'] = getDurationStringFromSeconds durationResponseFromPlayer.to_f
                       end
                     end
-                    timeMessage += " / #{track['duration']}"
-                    timeMessage += " (#{@speed}x)" if @speed != 1
+                    timeMessage << " / #{track['duration']}"
+                    timeMessage << " (#{@speed}x)" if @speed != 1
                     if @currentPlayerTime && @currentTrack.has_key?('chapters')
                       chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
                       if chapterIndex > -1
-                        timeMessage += "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
+                        timeMessage << "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
                       end
                     end
                     outputMessageLines << "#{timeMessage}"
@@ -2032,9 +2032,9 @@ module Tunewich
                 statusExtras << "inner loops only"
               end
 
-              statusMessage += " (#{statusExtras.join('; ')})" if statusExtras.length > 0
+              statusMessage << " (#{statusExtras.join('; ')})" if statusExtras.length > 0
 
-              statusMessage += "\n#{getLoopLimitStatusMessage}"
+              statusMessage << "\n#{getLoopLimitStatusMessage}"
 
               putsRealtime statusMessage
             },
@@ -2153,7 +2153,7 @@ module Tunewich
                     end
                     break
                   else
-                    interactivePresetNameInput += eqInput
+                    interactivePresetNameInput << eqInput
                   end
 
                   if interactivePresetNameInput.length > 0
@@ -2710,7 +2710,7 @@ module Tunewich
 
       if childTag && tagNames.length > 0
         childTag['parents'] ||= []
-        childTag['parents'].concat tagNames
+        childTag['parents'].concat(tagNames)
         childTag['parents'].uniq!
       else
         putsRealtime "provide 2 or more tags to relate together"
@@ -2732,7 +2732,7 @@ module Tunewich
             baseTag['aliases'] << collapsingTagName
             if collapsingTag['tracks'] && collapsingTag['tracks'].length > 0
               baseTag['tracks'] ||= []
-              baseTag['tracks'].concat collapsingTag['tracks']
+              baseTag['tracks'].concat(collapsingTag['tracks'])
             end
             deleteTag collapsingTagName
           end
@@ -2829,7 +2829,7 @@ module Tunewich
         playerStdoutFile = getTempFilePath playerStdoutName
 
         # https://mplayerhq.hu/DOCS/tech/slave.txt
-        playerStartupOptions += ["-slave", "-quiet", "-input file=\"#{playerInputFile}\""]
+        playerStartupOptions.concat(["-slave", "-quiet", "-input file=\"#{playerInputFile}\""])
 
         playerAction = Proc.new { |command|
           sendMplayerCommand command
@@ -2958,7 +2958,7 @@ module Tunewich
         trigger 'volume_change'
       end
 
-      playerStartupOptions += @playerOverrideCommands
+      playerStartupOptions.concat(@playerOverrideCommands)
       playerStartupOptions << "-volume #{@actualVolume}"
       playerStartupOptions << "-speed #{speed}"
       playerStartupOptions << "-af pan=1:0.5:0.5" if @downmixMono # @experimental Does this wipe out any previous -af, or add to it?
@@ -3175,7 +3175,7 @@ module Tunewich
     def getLoopLimitStatusMessage
       status = "(limit: #{@loopLimit == 0 ? "∞" : "#{@loopLimit}"})"
       loopHistory = @loopHistory.map { |k,v| "#{k} - #{v}" }.join("\n")
-      status += "\n#{loopHistory}" if loopHistory && loopHistory.length > 0
+      status << "\n#{loopHistory}" if loopHistory && loopHistory.length > 0
 
       status
     end
@@ -3205,8 +3205,8 @@ module Tunewich
 
         # show playback position
         timeMessage = "#{unicodeChars[:timer]}	#{getDurationStringFromSeconds @currentPlayerTime, 0}" if @currentPlayerTime
-        timeMessage += "/#{@currentTrack['duration']}" if @currentTrack.has_key?('duration')
-        timeMessage += "(#{(@currentSpeed * 10).round / 10.0}x)" if @currentSpeed != 1
+        timeMessage << "/#{@currentTrack['duration']}" if @currentTrack.has_key?('duration')
+        timeMessage << "(#{(@currentSpeed * 10).round / 10.0}x)" if @currentSpeed != 1
         playbackInfo << timeMessage
 
         # show if the track file is downloaded
@@ -3265,7 +3265,7 @@ module Tunewich
 
     def getMplayerConfigNumericProperty(propertyName, defaultValue = 0.0)
       playerCommands = []
-      playerCommands += @playerOverrideCommands if @playerOverrideCommands
+      playerCommands.concat(@playerOverrideCommands) if @playerOverrideCommands
       propertyValue = defaultValue
 
       playerCommands.each { |command|
@@ -3308,7 +3308,7 @@ module Tunewich
         whisper("Replacing your play queue with #{tracks.length} tracks.")
         @tracks = []
       end
-      @tracks += tracks
+      @tracks.concat(tracks)
       filterTracksOnDeck
       putInTempFile('tracks', listTrackTitles(@tracks).join("\n"), false)
       if @trackIndex && @trackIndex > @tracks.length - 1
@@ -3410,8 +3410,8 @@ module Tunewich
       notesAndChapters = []
 
       if track
-        notesAndChapters += track['chapters'] if track.has_key?('chapters')
-        notesAndChapters += track['notes'] if track.has_key?('notes')
+        notesAndChapters.concat(track['chapters']) if track.has_key?('chapters')
+        notesAndChapters.concat(track['notes']) if track.has_key?('notes')
       end
 
       if notesAndChapters.length > 0
@@ -3550,9 +3550,9 @@ module Tunewich
       end
 
       if @mediaFilePathCache && @mediaFilePathCache.length > 0
-        files += Array.new(@mediaFilePathCache).keep_if { |path|
+        files.concat(Array.new(@mediaFilePathCache).keep_if { |path|
           path.split('/').last.start_with?("tunewich.#{track['id']}")
-        }
+        })
       end
 
       files
@@ -3598,9 +3598,9 @@ module Tunewich
             if !options.has_key?("audioFormat") && @preferredFileFormat == 'bestaudio'
               options['audioFormat'] = 'vorbis'
             end
-            youtubeDlOptions += " --extract-audio --audio-format #{options['audioFormat']} " if options.has_key? "audioFormat"
+            youtubeDlOptions << " --extract-audio --audio-format #{options['audioFormat']} " if options.has_key? "audioFormat"
           end
-          youtubeDlOptions += " -o \"#{getTrackFilePrefix track}.%(title)s.%(ext)s\""
+          youtubeDlOptions << " -o \"#{getTrackFilePrefix track}.%(title)s.%(ext)s\""
           downloadCommand = "#{youtubeDlCommandBegin}#{youtubeDlOptions} #{youtubeDlCommandEnd}"
         end
       else
@@ -3687,7 +3687,7 @@ module Tunewich
       marginSize = (width - message.length) / 2 - padding.length
       marginLeft = marginSize > 1 ? fill * marginSize : ''
       marginRight = marginLeft
-      marginRight += fill if (width - message.length) % 2 == 1
+      marginRight << fill if (width - message.length) % 2 == 1
       puts "\n#{blockRow}"
       puts "#{marginLeft}#{padding}#{message}#{padding}#{marginRight}"
       puts blockRow
@@ -3979,7 +3979,7 @@ module Tunewich
           else
             allDescendantTags << tagName
             whisper("#{ancestorTagName} #{">" * (chain.length)} #{tagName}", 4)
-            allDescendantTags += getDescendantTagNames(tagName, chain[0, chain.length]) # pass chain array value
+            allDescendantTags.concat(getDescendantTagNames(tagName, chain[0, chain.length])) # pass chain array value
           end
         end
       }
@@ -3998,7 +3998,7 @@ module Tunewich
             whisper("tagName: #{tagName}", 5)
             allAncestorTags << tagName
             whisper("#{descendantTagName} #{"<" * (depth + 1)} #{tagName}", 4)
-            allAncestorTags += getAncestorTagNames tagName, (depth + 1)
+            allAncestorTags.concat(getAncestorTagNames(tagName, (depth + 1)))
           }
         end
       else
@@ -4037,8 +4037,8 @@ module Tunewich
           unionTagTracks = []
           filterTags = filters['tag'].split(' ')
           descendantFilterTags = []
-          filterTags.each { |tagName| descendantFilterTags += getDescendantTagNames(tagName).map {|name| "+#{name}"} }
-          filterTags += descendantFilterTags
+          filterTags.each { |tagName| descendantFilterTags.concat(getDescendantTagNames(tagName).map {|name| "+#{name}"}) }
+          filterTags.concat(descendantFilterTags)
           filterTags.each { |tagName|
             unionPattern = /^\+/
             isUnionTag = tagName.match unionPattern
@@ -4046,7 +4046,7 @@ module Tunewich
             if @library['tags'].has_key? tagName
               selectedTags << {:name => tagName, :tag => @library['tags'][tagName], :union => isUnionTag}
               if isUnionTag && @library['tags'][tagName]['tracks']
-                unionTagTracks += @library['tags'][tagName]['tracks'];
+                unionTagTracks.concat(@library['tags'][tagName]['tracks'])
               end
             else
               @library['tags'].each { |name, libraryTag|
@@ -4055,7 +4055,7 @@ module Tunewich
                     if tagAlias == tagName
                       selectedTags << {:name => name, :tag => libraryTag, :union => isUnionTag}
                       if isUnionTag && @library['tags'][tagName]['tracks']
-                        unionTagTracks += @library['tags'][tagName]['tracks']
+                        unionTagTracks.concat(@library['tags'][tagName]['tracks'])
                       end
                     end
                   }
@@ -4154,8 +4154,8 @@ module Tunewich
       excludeFilters ||= @trackExcludeFilters
 
       filtersList = []
-      filtersList += includeFilters.map { |filter, rule| "#{filter}=#{rule}" } if includeFilters
-      filtersList += excludeFilters.map { |filter, rule| "-#{filter}=#{rule}" } if excludeFilters
+      filtersList.concat(includeFilters.map { |filter, rule| "#{filter}=#{rule}" }) if includeFilters
+      filtersList.concat(excludeFilters.map { |filter, rule| "-#{filter}=#{rule}" }) if excludeFilters
 
       filtersList
     end
@@ -4487,10 +4487,10 @@ module Tunewich
       days = wholeSeconds / 86400
 
       outputString = ''
-      outputString += "#{days}" if days > 0
-      outputString += ":#{hours < 10 ? "0#{hours}" : hours}" if hours > 0
-      outputString += ":#{minutes < 10 ? "0#{minutes}" : minutes}"
-      outputString += ":#{seconds < 10 ? "0#{seconds}" : seconds}"
+      outputString << "#{days}" if days > 0
+      outputString << ":#{hours < 10 ? "0#{hours}" : hours}" if hours > 0
+      outputString << ":#{minutes < 10 ? "0#{minutes}" : minutes}"
+      outputString << ":#{seconds < 10 ? "0#{seconds}" : seconds}"
       outputString.sub(/^:/, '')
     end
 
@@ -4598,10 +4598,10 @@ module Tunewich
       end
 
       parser.on("-o OPTIONS", "--player-opts OPTIONS", "Set player options. Set interactively with the /player command. You can also add mplayer options in #{$serviceConfigDir}/mplayer.options (You can find a starting copy in the 'config' directory that came with tunewich). --player-opts will override those options.", " ") do |options|
-        @playerOverrideCommands += options.split(' -').map.with_index { |option, index|
+        @playerOverrideCommands.concat(options.split(' -').map.with_index { |option, index|
           option = "-#{option}" if index > 0
           option
-        }
+        })
       end
 
       parser.on("-p", "--playlist [NAME]", "Choose or create a playlist. If no NAME/QUERY is given, a name is guessed from other input, such as a -q query", " ") do |playlistQuery|
@@ -4834,17 +4834,17 @@ module Tunewich
             whisper("WIP: scraping bandcamp page")
             urlCanBeScraped = false
             bandcampTracks = loadBandcamp url
-            tracks += bandcampTracks if bandcampTracks
+            tracks.concat(bandcampTracks) if bandcampTracks
           elsif 'text/html' == urlContentType && cookieDomain == '.soundcloud.com'
             whisper("WIP: getting soundcloud track")
             urlCanBeScraped = false
             soundcloudTracks = loadSoundcloud url
-            tracks += soundcloudTracks if soundcloudTracks
+            tracks.concat(soundcloudTracks) if soundcloudTracks
           elsif urlContentType && ['text/xml', 'application/rss+xml'].include?(urlContentType) # TODO: 1gG4kV
             whisper("WIP: try to load podcast feed")
             urlCanBeScraped = false
             podcastTracks = loadPodcast url
-            tracks += podcastTracks if podcastTracks
+            tracks.concat(podcastTracks) if podcastTracks
           elsif urlContentType.match(/^audio\//)
             urlCanBeScraped = false
             whisper("assuming that URL is an audio file. Adding as a track", 3)
@@ -4860,7 +4860,7 @@ module Tunewich
         begin
           if urlCanBeScraped && getAll
             youTubeTracks = getYouTubeTracksFromPage url
-            tracks.concat youTubeTracks if youTubeTracks
+            tracks.concat(youTubeTracks) if youTubeTracks
           end
         rescue Exception => e
           whisper("Trouble scraping this page: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 0) # TODO: well you give it some...Trouble.
@@ -5059,9 +5059,9 @@ module Tunewich
       sortedCommandList.each { |commandMeta|
         info = "		/"
         commandPaddingLength = info.length
-        info += commandMeta[:name]
-        info += " " * (maxCommandNameLength - info.length + commandPaddingLength)
-        info += " : #{commandMeta[:command]['description']}" if commandMeta[:command]['description']
+        info << commandMeta[:name]
+        info << " " * (maxCommandNameLength - info.length + commandPaddingLength)
+        info << " : #{commandMeta[:command]['description']}" if commandMeta[:command]['description']
         commandInfo << info
       }
       putsRealtime(commandInfo.join("\n"))
@@ -5304,8 +5304,8 @@ module Tunewich
                         inputParts = getCommandInputParts(input, inputPattern)
                         inputOptions = command['inputOptions'].call
                         options = []
-                        options += command['args'] if command.has_key?('args')
-                        options += inputOptions if inputOptions
+                        options.concat(command['args']) if command.has_key?('args')
+                        options.concat(inputOptions) if inputOptions
 
                         if inputParts[:query] && inputParts[:query].length > 0
                           options = fuzzyStringSearchInListValues(inputParts[:query], options)
@@ -5338,7 +5338,7 @@ module Tunewich
             end
             putsRealtime "#{tailNotice}\n" if tailNotice
           else
-            @commandUserInput += inputCharacter
+            @commandUserInput << inputCharacter
             @commandInputTyped = @commandUserInput
           end
 
@@ -5445,7 +5445,7 @@ module Tunewich
         end
 
         if note.has_key?('loop_target')
-          output += " (loop to \"#{note['loop_target']}\")"
+          output << " (loop to \"#{note['loop_target']}\")"
         end
 
         output
@@ -5488,7 +5488,7 @@ module Tunewich
       tracks
     end
 
-    def cloneTracks inputTracks
+    def cloneTracks inputTracks # inputTracks is a map, and tracks (output) is an array? weird
       tracks = []
       inputTracks.each { |id, t| tracks <<	t }
       tracks
