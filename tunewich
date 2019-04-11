@@ -3281,7 +3281,7 @@ module Tunewich
       whisper("next track", 3)
       if @shuffle
         # FIXME 1gpalq: filterTracksOnDeck should run regardles of @shuffle, but it would mess with @trackIndex. With @shuffle == true, it doesn't matter.
-        filterTracksOnDeck()
+        # filterTracksOnDeck() # only apply upon changing the filter or track list, for performance's sake
         shuffleIndex()
       else
         @trackIndex += 1
