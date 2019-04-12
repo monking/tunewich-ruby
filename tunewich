@@ -2996,6 +2996,7 @@ module Tunewich
         when PLAYER_APP_TERMUX
           setActualVolume @volume # handle the case of `/fade out / q`, which fades out the system volume, so it is still faded out when we start a new player
           if @hasMpv
+            # TODO: implement slave mode with JSON IPC https://mpv.io/manual/master/#json-ipc
             mpvSupportedOptions = ['speed', 'quiet', 'af', 'loop']
             # ignoring supported options:
             # -volume: using system music volume via termux-volume instead, since slave mode is not yet working for interactive volume control
