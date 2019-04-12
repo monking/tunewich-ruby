@@ -2994,6 +2994,7 @@ module Tunewich
         when PLAYER_APP_DEFAULT
           playerCommandParts << "#{@playerApplication} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '}"
         when PLAYER_APP_TERMUX
+          setActualVolume @volume # handle the case of `/fade out / q`, which fades out the system volume, so it is still faded out when we start a new player
           if @hasMpv
             mpvSupportedOptions = ['speed', 'quiet', 'af', 'loop']
             # ignoring supported options:
