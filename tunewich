@@ -46,6 +46,9 @@ module Tunewich
     MPV_INPUT_FIFO_NAME = 'mpv-input'
     UNAME = `uname`.chomp
 
+    DEFAULT_INTERACTIVE_INPUT_PATTERN = /^(?<query>.*?)( +(?<remainder>\/.*))?$/
+    # DEFAULT_INTERACTIVE_INPUT_PATTERN = /^(?<query>[^\/].*?)( +(?<remainder>\/.*))?$/ # leading '/' means next command, so query may not begin with '/'
+
     def initialize
       @playerApplication = PLAYER_APP_DEFAULT
       @userMode = MODES['play']
@@ -652,7 +655,10 @@ module Tunewich
     end
 
     def getCommandInputParts(input, pattern = nil)
-      input.match(pattern || /^(?<query>.*?)( +(?<remainder>\/.*))?$/)
+      pattern ||= DEFAULT_INTERACTIVE_INPUT_PATTERN
+      matches = input.match(pattern)
+      whisper("input: '#{input}', matches: #{matches} (from pattern '#{pattern}", 3)
+      matches
     end
 
     def getInteractiveCommands modes = [], bindingGroupName
@@ -904,6 +910,15 @@ module Tunewich
             )
 
             {:chainedInput => inputParts[:remainder]}
+          }
+        }
+      }
+
+      generateMacroCommand = Proc.new { |macro, description|
+        {
+          'description' => "#{description} Same as `#{macro}`.",
+          'action' => Proc.new { |input, command|
+            {:chainedInput => "#{macro} #{input}"}
           }
         }
       }
@@ -1449,19 +1464,20 @@ module Tunewich
           },
           'download' => {
             'description' => "OPTIONS\nget: show the command, or the path to the file if already downloaded.\nauto: download any file upon playing.\nWith no options, downloads the current track for faster play in the future.",
-            'args' => ['get', 'auto'],
+            'args' => ['get', 'auto', 'all'],
             'showStatus' => Proc.new {
               putsRealtime "Auto download: #{@autoDownload ? 'on' : 'off'}"
             },
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
 
-              options = inputParts[:query].length > 0 ? inputParts[:query].split(/\s+/) : []
+              options = inputParts[:query] && inputParts[:query].length > 0 ? inputParts[:query].split(/\s+/) : []
 
-              track = @currentTrack
               shouldEchoCommand = false
               shouldShowStatus = false
               downloadOptions = {}
+              tracks = []
+              isTrackSelectionOptionUsed = false
               options.each { |option|
                 case option
                 when 'auto'
@@ -1469,28 +1485,42 @@ module Tunewich
                   shouldShowStatus = true
                 when 'get'
                   shouldEchoCommand = true
+                when 'all'
+                  isTrackSelectionOptionUsed = true
+                  tracks.concat(@tracks)
                 else
+                  isTrackSelectionOptionUsed = true
                   trackIndex = findTrackIndex option
-                  track = @tracks[trackIndex] if trackIndex
+                  tracks << @tracks[trackIndex] if trackIndex
                 end
               }
 
+              tracks << @currentTrack if !isTrackSelectionOptionUsed
+
+              downloadOptions['sync'] = true if tracks.length > 1
+              perTrackAction = nil
               if shouldEchoCommand
+                  perTrackAction = Proc.new {
                 trackFiles = @forceStreaming ? [] : findTrackFiles(track)
-                if trackFiles.length > 0
-                  whisper(trackFiles.join("\n"), 0)
-                else
-                  putsRealtime getDownloadCommand(track, downloadOptions)
-                end
+                  if trackFiles.length > 0
+                    whisper(trackFiles.join("\n"), 0)
+                  else
+                    putsRealtime getDownloadCommand(track, downloadOptions)
+                  end
+                }
               elsif shouldShowStatus
                 command['showStatus'].call
               else
                 if !@forceStreaming && trackFileExists?(track)
                   putsRealtime "This file is already downloaded."
                 else
-                  downloadTrack track, downloadOptions
+                  perTrackAction = Proc.new {
+                    downloadTrack track, downloadOptions
+                  }
                 end
               end
+
+              tracks.each { |track| perTrackAction.call(track) } if perTrackAction
 
               {:chainedInput => inputParts[:remainder]}
             }
@@ -2254,6 +2284,8 @@ module Tunewich
               output
             }
           },
+          'mute' => generateMacroCommand.call('/fade out 0', 'Temporarily silent audio.'),
+          'unmute' => generateMacroCommand.call('/fade In 0', 'Restore audio after mute.'),
           'ramp' => {
             'description' => '/ramp SPEED [DURATION] - Ramp speed',
             'action' => Proc.new { |input, command|
@@ -3678,14 +3710,14 @@ module Tunewich
       end
 
       whisper(downloadCommand, 3)
-      if options['streamPath']
+      if options['streamPath'] && !options['sync']
         downloadPid = spawn(downloadCommand) # spawn: non-blocking
       else
         runAndHandleDownloadCommand = Proc.new {
           trigger 'download_begin', track # Unsure of the diff triggering in new thread vs. calling inline
           whisper("download begin", 3)
           downloadPid = system(downloadCommand) # system: blocking
-          if trackFileExists? track
+          if trackFileExists? track, true
             loadLibrary
             # TODO 1h1dBF: remove from this list when doing `rmfile`
             @library['x.hosts'][$hostname] ||= {'hostname' => ENV['HOSTNAME']}
@@ -3698,15 +3730,14 @@ module Tunewich
             trigger 'download_fail', track
           end
           trigger 'download_end', track
+          deleteTempFile downloadFeedbackFileName
         }
         if options['sync']
-          runAndHandleDownloadCommand
+          runAndHandleDownloadCommand.call
         else
-          Thread.new { runAndHandleDownloadCommand }
+          Thread.new { runAndHandleDownloadCommand.call }
         end
       end
-
-      deleteTempFile downloadFeedbackFileName
 
       downloadPid
     end
