@@ -2448,21 +2448,25 @@ module Tunewich
     end
 
     def seek seekTimeInSeconds, fadeOutPeriod = 0.0, fadeInPeriod = 0.0
-      isAbleToSeek = trackFileExists?(@currentTrack) || @currentTrack['type'] == 'audio/mpeg' || seekTimeInSeconds > @currentPlayerTime
-      if isAbleToSeek
-        @currentlySeeking = true
-        fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
+      if @playerApplication == PLAYER_APP_DEFAULT
+        isAbleToSeek = trackFileExists?(@currentTrack) || @currentTrack['type'] == 'audio/mpeg' || seekTimeInSeconds > @currentPlayerTime
+        if isAbleToSeek
+          @currentlySeeking = true
+          fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
 
-        sendMplayerCommand "seek #{seekTimeInSeconds} 2"
+          sendMplayerCommand "seek #{seekTimeInSeconds} 2"
 
-        fadeVolume 'in', fadeInPeriod, @currentPlayerIndex if fadeInPeriod > 0
+          fadeVolume 'in', fadeInPeriod, @currentPlayerIndex if fadeInPeriod > 0
 
-        Thread.new {
-          sleep 1
-          @currentlySeeking = false
-        }
+          Thread.new {
+            sleep 1
+            @currentlySeeking = false
+          }
+        else
+          putsRealtime "Download the file to be able to seek backwards."
+        end
       else
-        putsRealtime "Download the file to be able to seek backwards."
+        putsRealtime "Sorry, seeking is not yet implemented for #{@playerApplication}."
       end
     end
 
@@ -3043,7 +3047,7 @@ module Tunewich
       }
 
       enablePlaybackInfo # might have been set false if the player quit while realtime output was hidden
-      bind('time_update', Proc.new {
+      playerTimeupdateHandler = Proc.new {
         ['chapters', 'notes'].each { |noteType|
           if @currentTrack.has_key?(noteType)
             newIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
@@ -3058,7 +3062,9 @@ module Tunewich
         }
 
         showPlaybackInfo
-      }, bindingGroupName)
+      }
+
+      bind('time_update', playerTimeupdateHandler, bindingGroupName)
 
       @loopHistory = {};
 
@@ -3120,11 +3126,21 @@ module Tunewich
         onNoteChange.call noteType
       }, bindingGroupName)
 
+      @currentPlayerTime = 0
+      trigger 'time_update'
+
       while @playerApplicationThreads[@currentPlayerIndex].alive?
-        playerResponseDelay = 0.1
-        playerTimeResponse = getMplayerProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(.*?)(\?)?$/, playerResponseDelay)
-        if playerTimeResponse
-          @currentPlayerTime = playerTimeResponse.to_f
+        if @playerApplication == PLAYER_APP_DEFAULT
+          playerResponseDelay = 0.1
+          playerTimeResponse = getMplayerProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(.*?)(\?)?$/, playerResponseDelay)
+          if playerTimeResponse
+            @currentPlayerTime = playerTimeResponse.to_f
+            trigger 'time_update'
+          end
+        else
+          tick = 0.1
+          sleep tick
+          @currentPlayerTime += tick
           trigger 'time_update'
         end
       end
