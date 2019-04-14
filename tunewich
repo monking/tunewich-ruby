@@ -757,9 +757,9 @@ module Tunewich
             @currentTrack = matchExistingLibraryTrack @currentTrack
 
             if chosenOption == 'go'
-              if @currentTrack[noteType]
+              if @currentTrack.has_key?(noteType)
                 if inputParts[:query] && inputParts[:query].length > 0
-                  noteIndex = getNoteIndexByQuery inputParts[:query], @currentTrack[noteType]
+                  noteIndex = getNoteIndexByQuery(@currentTrack[noteType], inputParts[:query])
                 else
                   putsRealtime getFormattedNoteList(@currentTrack[noteType], @currentNoteIndex[noteType], "# ^ current").join("\n")
                 end
@@ -2397,7 +2397,7 @@ module Tunewich
       offset
     end
 
-    def getNoteIndexByQuery input, notes, referenceIndex = nil
+    def getNoteIndexByQuery notes, input, referenceIndex = nil
       noteIndex = nil
 
       if input.match(/^[0-9]+$/)
@@ -2869,10 +2869,16 @@ module Tunewich
         whisper("This track has has an A/B loop (#{track['loop'].join(" - ")}. This will deprecated in favor of looping notes; for now, use looping chapters instead.", 1)
       end
 
-      if track['mark'] && !liveStreaming
+      @currentPlayerTime = 0
+      if @chapterQuery && track.has_key?('chapters')
+        chapterIndex = getNoteIndexByQuery(track['chapters'], @chapterQuery)
+        @chapterQuery = nil
+        chapterTimecode = track['chapters'][chapterIndex]['time']
+        @currentPlayerTime = getSecondsFromDurationString(chapterTimecode) if chapterIndex
+        whisper("chapter start time '#{chapterTimecode} (#{@currentPlayerTime} seconds}", 3)
+      elsif track['mark'] && !liveStreaming
         puts("Starting from mark at #{track['mark']}.", 0)
-        offsetSeconds = getSecondsFromDurationString track['mark']
-        playerStartupOptions << "-ss #{offsetSeconds}"
+        @currentPlayerTime = getSecondsFromDurationString track['mark']
 
         loadLibrary
         editingTrack = matchExistingLibraryTrack track
@@ -2880,12 +2886,12 @@ module Tunewich
         removeMarkFromTrack editingTrack
         writeLibraryToFile
       elsif firstPlayableChapterIndex && firstPlayableChapterIndex > 0
-        startTime = getSecondsFromDurationString track['chapters'][firstPlayableChapterIndex]['time']
-        playerStartupOptions << "-ss #{startTime}"
+        @currentPlayerTime = getSecondsFromDurationString track['chapters'][firstPlayableChapterIndex]['time']
         whisper("Skipping marked chapters at the beginning.", 2)
-        whisper("-ss #{startTime}", 2)
-      else
-        whisper("No mark, no A/B loop.", 2)
+      end
+
+      if @currentPlayerTime > 0
+        playerStartupOptions << "-ss #{@currentPlayerTime}"
       end
 
       if fileAlreadyExists
@@ -3001,13 +3007,33 @@ module Tunewich
           setActualVolume @volume # handle the case of `/fade out / q`, which fades out the system volume, so it is still faded out when we start a new player
           if @hasMpv
             # TODO: implement slave mode with JSON IPC https://mpv.io/manual/master/#json-ipc
-            mpvSupportedOptions = ['speed', 'quiet', 'af', 'loop']
+            mpvSupportedOptions = ['speed', 'quiet', 'af', 'loop', 'ss']
+            mpvOptionMutations = {
+              'ss' => Proc.new { |option| option.sub!(/-ss\s*/, '--start=') }
+            }
             # ignoring supported options:
             # -volume: using system music volume via termux-volume instead, since slave mode is not yet working for interactive volume control
-            playerStartupOptions.keep_if { |option, index|
-              optionKey = option.sub(/^-(\w+).*/, '\1')
-              # whisper("mpv keep option #{optionKey}? #{(mpvSupportedOptions.include?(optionKey) if optionKey) ? 'yes' : 'no'}", 4) # XXX
-              mpvSupportedOptions.include?(optionKey) if optionKey
+            getOptionKey = Proc.new { |option|
+              option.sub(/^-(\w+).*/, '\1')
+            }
+            # playerStartupOptions.each { |option|
+            #   optionKey = getOptionKey.call(option)
+            # }
+            playerStartupOptions.keep_if { |option|
+              shouldKeep = false
+              optionKey = getOptionKey.call(option)
+              if optionKey
+                if mpvOptionMutations.has_key?(optionKey)
+                  whisper("Changing mplayer '#{option}'...", 4)
+                  mpvOptionMutations[optionKey].call(option, optionKey)
+                  whisper("...to #{option}'", 4)
+                  shouldKeep = true
+                elsif mpvSupportedOptions.include?(optionKey)
+                  shouldKeep = true
+                end
+                shouldKeep
+              end
+
             }
             playerCommandParts << "mpv #{playerStartupOptions.join ' '} \"#{mediaFilePath}\""
 
@@ -3091,7 +3117,7 @@ module Tunewich
             isLooping = true
             seek loopTargetSeconds
           else
-            targetNoteIndex = getNoteIndexByQuery loopTarget, @currentTrack[noteType]
+            targetNoteIndex = getNoteIndexByQuery(@currentTrack[noteType], loopTarget)
             isLooping = true
             if targetNoteIndex
               whisper("\nLoop #{getLoopLimitStatusMessage}", 1)
@@ -3126,8 +3152,9 @@ module Tunewich
         onNoteChange.call noteType
       }, bindingGroupName)
 
-      @currentPlayerTime = 0
-      trigger 'time_update'
+      @startingPlayerTime = @currentPlayerTime
+      @playStartTimestamp = Time.now.to_f
+      trigger 'time_update' # @currentPlayerTime set above, ~ 2878
 
       while @playerApplicationThreads[@currentPlayerIndex].alive?
         if @playerApplication == PLAYER_APP_DEFAULT
@@ -3138,9 +3165,8 @@ module Tunewich
             trigger 'time_update'
           end
         else
-          tick = 0.1
-          sleep tick
-          @currentPlayerTime += tick
+          sleep 0.1
+          @currentPlayerTime = Time.now.to_f - @playStartTimestamp + @startingPlayerTime
           trigger 'time_update'
         end
       end
@@ -4741,6 +4767,10 @@ module Tunewich
 
       parser.on("-t INDEX/QUERY", "--track INDEX/QUERY", "Seek to the given track (either by its number in the list, or by its name).", " ") do |trackQuery|
         @trackQuery = trackQuery
+      end
+
+      parser.on("-c INDEX/QUERY", "--chapter INDEX/QUERY", "Seek to the given chapter.", " ") do |chapterQuery|
+        @chapterQuery = chapterQuery
       end
 
       parser.on("-U", "--update-track-info", "Fetch updated track information for every track played.", " ") do
