@@ -934,7 +934,7 @@ module Tunewich
             }
           },
           'wait' => {
-            'description' => '[EVENT | random [RANGE [ + MINIMUM]]] Wait for an event, or some number of seconds, to execute following chained commands. Random defaults are RANGE: 25, MINIMUM: 5. Events: chapter_change, play_start, play_end, fade_start, fade_end, speed_ramp_start, speed_ramp_end, download_success. You may use fuzzy substrings of the event names, e.g. "ch" will match "chapter_change", and "ple" will match "play_end". Yout can also wait a random',
+            'description' => '[EVENT | random [RANGE [ + MINIMUM]]] Wait for an event, or some number of seconds, to execute following chained commands. Random defaults are RANGE: 25, MINIMUM: 5. Events: chapter_change, play_start, play_end, fade_start, fade_end, speed_ramp_start, speed_ramp_end, download_end. You may use fuzzy substrings of the event names, e.g. "ch" will match "chapter_change", and "ple" will match "play_end". Yout can also wait a random',
             'args' => [
               'chapter_change',
               'play_start',
@@ -943,7 +943,7 @@ module Tunewich
               'fade_end',
               'speed_ramp_start',
               'speed_ramp_end',
-              'download_success',
+              'download_end',
               'transcode_complete',
               'random'
             ],
@@ -1497,30 +1497,37 @@ module Tunewich
 
               tracks << @currentTrack if !isTrackSelectionOptionUsed
 
-              downloadOptions['sync'] = true if tracks.length > 1
               perTrackAction = nil
-              if shouldEchoCommand
-                  perTrackAction = Proc.new {
-                trackFiles = @forceStreaming ? [] : findTrackFiles(track)
+              if shouldShowStatus
+                command['showStatus'].call
+              elsif shouldEchoCommand
+                perTrackAction = Proc.new { |track|
+                  trackFiles = @forceStreaming ? [] : findTrackFiles(track)
                   if trackFiles.length > 0
                     whisper(trackFiles.join("\n"), 0)
                   else
                     putsRealtime getDownloadCommand(track, downloadOptions)
                   end
                 }
-              elsif shouldShowStatus
-                command['showStatus'].call
               else
-                if !@forceStreaming && trackFileExists?(track)
-                  putsRealtime "This file is already downloaded."
-                else
-                  perTrackAction = Proc.new {
+                downloadOptions['sync'] = true
+                perTrackAction = Proc.new { |track, index|
+                  if !@forceStreaming && trackFileExists?(track)
+                    putsRealtime "This file is already downloaded."
+                  else
+                    downloadOptions['suppressBeginEvent'] = (index > 0)
+                    downloadOptions['suppressEndEvent'] = (index < tracks.length - 1)
+
                     downloadTrack track, downloadOptions
-                  }
-                end
+                  end
+                }
               end
 
-              tracks.each { |track| perTrackAction.call(track) } if perTrackAction
+              allTracksThread = Thread.new {
+                tracks.each_with_index { |track, index| perTrackAction.call(track, index) } if perTrackAction
+              }
+
+              allTracksThread.join if shouldEchoCommand
 
               {:chainedInput => inputParts[:remainder]}
             }
@@ -2285,7 +2292,7 @@ module Tunewich
             }
           },
           'mute' => generateMacroCommand.call('/fade out 0', 'Temporarily silent audio.'),
-          'unmute' => generateMacroCommand.call('/fade In 0', 'Restore audio after mute.'),
+          'unmute' => generateMacroCommand.call('/fade in 0', 'Restore audio after mute.'),
           'ramp' => {
             'description' => '/ramp SPEED [DURATION] - Ramp speed',
             'action' => Proc.new { |input, command|
@@ -3714,7 +3721,7 @@ module Tunewich
         downloadPid = spawn(downloadCommand) # spawn: non-blocking
       else
         runAndHandleDownloadCommand = Proc.new {
-          trigger 'download_begin', track # Unsure of the diff triggering in new thread vs. calling inline
+          trigger('download_begin', track) if !options['suppressBeginEvent'] # Unsure of the diff triggering in new thread vs. calling inline
           whisper("download begin", 3)
           downloadPid = system(downloadCommand) # system: blocking
           if trackFileExists? track, true
@@ -3725,11 +3732,11 @@ module Tunewich
             @library['x.hosts'][$hostname]['downloaded'] << track['id']
             writeLibraryToFile
             whisper("download complete", 3)
-            trigger 'download_success', track
+            trigger('download_success', track)
           else
-            trigger 'download_fail', track
+            trigger('download_fail', track)
           end
-          trigger 'download_end', track
+          trigger('download_end', track) if !options['suppressEndEvent']
           deleteTempFile downloadFeedbackFileName
         }
         if options['sync']
