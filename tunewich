@@ -918,7 +918,9 @@ module Tunewich
         {
           'description' => "#{description} Same as `#{macro}`.",
           'action' => Proc.new { |input, command|
-            {:chainedInput => "#{macro} #{input}"}
+            inputParts = getCommandInputParts(input)
+            command = macro.sub(/\bINPUT\b/, inputParts[:query] || '')
+            {:chainedInput => "#{command} #{inputParts[:remainder]}"}
           }
         }
       }
@@ -2291,6 +2293,7 @@ module Tunewich
               output
             }
           },
+          'volume' => generateMacroCommand.call('/fade INPUT 0', 'VOLUME - Set the volume level.'),
           'mute' => generateMacroCommand.call('/fade out 0', 'Temporarily silent audio.'),
           'unmute' => generateMacroCommand.call('/fade in 0', 'Restore audio after mute.'),
           'ramp' => {
