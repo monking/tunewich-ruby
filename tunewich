@@ -228,66 +228,85 @@ module Tunewich
       configuredVolume
     end
 
-    def sendPlayerAppCommand command, playerIndex = nil, outputHandler = nil, sync = false
+    def sendMplayerCommand command, playerIndex = nil, outputHandler = nil, sync = false
       output = nil
 
-      if @playerApplication == PLAYER_APP_DEFAULT || @hasMpv
-        playerIndex ||= @currentPlayerIndex
-        if playerIndex == @currentPlayerIndex
-          if /play/.match command
-            @isPlayerPlaying = true
-          elsif /pause/.match command
-            @isPlayerPlaying = false
-          end
+      playerIndex ||= @currentPlayerIndex
+      if playerIndex == @currentPlayerIndex
+        if /play/.match command
+          @isPlayerPlaying = true
+        elsif /pause/.match command
+          @isPlayerPlaying = false
         end
+      end
 
-        if @hasMpv
-          case command.chomp.strip
-          when 'q'
-            exitPlayerCommand false # 1hEaID
-          end
-          # > echo '{ "command": ["get_property", "playback-time"] }' | socat - /tmp/mpvsocket
-          # {"data":190.482000,"error":"success"}
-          commandObject = {
-            'command' => command.split(/\s+/)
-          }
-
-          sendReceiveOnSocket("#{PLAYER_JSON_IPC_SOCKET_NAME}#{playerIndex}", JSON.generate(commandObject), Proc.new { |responseJson|
-            response = JSON.decode(responseJson) if responseJson
-            responseData = response['data'] if response && response['error'] == 'success'
-            outputHandler.call(responseData) if responseData && outputHandler
-            output = responseData if sync
-            whisper("command '#{command}', response '#{responseData}'", 4) # TODO: use this response
-          }, sync)
-        else
-          putInTempFile "#{PLAYER_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
-          sleep 0.1
-          lastPlayerOutput = tailTempFile "#{PLAYER_STDOUT_BUFFER_NAME}#{l@currentPayerIndex}"
-          if lastPlayerOutput
-            whisper("read #{property} from player, output: #{lastPlayerOutput}", 5)
-            matches = lastPlayerOutput.match pattern
-            output = matches[2] if matches
-          end
-        end
-      elsif @playerApplication == PLAYER_APP_TERMUX
-        whisper("Not (yet) supported with termux: #{command}", 5)
+      putInTempFile "#{PLAYER_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
+      sleep 0.1
+      lastPlayerOutput = tailTempFile "#{PLAYER_STDOUT_BUFFER_NAME}#{l@currentPayerIndex}"
+      if lastPlayerOutput
+        whisper("read #{property} from player, output: #{lastPlayerOutput}", 5)
+        output = lastPlayerOutput
       end
 
       output
     end
 
-    def sendMpvCommand command, playerIndex = nil
-      # deleteme
+    def sendMpvCommand command, playerIndex = nil, outputHandler = nil, sync = false
+      if playerIndex == @currentPlayerIndex
+        if /play/.match command
+          @isPlayerPlaying = true
+        elsif /pause/.match command
+          @isPlayerPlaying = false
+        end
+      end
+
+      case command.chomp.strip
+      when 'q'
+        exitPlayerCommand false # 1hEaID
+      end
+      # > echo '{ "command": ["get_property", "playback-time"] }' | socat - /tmp/mpvsocket
+      # {"data":190.482000,"error":"success"}
+      commandObject = {
+        'command' => command.split(/\s+/),
+      }
+
+      if outputHandler
+        requestId = getUniqueId
+        commandObject['request_id'] = requestId
+        @ipcResponseQueue ||= {}
+        @ipcResponseQueue[requestId] = Proc.new { |responseData|
+          outputHandler.call(responseData) if responseData && outputHandler
+          output = responseData if sync
+        }
+      end
+
+      sendReceiveOnSocket("#{PLAYER_JSON_IPC_SOCKET_NAME}#{playerIndex}", JSON.generate(commandObject), Proc.new { |responseJson|
+        response = JSON.parse(responseJson) if responseJson && responseJson.length > 0
+        responseData = nil
+        if response && response['error'] == 'success'
+          responseData = response['data']
+          responseRequestId = response['request_id']
+          if responseRequestId && @ipcResponseQueue.has_key?(responseRequestId)
+            @ipcResponseQueue[responseRequestId].call(responseData)
+            @ipcResponseQueue.delete(responseRequestId)
+          end
+        end
+        output = responseData if sync
+      }, sync)
     end
 
     def togglePlay
       whisper("before togglePlay, @isPlayerPlaying: #{@isPlayerPlaying}", 2)
-      if @playerApplication == PLAYER_APP_DEFAULT || @hasMpv
-        # @isPlayerPlaying is set in sendPlayerAppCommand
-        sendPlayerAppCommand @isPlayerPlaying ? 'pause' : 'play'
+      if @playerApplication == PLAYER_APP_DEFAULT
+        # @isPlayerPlaying is set in sendMplayerCommand
+        sendMplayerCommand @isPlayerPlaying ? 'pause' : 'play'
       elsif @playerApplication == PLAYER_APP_TERMUX
-        @isPlayerPlaying = !@isPlayerPlaying
-        `termux-media-player #{@isPlayerPlaying ? 'pause' : 'play'}`
+        if @hasMpv
+          setMpvProperty('pause', !@isPlayerPlaying)
+        else
+          @isPlayerPlaying = !@isPlayerPlaying
+          `termux-media-player #{@isPlayerPlaying ? 'pause' : 'play'}`
+        end
       end
     end
 
@@ -918,9 +937,13 @@ module Tunewich
               Proc.new { |x|
                 case @playerApplication
                 when PLAYER_APP_DEFAULT
-                  sendPlayerAppCommand "#{property} #{x} 1"
+                  sendMplayerCommand "#{property} #{x} 1"
                 when PLAYER_APP_TERMUX
-                  whisper('no support for visual effects with termux-media-player', 5)
+                  if @hasMpv
+                    setMpvProperty(property, x)
+                  else
+                    whisper('no support for visual effects with termux-media-player', 5)
+                  end
                 end
                 @currentVisualEffects[property] = x
               }
@@ -1394,7 +1417,7 @@ module Tunewich
                     timeMessage = ""
                     timeMessage << "			time : #{getDurationStringFromSeconds @currentPlayerTime}" if @currentPlayerTime
                     if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
-                      durationResponseFromPlayer = getPlayerAppProperty('get_time_length', /^(ANS_LENGTH=)(.*?)(\?)?$/)
+                      durationResponseFromPlayer = getMplayerProperty('get_time_length', /^(ANS_LENGTH=)(?<response>.*?)(\?)?$/)
                       whisper("Got duration from player: '#{durationResponseFromPlayer}'", 2)
                       if durationResponseFromPlayer
                         track['duration'] = getDurationStringFromSeconds durationResponseFromPlayer.to_f
@@ -2026,8 +2049,8 @@ module Tunewich
               inputParts = getCommandInputParts(input)
               if inputParts[:query] != 'status' # if status, fall though
                 @downmixMono = getToggledValueByInput.call(@downmixMono, inputParts[:remainder])
-                sendPlayerAppCommand 'af_del pan'
-                sendPlayerAppCommand 'af_add pan=1:0.5:0.5' if @downmixMono # assuming stereo source
+                sendMplayerCommand 'af_del pan'
+                sendMplayerCommand 'af_add pan=1:0.5:0.5' if @downmixMono # assuming stereo source
               end
 
               command['showStatus'].call
@@ -2158,7 +2181,14 @@ module Tunewich
                     @eqPreset = chosenEQPreset
                     @eqSetting = @library['player']['equalizer_presets'][chosenEQPreset]
                     is_success = true
-                    sendPlayerAppCommand "af_del equalizer\naf_add equalizer=#{@eqSetting}"
+                    if @playerApplication == PLAYER_APP_DEFAULT
+                      sendMplayerCommand "af_del equalizer\naf_add equalizer=#{@eqSetting}"
+                    elsif @hasMpv
+                      sendMpvCommand "af_del equalizer"
+                      sendMpvCommand "af_add equalizer=#{@eqSetting}"
+                    else
+                      whisper("unable to use equalizer in #{playerApplication}")
+                    end
                   else
                     putsRealtime "Unknown preset '#{eqInput}'."
                   end
@@ -2220,7 +2250,12 @@ module Tunewich
 
                   if inputCausedEQChange
                     @eqSetting = eqBands.join ':'
-                    sendPlayerAppCommand "af_clr\naf_add equalizer=#{@eqSetting}"
+                    if @playerApplication == PLAYER_APP_DEFAULT
+                      sendMplayerCommand "af_clr\naf_add equalizer=#{@eqSetting}"
+                    elsif @hasMpv
+                      sendMpvCommand "af del equalizer"
+                      sendMpvCommand "af add equalizer=#{@eqSetting}"
+                    end
                   end
                 end
                 enablePlaybackInfo
@@ -2507,25 +2542,23 @@ module Tunewich
     end
 
     def seek seekTimeInSeconds, fadeOutPeriod = 0.0, fadeInPeriod = 0.0
-      if @playerApplication == PLAYER_APP_DEFAULT || @hasMpv
-        isAbleToSeek = trackFileExists?(@currentTrack) || @currentTrack['type'] == 'audio/mpeg' || seekTimeInSeconds > @currentPlayerTime
-        if isAbleToSeek
-          @currentlySeeking = true
-          fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
+      isAbleToSeek = trackFileExists?(@currentTrack) || @currentTrack['type'] == 'audio/mpeg' || seekTimeInSeconds > @currentPlayerTime
+      if isAbleToSeek
+        @currentlySeeking = true
+        fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
 
-          sendPlayerAppCommand "seek #{seekTimeInSeconds} 2"
-
-          fadeVolume 'in', fadeInPeriod, @currentPlayerIndex if fadeInPeriod > 0
-
-          Thread.new {
-            sleep 1
-            @currentlySeeking = false
-          }
-        else
-          putsRealtime "Download the file to be able to seek backwards."
+        if @playerApplication == PLAYER_APP_DEFAULT || @hasMpv
+          sendMplayerCommand "seek #{seekTimeInSeconds} 2"
         end
+
+        fadeVolume 'in', fadeInPeriod, @currentPlayerIndex if fadeInPeriod > 0
+
+        Thread.new {
+          sleep 1
+          @currentlySeeking = false
+        }
       else
-        putsRealtime "Sorry, seeking is not yet implemented for #{@playerApplication}."
+        putsRealtime "Download the file to be able to seek backwards."
       end
     end
 
@@ -2591,7 +2624,7 @@ module Tunewich
       @actualVolume = getMultipliedVolume newVolume
       case @playerApplication
       when PLAYER_APP_DEFAULT
-        sendPlayerAppCommand "volume #{@actualVolume} 1", playerIndex
+        sendMplayerCommand "volume #{@actualVolume} 1", playerIndex
       when PLAYER_APP_TERMUX
         volumeCommand = "termux-volume music #{@actualVolume.round}"
         whisper("volumeCommand", 5)
@@ -2693,7 +2726,7 @@ module Tunewich
           targetRampSpeed,
           duration,
           Proc.new { |iSpeed|
-            sendPlayerAppCommand "speed_set #{iSpeed}", playerIndex
+            sendMplayerCommand "speed_set #{iSpeed}", playerIndex
             @currentSpeed = iSpeed
             trigger 'speed_change'
           }
@@ -2886,7 +2919,7 @@ module Tunewich
         if @hasMpv
           playerIPCSocket = "#{PLAYER_JSON_IPC_SOCKET_NAME}#{@currentPlayerIndex}"
           deleteTempFile playerIPCSocket
-          playerInputFile = getTempFilePath playerInputStreamName
+          playerInputFile = getTempFilePath playerIPCSocket
 
           playerStartupOptions.concat(["-quiet", "--input-ipc-server=\"#{playerInputFile}\""])
         else
@@ -2902,7 +2935,7 @@ module Tunewich
         end
 
         playerAction = Proc.new { |command|
-          sendPlayerAppCommand command
+          sendMplayerCommand command
           true
         }
       end
@@ -3058,15 +3091,14 @@ module Tunewich
           setActualVolume @volume # handle the case of `/fade out / q`, which fades out the system volume, so it is still faded out when we start a new player
           if @hasMpv
             # TODO: implement slave mode with JSON IPC https://mpv.io/manual/master/#json-ipc
-            mpvSupportedOptions = ['speed', 'quiet', 'af', 'loop', 'slave']
+            mpvSupportedOptions = ['-speed', '-quiet', '-af', '-loop', '--input-ipc-server']
             mpvOptionMutations = {
-              'ss' => Proc.new { |option| option.sub!(/-ss\s*/, '--start=') },
-              'input' => Proc.new { |option| option.sub!(/-input file=/, '--input-file=') }
+              '-ss' => Proc.new { |option| option.sub!(/-ss\s*/, '--start=') }
             }
             # ignoring supported options:
             # -volume: using system music volume via termux-volume instead, since slave mode is not yet working for interactive volume control
             getOptionKey = Proc.new { |option|
-              option.sub(/^-(\w+).*/, '\1')
+              option.sub(/^([a-z-]+).*/, '\1')
             }
             # playerStartupOptions.each { |option|
             #   optionKey = getOptionKey.call(option)
@@ -3083,9 +3115,8 @@ module Tunewich
                 elsif mpvSupportedOptions.include?(optionKey)
                   shouldKeep = true
                 end
-                shouldKeep
               end
-
+              shouldKeep
             }
             playerCommandParts << "mpv #{playerStartupOptions.join ' '} \"#{mediaFilePath}\""
 
@@ -3209,7 +3240,7 @@ module Tunewich
       lastTickTime = Time.now.to_f
       while @playerApplicationThreads[@currentPlayerIndex].alive?
         if @playerApplication == PLAYER_APP_DEFAULT
-          playerTimeResponse = getPlayerAppProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(.*?)(\?)?$/)
+          playerTimeResponse = getMplayerProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(?<response>.*?)(\?)?$/)
           if playerTimeResponse
             @currentPlayerTime = playerTimeResponse.to_f
             trigger 'time_update'
@@ -3252,7 +3283,7 @@ module Tunewich
       whisper("exiting player: #{@playerApplication}", 3)
       case @playerApplication
       when PLAYER_APP_DEFAULT
-        sendPlayerAppCommand 'q'
+        sendMplayerCommand 'q'
       when PLAYER_APP_TERMUX
         if @hasMpv
           sendMpvCommand 'q'
@@ -3338,10 +3369,11 @@ module Tunewich
       end
     end
 
-    def getPlayerAppProperty property, pattern = nil
+    def getMplayerProperty property, pattern = nil
+      # if defined, pattern should have a backreference named 'response', like /^(ANS_TIME_POSITION=|.*Time: )(?<response>.*?)(\?)?$/
       output = nil
 
-      if @isPlayerPlaying && (@playerApplication == PLAYER_APP_DEFAULT || @hasMpv) # TODO: 1gG4j9 get time position without unpausing
+      if @isPlayerPlaying # TODO: 1gG4j9 get time position without unpausing
         pattern ||= /^()(.*)$/
         command = "#{property}"
         command = "get_property #{command}" if not property.match(/^get_/)
@@ -3349,13 +3381,41 @@ module Tunewich
 
         handleResponse = Proc.new { |response|
           if response.match(pattern)
-            output = response.sub(pattern, '\1')
+            matches = response.match(pattern)
+            output = matches[:response] if matches && matches[:response]
           else
             output = response
           end
         }
         sync = true
-        sendPlayerAppCommand command, @currentPlayerIndex, handleResponse, sync
+        sendMplayerCommand command, @currentPlayerIndex, handleResponse, sync
+      elsif responseDelay
+        # don't use 100% CPU while doing nothing
+        sleep 0.1
+      end
+
+      output
+    end
+
+    def getMpvProperty property
+      output = nil
+
+      if @isPlayerPlaying
+        pattern ||= /^()(.*)$/
+        command = "#{property}"
+        command = "get_property #{command}" if not property.match(/^get_/)
+        # TODO: 1gG4jB maybe this needs pausing_keep (http://www.mplayerhq.hu/DOCS/tech/slave.txt). doesn't quite work in my testing
+
+        handleResponse = Proc.new { |response|
+          if response.match(pattern)
+            matches = response.match(pattern)
+            output = matches[:response] if matches && matches[:response]
+          else
+            output = response
+          end
+        }
+        sync = true
+        sendMpvCommand command, @currentPlayerIndex, handleResponse, sync
       elsif responseDelay
         # don't use 100% CPU while doing nothing
         sleep 0.1
@@ -3825,9 +3885,11 @@ module Tunewich
       path = getTempFilePath(name)
       Thread.new {
         # FIXME 1gpani: trying to put it in a new thread...maybe won't fix the problem, but it will unblock the main thread.
-        response = `echo -n "#{input} | socat #{path}"`
+        command = "echo \"#{input.gsub(/"/, '\\"')}\" | socat - \"#{path}\""
+        whisper("socket command: #{command}", 4) # XXX
+        response = `#{command}`
+        whisper("command '#{command}', response '#{response}'", 4) # XXX
         outputProc.call(response) if outputProc
-        whisper("#{name} << '#{input.chomp}' : #{response}", 5)
       }
       Thread.join if sync
     end
