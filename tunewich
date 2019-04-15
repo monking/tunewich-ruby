@@ -3194,10 +3194,9 @@ module Tunewich
         onNoteChange.call noteType
       }, bindingGroupName)
 
-      @startingPlayerTime = @currentPlayerTime
-      @playStartTimestamp = Time.now.to_f
       trigger 'time_update' # @currentPlayerTime set above, ~ 2878
 
+      lastTickTime = Time.now.to_f
       while @playerApplicationThreads[@currentPlayerIndex].alive?
         if @playerApplication == PLAYER_APP_DEFAULT
           playerResponseDelay = 0.1
@@ -3208,8 +3207,12 @@ module Tunewich
           end
         else
           sleep 0.1
-          @currentPlayerTime = Time.now.to_f - @playStartTimestamp + @startingPlayerTime
+          thisTickTime = Time.now.to_f
+          tickInterval = thisTickTime - lastTickTime
+          @currentPlayerTime += tickInterval * @speed
           trigger 'time_update'
+
+          lastTickTime = thisTickTime
         end
       end
 
