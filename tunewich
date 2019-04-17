@@ -2559,7 +2559,7 @@ module Tunewich
       newVolume
     end
 
-    def getStateSpaceVolume actualVolume
+    def getStateSpaceVolume actualVolume # @awkward naming; getMultipliedVolume?
       stateVolume = actualVolume
       @volumeMultipliers.each { |key, m|
         stateVolume /= m
@@ -2578,13 +2578,13 @@ module Tunewich
       when PLAYER_APP_TERMUX
         volumeCommand = "termux-volume music #{@actualVolume.round}"
         whisper("volumeCommand", 5)
-        `#{volumeCommand}`
+        spawn(volumeCommand) # async
       end
     end
 
     def tween a, b, duration, onStep, interval = nil, curve = 'linear'
       whisper("tween from #{a} to #{b}", 3)
-      interval ||= @playerApplication == PLAYER_APP_DEFAULT ? 0.02 : 1.0
+      interval ||= @playerApplication == PLAYER_APP_DEFAULT ? 0.02 : 0.34
       stepCount = (duration.to_f / interval).to_i
       transitionValue = a
       span = b - a
@@ -3245,6 +3245,7 @@ module Tunewich
       when PLAYER_APP_DEFAULT
         sendMplayerCommand "q"
       when PLAYER_APP_TERMUX
+        # setActualVolume @volume # @enhancement not quite right, but I want to return to system volume at this point...oh, I should set @volume to the system volume, if not currently faded out, etc.
         if @hasMpv
           `killall -9 mpv`
         else
