@@ -314,10 +314,9 @@ module Tunewich
               updateTrackInfo @currentTrack
             end
 
-            fileExists = trackFileExists? @currentTrack
-
-            if !fileExists && !@networkEnabled
-              next
+            if !@networkEnabled && !trackFileExists?(@currentTrack)
+              whisper("Network is disabled, but this track is not downloaded. Entering 'edit' mode.", 0)
+              setUserMode MODES['edit']
             end
           end
 
