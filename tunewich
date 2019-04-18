@@ -2348,14 +2348,15 @@ module Tunewich
             }
           },
           'mark' => {
-            'description' => 'Mark the point at which to play this track next time. Pass any argument to remove an existing mark',
+            'description' => 'Mark the point at which to play this track next time.',
+            'options' => ['clear'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
 
               loadLibrary
               @currentTrack = matchExistingLibraryTrack @currentTrack
 
-              if inputParts[:query] && inputParts[:query].length > 0
+              if inputParts[:query] && inputParts[:query] == 'clear'
                 removeMarkFromTrack @currentTrack
               else
                 addMarkToTrack @currentTrack, @commandinputStartPlayerTime
