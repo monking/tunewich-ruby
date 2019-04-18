@@ -36,7 +36,6 @@
 	}
 	```
 - [+] 1gG4ko: pause mplayer with doing ^Z: and unpause after
-- [ ] 1gSke5: Determine whether a URL is serving a live stream based on some data returned by the source URL
 - [ ] 1gSlF1: Do this only if the list being edited is not already the canonical library track list, in which case we cannot determine if there was a change
 - [ ] load media in the same player using 'loadfile <file|url> <append>' (http://www.mplayerhq.hu/DOCS/tech/slave.txt) and '-fixed-vo', so that if watching videos, one player can be used continuously, and the video doesn't take user focus when changing.
 - [ ] 1gTpuh: implement named sessions, like the web interface of tunewich

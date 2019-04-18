@@ -1965,6 +1965,7 @@ module Tunewich
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
               loadLibrary
+              updateMediaFilePathCache
               @currentTrack = matchExistingLibraryTrack @currentTrack
               {:chainedInput => inputParts[:remainder]}
             }
@@ -2489,10 +2490,14 @@ module Tunewich
       seekTimeInSeconds
     end
 
+    def isAbleToSeek seekTimeInSeconds, track = nil
+      track ||= @currentTrack
+      trackFileExists?(track) || track['type'] == 'audio/mpeg' || seekTimeInSeconds > @currentPlayerTime
+    end
+
     def seek seekTimeInSeconds, fadeOutPeriod = 0.0, fadeInPeriod = 0.0
       if @playerApplication == PLAYER_APP_DEFAULT
-        isAbleToSeek = trackFileExists?(@currentTrack) || @currentTrack['type'] == 'audio/mpeg' || seekTimeInSeconds > @currentPlayerTime
-        if isAbleToSeek
+        if isAbleToSeek(seekTimeInSeconds, @currentTrack)
           @currentlySeeking = true
           fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
 
@@ -2832,7 +2837,6 @@ module Tunewich
 
     def play(track, interactiveCommands)
       fileAlreadyExists = !@forceStreaming && trackFileExists?(track) # TODO: 1gG4j4: I shouldn't need to check twice
-      liveStreaming = doesTrackHaveTag(track, 'live-radio') # TODO: 1gSke5
       streaming = @forceStreaming || (!fileAlreadyExists && !@autoDownload)
 
       if !fileAlreadyExists
@@ -2911,6 +2915,7 @@ module Tunewich
         whisper("This track has has an A/B loop (#{track['loop'].join(" - ")}. This will deprecated in favor of looping notes; for now, use looping chapters instead.", 1)
       end
 
+      markTime = getSecondsFromDurationString(track['mark']) if track.has_key?('mark')
       @currentPlayerTime = 0
       if @chapterQuery && track.has_key?('chapters')
         chapterIndex = getNoteIndexByQuery(track['chapters'], @chapterQuery)
@@ -2918,9 +2923,9 @@ module Tunewich
         chapterTimecode = track['chapters'][chapterIndex]['time']
         @currentPlayerTime = getSecondsFromDurationString(chapterTimecode) if chapterIndex
         whisper("chapter start time '#{chapterTimecode} (#{@currentPlayerTime} seconds}", 3)
-      elsif track['mark'] && !liveStreaming
+      elsif markTime && isAbleToSeek(markTime, track)
         puts("Starting from mark at #{track['mark']}.", 0)
-        @currentPlayerTime = getSecondsFromDurationString track['mark']
+        @currentPlayerTime = markTime
 
         loadLibrary
         editingTrack = matchExistingLibraryTrack track
@@ -3629,14 +3634,18 @@ module Tunewich
       files.length ? files[0] : nil
     end
 
+    def updateMediaFilePathCache
+      @mediaFilePathCache = Dir.glob("#{@mediaDirectoryPath}/tunewich.*")
+      @mediaFilePathCache.delete_if { |fileName| fileName.match(/\.part$/) }
+    end
+
     def findTrackFiles(track, forceCacheRefresh = false)
       files = []
 
       # TODO: expire cache after some interval of time, maybe 1 minute
 
       if !@mediaFilePathCache || forceCacheRefresh
-        @mediaFilePathCache = Dir.glob("#{@mediaDirectoryPath}/tunewich.*")
-        @mediaFilePathCache.delete_if { |fileName| fileName.match(/\.part$/) }
+        updateMediaFilePathCache
       end
 
       if @mediaFilePathCache && @mediaFilePathCache.length > 0
