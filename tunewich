@@ -2597,7 +2597,7 @@ module Tunewich
       stateVolume
     end
 
-    def setActualVolume newVolume, playerIndex = nil
+    def setCurrentVolume newVolume, playerIndex = nil
       playerIndex ||= @currentPlayerIndex
       @currentVolume = newVolume
       @actualVolume = getMultipliedVolume newVolume
@@ -2676,7 +2676,7 @@ module Tunewich
         targetFadeVolume,
         duration,
         Proc.new { |iVolume|
-          setActualVolume iVolume
+          setCurrentVolume iVolume
           trigger 'volume_change'
         },
         nil, # use default interval
@@ -3078,7 +3078,7 @@ module Tunewich
         when PLAYER_APP_DEFAULT
           playerCommandParts << "#{@playerApplication} \"#{mediaFilePath}\" #{playerStartupOptions.join ' '}"
         when PLAYER_APP_TERMUX
-          setActualVolume @volume # handle the case of `/fade out / q`, which fades out the system volume, so it is still faded out when we start a new player
+          setCurrentVolume @volume # handle the case of `/fade out / q`, which fades out the system volume, so it is still faded out when we start a new player
           if @hasMpv
             # TODO: implement slave mode with JSON IPC https://mpv.io/manual/master/#json-ipc
             mpvSupportedOptions = ['speed', 'quiet', 'af', 'loop', 'ss']
@@ -3277,12 +3277,12 @@ module Tunewich
       when PLAYER_APP_DEFAULT
         sendMplayerCommand "q"
       when PLAYER_APP_TERMUX
-        # setActualVolume @volume # @enhancement not quite right, but I want to return to system volume at this point...oh, I should set @volume to the system volume, if not currently faded out, etc.
         if @hasMpv
           `killall -9 mpv`
         else
           `termux-media-player stop`
         end
+        setCurrentVolume @volume if @currentVolume != @volume
       end
 
       ## 1hEaID: in termux, with mpv, killing the player threads causes tunewich to break the main loop. This is a hacky workaround for that problem.
