@@ -1348,78 +1348,7 @@ module Tunewich
                 end
 
                 if track
-                  alreadyHas = {
-                    :title => track.has_key?('title') && track['title'].strip.length > 0,
-                    :duration => track.has_key?('duration'),
-                    :description => track.has_key?('description') && track['description'].strip.length > 0,
-                    :bpm => track.has_key?('bpm')
-                  }
-                  tagNames = getTrackTags track
-
-                  outputMessageLines = []
-                  info = {}
-                  if !alreadyHas[:title] || !alreadyHas[:duration]
-                    if track['type'] === 'youtube'
-                      info = getYouTubeTrackInfo track['src']
-                    elsif track['type'] === 'soundcloud'
-                      info = getSoundcloudTrackInfo track['src']
-                    end
-                    updateTrackInfo track, info
-                  end
-                  outputMessageLines << "     title : #{track['title']}" if track.has_key? 'title'
-                  outputMessageLines << "      tags : #{tagNames.join ', '}" if tagNames.length > 0
-                  outputMessageLines << "sourceTags : #{info['sourceTags']}" if info && info.has_key?('sourceTags')
-                  outputMessageLines << "    rating : #{track['rating']}" if track['rating']
-                  outputMessageLines << "       bpm : #{track['bpm']}" if alreadyHas[:bpm]
-
-                  if track == @currentTrack
-                    timeMessage = ""
-                    timeMessage << "			time : #{getDurationStringFromSeconds @currentPlayerTime}" if @currentPlayerTime
-                    if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
-                      durationResponseFromPlayer = getMplayerProperty('get_time_length', /^(ANS_LENGTH=)(.*?)(\?)?$/, 0.1)
-                      whisper("Got duration from player: '#{durationResponseFromPlayer}'", 2)
-                      if durationResponseFromPlayer
-                        track['duration'] = getDurationStringFromSeconds durationResponseFromPlayer.to_f
-                      end
-                    end
-                    timeMessage << " / #{track['duration']}"
-                    timeMessage << " (#{@speed}x)" if @speed != 1
-                    if @currentPlayerTime && @currentTrack.has_key?('chapters')
-                      chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
-                      if chapterIndex > -1
-                        timeMessage << "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
-                      end
-                    end
-                    outputMessageLines << "#{timeMessage}"
-                  else
-                    outputMessageLines << "	duration : #{track['duration']}" if alreadyHas[:duration]
-                  end
-
-                  outputMessageLines << "downloaded : #{trackFileExists? track}"
-                  outputMessageLines << "#{track['description']}" if track.has_key?('description')
-                  if !info.has_key? 'link'
-                    info['link'] = track['link'] || track['src']
-                    if track['type'] === 'youtube'
-                      info['link'] = "http://youtu.be/#{track['src']}"
-                    end
-                  end
-                  outputMessageLines << "      link : #{info['link']}" if info
-
-                  outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
-                  outputMessageLines << "    volume : #{@volume}/100" if track == @currentTrack
-
-                  if @configuredVerbosity > 1 && tagNames.length > 0
-                    whisper("about to loop through tagNames", 4)
-                    tagNames.each { |tagName|
-                      whisper("digging up ancestors of #{tagName}", 4)
-                      ancestorTags = getAncestorTagNames tagName
-                      whisper("ancestors of tag '#{tagName}': #{ancestorTags}", 1) if ancestorTags.length > 0
-                    }
-                  end
-
-                  outputMessageLines << "------------------------------"
-                  putsRealtime outputMessageLines.join "\n"
-                  notify outputMessageLines.join "\n"
+                  showTrackInfo track, trackIndex
                 else
                   putsRealtime "Cannot show info. No track found."
                 end
@@ -2403,6 +2332,90 @@ module Tunewich
       end
 
       requestedCommandSet
+    end
+
+    def showTrackInfo track, trackIndex = nil
+      alreadyHas = {
+        :title => track.has_key?('title') && track['title'].strip.length > 0,
+        :duration => track.has_key?('duration'),
+        :description => track.has_key?('description') && track['description'].strip.length > 0,
+        :bpm => track.has_key?('bpm')
+      }
+      tagNames = getTrackTags track
+
+      outputMessageLines = []
+      info = {}
+      if !alreadyHas[:title] || !alreadyHas[:duration]
+        if track['type'] === 'youtube'
+          info = getYouTubeTrackInfo track['src']
+        elsif track['type'] === 'soundcloud'
+          info = getSoundcloudTrackInfo track['src']
+        end
+        updateTrackInfo track, info
+      end
+      outputMessageLines << "     title : #{track['title']}" if track.has_key? 'title'
+      outputMessageLines << "      tags : #{tagNames.join ', '}" if tagNames.length > 0
+      outputMessageLines << "sourceTags : #{info['sourceTags']}" if info && info.has_key?('sourceTags')
+      outputMessageLines << "    rating : #{track['rating']}" if track['rating']
+      outputMessageLines << "       bpm : #{track['bpm']}" if alreadyHas[:bpm]
+
+      if track == @currentTrack
+        timeMessage = ""
+        timeMessage << "			time : #{getDurationStringFromSeconds @currentPlayerTime}" if @currentPlayerTime
+        if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
+          durationResponseFromPlayer = getMplayerProperty('get_time_length', /^(ANS_LENGTH=)(.*?)(\?)?$/, 0.1)
+          whisper("Got duration from player: '#{durationResponseFromPlayer}'", 2)
+          if durationResponseFromPlayer
+            track['duration'] = getDurationStringFromSeconds durationResponseFromPlayer.to_f
+          end
+        end
+        timeMessage << " / #{track['duration']}"
+        timeMessage << " (#{@speed}x)" if @speed != 1
+        if @currentPlayerTime && @currentTrack.has_key?('chapters')
+          chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
+          if chapterIndex > -1
+            timeMessage << "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
+          end
+        end
+        outputMessageLines << "#{timeMessage}"
+      else
+        outputMessageLines << "	duration : #{track['duration']}" if alreadyHas[:duration]
+      end
+
+      trackFilePaths = findTrackFiles(track)
+      outputMessageLines << "downloaded : #{trackFilePaths.length > 0}"
+      if trackFilePaths.length > 0
+        trackFilenames = trackFilePaths.map { |path|
+          path.sub("#{@mediaDirectoryPath}/", '')
+        }
+        outputMessageLines << "   file(s) : #{trackFilenames.join("\n             ")}"
+        outputMessageLines << " directory : #{@mediaDirectoryPath}/"
+      end
+      outputMessageLines << "#{track['description']}" if track.has_key?('description')
+
+      if !info.has_key? 'link'
+        info['link'] = track['link'] || track['src']
+        if track['type'] === 'youtube'
+          info['link'] = "http://youtu.be/#{track['src']}"
+        end
+      end
+      outputMessageLines << "      link : #{info['link']}" if info
+
+      outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
+      outputMessageLines << "    volume : #{@volume}/100" if track == @currentTrack
+
+      if @configuredVerbosity > 1 && tagNames.length > 0
+        whisper("about to loop through tagNames", 4)
+        tagNames.each { |tagName|
+          whisper("digging up ancestors of #{tagName}", 4)
+          ancestorTags = getAncestorTagNames tagName
+          whisper("ancestors of tag '#{tagName}': #{ancestorTags}", 1) if ancestorTags.length > 0
+        }
+      end
+
+      outputMessageLines << "------------------------------"
+      putsRealtime outputMessageLines.join "\n"
+      notify outputMessageLines.join "\n"
     end
 
     def setUserMode mode
@@ -3459,17 +3472,17 @@ module Tunewich
       end
     end
 
-    def setLibraryMediaPath libraryPath
-      @tunewichDirectory = libraryPath
-      if not Dir.exist? @tunewichDirectory
-        whisper("Please create the directory '#{@tunewichDirectory}'.", 0)
+    def setLibraryMediaPath libraryDirectoryPath
+      @libraryDirectory = libraryDirectoryPath
+      if not Dir.exist? @libraryDirectory
+        whisper("Please create the directory '#{@libraryDirectory}'.", 0)
         kill
       end
 
-      @mediaDirectoryPath = "#{@tunewichDirectory}/music" # TODO: use the tunewichDirectory directly as the music directory
+      @mediaDirectoryPath = "#{@libraryDirectory}/media" # TODO: use the tunewichDirectory directly as the music directory
       Dir.mkdir @mediaDirectoryPath if not Dir.exist? @mediaDirectoryPath
 
-      setLibraryDatabasePath "#{@tunewichDirectory}/tunewich-library.json" if !@libraryDatabasePath
+      setLibraryDatabasePath "#{@libraryDirectory}/tunewich-library.json" if !@libraryDatabasePath
     end
 
     def extendHash sourceTrack, overrideTrack
@@ -4632,8 +4645,8 @@ module Tunewich
         @autoDownload = true
       end
 
-      parser.on("-L FILE", "--library FILE", "Path to the JSON file containing the library data. Without this option, it is assumed to be TUNEWICH_DIR/tunewich-library.json.", " ") do |libraryPath|
-        setLibraryDatabasePath libraryPath
+      parser.on("-L FILE", "--library FILE", "Path to the JSON file containing the library data. Without this option, it is assumed to be TUNEWICH_DIR/tunewich-library.json.", " ") do |databasePath|
+        setLibraryDatabasePath databasePath
       end
 
       parser.on("-D DIR", "--input-dir DIR", "Directory where the media files are stored.\nNOTE: when used, this must be the first option. It is recommended to define TUNEWICH_DIR, instead.", " ") do |inputDir|
