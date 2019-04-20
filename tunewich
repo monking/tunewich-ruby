@@ -171,19 +171,10 @@ module Tunewich
         end
       end
 
-      bindOnce 'before_exit', Proc.new {
-        if @services && @services.length > 0
-          whisper("Exiting: killing #{@services.length} services", 2)
-          @services.each { |thread| thread.kill if thread.alive? }
-        else
-          whisper("Exiting: no services running", 2)
-        end
-      }
+      bindOnce 'before_exit', Proc.new { killRegiseredServiceThreads }
 
-      @actualVolume = getPlayerConfiguredVolume
-      @volume = @currentVolume = getStateSpaceVolume(@actualVolume)
-      whisper("@volume: #{@volume}", 3)
-      trigger 'volume_change'
+      getInitialPlayerVolume
+
       @speed = 1.0
       @speed = getMplayerConfigNumericProperty('speed', 1.0)
       whisper("@speed: #{@speed}", 3)
@@ -193,6 +184,26 @@ module Tunewich
       listenForExternalCommands
 
       interactiveLoop
+    end
+
+    def getInitialPlayerVolume
+      updateInitialVolume = Proc.new {
+        @actualVolume = getPlayerConfiguredVolume
+        @volume = @currentVolume = getStateSpaceVolume(@actualVolume)
+        whisper("@volume: #{@volume}", 3)
+        trigger 'volume_change'
+      }
+
+      updateInitialVolume.call
+
+      if @playerApplication == PLAYER_APP_TERMUX
+        registerServiceThread Thread.new {
+          while true
+            sleep 3
+            updateInitialVolume.call if ! @isFadingVolume
+          end
+        }
+      end
     end
 
     def cleanup
@@ -2636,6 +2647,8 @@ module Tunewich
     end
 
     def fadeVolume targetFadeVolume, duration, playerIndex
+      trigger 'fade_start'
+      @isFadingVolume = true
       whisper("fadeVolume(targetFadeVolume:#{targetFadeVolume}, duration:#{duration}, playerIndex:#{playerIndex})", 4)
       # @volumeMultipliers['fade'] ||= 1 # TODO 1gzQHH: I haven't worked this out yet
       transitionVolume = @currentVolume
@@ -2670,6 +2683,7 @@ module Tunewich
         curve
       )
 
+      @isFadingVolume = false
       trigger 'fade_end'
     end
 
@@ -4802,20 +4816,19 @@ module Tunewich
             puts "#" * 40
           end
           if streamingServerType == 'homebrew'
-            @services = []
             whisper("starting jackd (to capture audio)", 2)
-            @services << Thread.new { `sudo jackd -d #{jackAudioDeviceAndOptions}` }
+            registerServiceThread Thread.new { `sudo jackd -d #{jackAudioDeviceAndOptions}` }
             whisper("starting icecast (to stream audio to listeners)", 2)
             if UNAME == 'Darwin'
-              @services << Thread.new { `icecast -c "#{icecastConfigFile}"` }
+              registerServiceThread Thread.new { `icecast -c "#{icecastConfigFile}"` }
             else
-              @services << Thread.new { `icecast2 -c "#{icecastConfigFile}"` }
+              registerServiceThread Thread.new { `icecast2 -c "#{icecastConfigFile}"` }
             end
             darkiceStartDelay = 5.0
             whisper("waiting #{darkiceStartDelay} seconds to start darkice", 2)
             sleep darkiceStartDelay
             whisper("starting darkice (to encode and push audio to streaming server)", 2)
-            @services << Thread.new { `sudo darkice -v 10 -c "#{darkiceConfigFile}"` }
+            registerServiceThread Thread.new { `sudo darkice -v 10 -c "#{darkiceConfigFile}"` }
           else
             whisper("continue to Nicecast server", 2)
           end
@@ -4862,6 +4875,20 @@ module Tunewich
       whisper("unparsed options: #{unparsedOptions}", 4)
 
       output
+    end
+
+    def registerServiceThread thread
+      @services ||= []
+      @services << thread
+    end
+
+    def killRegiseredServiceThreads
+      if @services && @services.length > 0
+        whisper("Exiting: killing #{@services.length} services", 2)
+        @services.each { |thread| thread.kill if thread.alive? }
+      else
+        whisper("Exiting: no services running", 2)
+      end
     end
 
     def doOptionSecondaryActions optionsOutput
