@@ -2178,40 +2178,11 @@ module Tunewich
               end
               {:chainedInput => input}
             }
-          }
-        },
-        'kill' => {
-        },
-        'edit' => {
-        },
-        'play' => {
-          '' => {
-            'description' => "Chainable player commands (empty command, i.e. '/').",
-            'action' => Proc.new { |input, command|
-              inputParts = getCommandInputParts(input)
-              output = {
-                :chainedInput => inputParts[:remainder]
-              }
-              if inputParts[:query] && inputParts[:query].length > 0
-                whisper("Running player action (#{input})", 3)
-                output[:action] = inputParts[:query]
-              end
-
-              output
-            },
-            'inputOptions' => Proc.new { |input, command|
-              getPlayerCommands.split("\n")
-            }
           },
-          'stop' => {
-            'description' => 'Stop playing (enter "edit" mode).',
-            'action' => Proc.new { |input, command|
-              setUserMode MODES['edit']
-              exitPlayerCommand
-
-              false
-            }
-          },
+          'volume' => generateMacroCommand.call('/fade INPUT 0', 'VOLUME - Set the volume level.'),
+          'mute' => generateMacroCommand.call('/fade out 0', 'Temporarily silent audio.'),
+          'unmute' => generateMacroCommand.call('/fade in 0', 'Restore audio after mute.'),
+          'speed' => generateMacroCommand.call('/ramp INPUT 0', 'SPEED - Set the playback speed.'),
           'fade' => {
             'description' => '/fade VOLUME [DURATION]; VOLUME can be "out" or "in", which will fade from or to the last explicit volume set.',
             'args' => ['out', 'in'],
@@ -2233,9 +2204,6 @@ module Tunewich
               output
             }
           },
-          'volume' => generateMacroCommand.call('/fade INPUT 0', 'VOLUME - Set the volume level.'),
-          'mute' => generateMacroCommand.call('/fade out 0', 'Temporarily silent audio.'),
-          'unmute' => generateMacroCommand.call('/fade in 0', 'Restore audio after mute.'),
           'ramp' => {
             'description' => '/ramp SPEED [DURATION] - Ramp speed',
             'action' => Proc.new { |input, command|
@@ -2315,6 +2283,39 @@ module Tunewich
               seekTimeInSeconds = parseRelativeTime seekInput
               seek seekTimeInSeconds, 0.5, 0.5
               {:chainedInput => inputParts[:remainder]}
+            }
+          }
+        },
+        'kill' => {
+        },
+        'edit' => {
+        },
+        'play' => {
+          '' => {
+            'description' => "Chainable player commands (empty command, i.e. '/').",
+            'action' => Proc.new { |input, command|
+              inputParts = getCommandInputParts(input)
+              output = {
+                :chainedInput => inputParts[:remainder]
+              }
+              if inputParts[:query] && inputParts[:query].length > 0
+                whisper("Running player action (#{input})", 3)
+                output[:action] = inputParts[:query]
+              end
+
+              output
+            },
+            'inputOptions' => Proc.new { |input, command|
+              getPlayerCommands.split("\n")
+            }
+          },
+          'stop' => {
+            'description' => 'Stop playing (enter "edit" mode).',
+            'action' => Proc.new { |input, command|
+              setUserMode MODES['edit']
+              exitPlayerCommand
+
+              false
             }
           }
         }
