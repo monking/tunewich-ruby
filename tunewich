@@ -232,7 +232,7 @@ module Tunewich
         streamData = volumeData[streamIndex] if streamIndex
         if streamData
           @volumeMultipliers['system_max'] = streamData['max_volume'].to_f / 100.0 if streamData.has_key?('max_volume')
-          whisper("Got _actual_ system volume: #{streamData['volume']}", 3)
+          whisper("Got _actual_ system volume: #{streamData['volume']}", 5)
           configuredVolume = streamData['volume'].to_f
         end
       end
