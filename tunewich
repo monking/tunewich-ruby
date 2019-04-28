@@ -3229,6 +3229,11 @@ module Tunewich
 
       trigger 'time_update' # @currentPlayerTime set above, ~ 2878
 
+      # @bandaid for delayed start for mpv in termux @fix: json-ipc
+      if @currentPlayerTime == 0 && @playerApplication != PLAYER_APP_DEFAULT
+        @currentPlayerTime -= streaming ? 6 : 1.5 # found experimentally
+      end
+
       lastTickTime = Time.now.to_f
       while @playerApplicationThreads[@currentPlayerIndex].alive?
         if @playerApplication == PLAYER_APP_DEFAULT
