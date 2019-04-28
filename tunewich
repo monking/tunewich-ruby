@@ -187,10 +187,10 @@ module Tunewich
     end
 
     def getInitialPlayerVolume
-      updateInitialVolume = Proc.new {
+      updateInitialVolume = Proc.new { |context = 'initial', verbosity = 3|
         @actualVolume = getPlayerConfiguredVolume
         @volume = @currentVolume = getStateSpaceVolume(@actualVolume)
-        whisper("@volume: #{@volume}", 3)
+        whisper("#{context} volume: #{@volume}", verbosity)
         trigger 'volume_change'
       }
 
@@ -200,7 +200,7 @@ module Tunewich
         registerServiceThread Thread.new {
           while true
             sleep 3
-            updateInitialVolume.call if ! @isFadingVolume
+            updateInitialVolume.call('system', 4) if ! @isFadingVolume
           end
         }
       end
@@ -295,7 +295,7 @@ module Tunewich
       }, bindingGroupName
 
       if @tracks && @tracks.length > 0
-        titleBlock "Playing #{@tracks.length} tracks", '#'
+        titleBlock "#{@tracks.length} tracks queued", '#'
       else
         useEntireLibrary
       end
@@ -559,9 +559,9 @@ module Tunewich
       effectiveVerbosity = verbosity - @verbosityBoost
       if @configuredVerbosity >= effectiveVerbosity
         if @shouldShowPlaybackInfo
-          disablePlaybackInfo
+          @shouldShowPlaybackInfo = false
           printRepeat "#{formattedMessage}\n"
-          enablePlaybackInfo
+          @shouldShowPlaybackInfo = true
         else
           STDERR.print "\n#{formattedMessage}\n"
           # STDERR.puts formattedMessage
@@ -872,7 +872,7 @@ module Tunewich
                   heading = "#{[guessChapterTexts.length, 10].min}/#{guessChapterTexts.length} #{noteType}"
                   putsRealtime "\n#{heading}\n================\n#{guessChapterTexts.slice(0, 10).join("\n")}"
                 end
-              elsif inputParts[:option] && inputParts[:option].length > 0
+              else
                 # TODO 1gzoGh: it'd be nice to put in a space if inputParts[:offset] is given
                 putsRealtime getFormattedNoteList(@currentTrack[noteType], @currentNoteIndex[noteType], "# ^ current").join("\n")
               end
@@ -2046,7 +2046,7 @@ module Tunewich
             'description' => 'Toggle shuffle.',
             'args' => ['on', 'off'],
             'showStatus' => Proc.new {
-              putsRealtime "shuffle: #{@shuffle ? 'on' : 'off'}" if @configuredVerbosity >= 1
+              putsRealtime "shuffle: #{@shuffle ? 'on' : 'off'}"
             },
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
@@ -2054,7 +2054,7 @@ module Tunewich
               shuffleIndex() if @shuffle
               command['showStatus'].call
               {:chainedInput => inputParts[:remainder]}
-            }
+            },
           },
           'eq' => {
             'description' => 'Set EQ, or save a new preset (/eq [PRESET | save NEW_NAME]). If no preset is given, a list of presets is shown, along with an interactive EQ display, which can by changed using the arrow keys.',
@@ -5152,6 +5152,8 @@ module Tunewich
     def editListInVim list, instructions = nil
       scopedShouldShowRealtimeOutput = @shouldShowPlaybackInfo
       disablePlaybackInfo
+      scopedVerbosity = @configuredVerbosity
+      @configuredVerbosity = -1
       instructions ||= "edit"
       fileDirections = "##\n#{instructions.gsub(/^/, '# ')}\n##"
 
@@ -5173,7 +5175,8 @@ module Tunewich
 
       whisper(list, 4)
 
-      @shouldShowPlaybackInfo = scopedShouldShowRealtimeOutput
+      enablePlaybackInfo if scopedShouldShowRealtimeOutput
+      @configuredVerbosity = scopedVerbosity
 
       list
     end
