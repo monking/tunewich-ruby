@@ -555,13 +555,16 @@ module Tunewich
       # 2: very verbose user output
       # 3: errors
       # 4: debug
-      formattedMessage = "	#{"-" * verbosity} #{message}"
+      formattedMessage = "#{"-" * verbosity} #{message}"
       effectiveVerbosity = verbosity - @verbosityBoost
       if @configuredVerbosity >= effectiveVerbosity
         if @shouldShowPlaybackInfo
-          STDERR.print "#{formattedMessage}\n"
+          disablePlaybackInfo
+          printRepeat "#{formattedMessage}\n"
+          enablePlaybackInfo
         else
-          STDERR.puts formattedMessage
+          STDERR.print "\n#{formattedMessage}\n"
+          # STDERR.puts formattedMessage
         end
       end
       if $logFilePath && (!@logVerbosity || @logVerbosity >= effectiveVerbosity)
@@ -2373,7 +2376,7 @@ module Tunewich
 
       if track == @currentTrack
         timeMessage = ""
-        timeMessage << "			time : #{getDurationStringFromSeconds @currentPlayerTime}" if @currentPlayerTime
+        timeMessage << "      time : #{getDurationStringFromSeconds @currentPlayerTime}" if @currentPlayerTime
         if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
           durationResponseFromPlayer = getMplayerProperty('get_time_length', /^(ANS_LENGTH=)(.*?)(\?)?$/, 0.1)
           whisper("Got duration from player: '#{durationResponseFromPlayer}'", 2)
@@ -2386,12 +2389,12 @@ module Tunewich
         if @currentPlayerTime && @currentTrack.has_key?('chapters')
           chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
           if chapterIndex > -1
-            timeMessage << "\n	 chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
+            timeMessage << "\n   chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
           end
         end
         outputMessageLines << "#{timeMessage}"
       else
-        outputMessageLines << "	duration : #{track['duration']}" if alreadyHas[:duration]
+        outputMessageLines << "  duration : #{track['duration']}" if alreadyHas[:duration]
       end
 
       trackFilePaths = findTrackFiles(track)
@@ -3217,7 +3220,7 @@ module Tunewich
         )
           seekToNextPlayableNoteOrSkip @currentTrack[noteType], currentIndex
         else
-          whisper("#{noteType}: #{@currentTrack[noteType][currentIndex]['text']}", 1)
+          whisper("#{noteType[0]}: #{@currentTrack[noteType][currentIndex]['text']}", 1)
         end
       }
 
@@ -5130,7 +5133,7 @@ module Tunewich
 
     def printRepeat message, shouldReturnCursorToBeginning = false
       message = message.to_s if message.respond_to? 'to_s'
-      outputMessage = "	#{message}"
+      outputMessage = " #{message}"
       print "\r#{$clearLineCharacter}#{$disableWrapCharacter}#{outputMessage}#{$enableWrapCharacter}"
       print "\r" if shouldReturnCursorToBeginning
     end
@@ -5205,7 +5208,7 @@ module Tunewich
       }
       sortedCommandList.sort! { |a,b| a[:name] <=> b[:name] }
       sortedCommandList.each { |commandMeta|
-        info = "		/"
+        info = " /"
         commandPaddingLength = info.length
         info << commandMeta[:name]
         info << " " * (maxCommandNameLength - info.length + commandPaddingLength)
