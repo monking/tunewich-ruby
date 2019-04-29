@@ -1327,13 +1327,13 @@ module Tunewich
           },
           'info' => {
             'description' => "Show track info. Track is: without input = currently playing track; with '>' = the track that will play next; with numeric input = the track at that position in the track list; any other input = the track with the title that best matches that input",
-            'args' => ['all'],
+            'args' => ['all', 'update'],
             'action' => Proc.new { |input, command|
-              inputParts = getCommandInputParts(input, /^((?<arg>all)( +|$))?(?<query>.*?)( (?<remainder>\/.*))?$/)
+              inputParts = getCommandInputParts(input, /^((?<args>(all|update| )+)( +|$))?(?<query>.*?)( (?<remainder>\/.*))?$/)
               tracks = []
               shouldUseInnerTrackIndex = false
               trackIndexes = {}
-              if inputParts[:arg] && inputParts[:arg] == 'all'
+              if inputParts[:args] && inputParts[:args].match(/\ball\b/)
                 shouldUseInnerTrackIndex = true
                 tracks.concat(@tracks)
               elsif inputParts[:query] && inputParts[:query].length > 0
@@ -1362,6 +1362,9 @@ module Tunewich
                 end
 
                 if track
+                  if inputParts[:args] && inputParts[:args].match(/\bupdate\b/)
+                    updateTrackInfo(track)
+                  end
                   showTrackInfo track, trackIndex
                 else
                   putsRealtime "Cannot show info. No track found."
