@@ -4994,8 +4994,7 @@ module Tunewich
             urlCanBeScraped = false
             soundcloudTracks = loadSoundcloud url
             tracks.concat(soundcloudTracks) if soundcloudTracks
-          elsif urlContentType && ['text/xml', 'application/rss+xml'].include?(urlContentType) # TODO: 1gG4kV
-            whisper("WIP: try to load podcast feed")
+          elsif urlContentType && ['text/xml', 'application/rss+xml', 'application/xml'].include?(urlContentType) # TODO: 1gG4kV
             urlCanBeScraped = false
             podcastTracks = loadPodcast url
             tracks.concat(podcastTracks) if podcastTracks
@@ -5050,6 +5049,7 @@ module Tunewich
           'type' => 'podcast',
           'dateAdded' => Time.now.to_i
         }
+        whisper("Adding feed: #{podcastFeed}", 3)
         @library['feeds'] << podcastFeed
         writeLibraryToFile
       end
