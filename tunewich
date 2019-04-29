@@ -4028,7 +4028,7 @@ module Tunewich
         libraryOnFile = processLibraryJSON File.read(@libraryDatabasePath) # since we're writing, no need to check for libraryOnFile[:data], right?
         if @libraryHash == libraryOnFile[:hash] || confirm("Library file has changed since last load. Overwrite?")
           libraryInfo = processLibraryJSON libraryJSON
-          File.write(@libraryDatabasePath, libraryJSON)
+          File.write(@libraryDatabasePath, libraryJSON + "\n")
           @libraryHash = libraryInfo[:hash]
           whisper("Saved change to library file.", 2)
         end
