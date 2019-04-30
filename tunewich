@@ -260,7 +260,7 @@ module Tunewich
     def sendMpvCommand command, playerIndex = nil
       case command.chomp.strip
       when 'q'
-        exitPlayerCommand false # 1hEaID
+        exitPlayerCommand # 1hEaID
       end
 
       ## TODO: get interactive input to mpv working
@@ -291,7 +291,7 @@ module Tunewich
       shouldExitMainLoop = false
       bindOnce 'before_exit', Proc.new {
         shouldExitMainLoop = true
-        exitPlayerCommand
+        exitPlayerCommand(true)
       }, bindingGroupName
 
       if @tracks && @tracks.length > 0
@@ -3080,6 +3080,7 @@ module Tunewich
         playerCommandParts << @commandBeforePlayer if @commandBeforePlayer
 
         afterPlayer = nil
+        forceSunnyDisposition = false
 
         case @playerApplication
         when PLAYER_APP_DEFAULT
@@ -3117,6 +3118,7 @@ module Tunewich
 
             }
             playerCommandParts << "mpv #{playerStartupOptions.join ' '} \"#{mediaFilePath}\""
+            forceSunnyDisposition = true
 
             # The input pipe isn't connecting to interactive input on mpv, and it's causing the command not to quit when playback is finished
             # playerCommandParts.unshift("cat \"#{playerInputFile}\" |") if playerInputFile
@@ -3143,7 +3145,8 @@ module Tunewich
           playerCommand = playerCommandParts.join ' '
           whisper(playerCommand, 2)
           playerStatus = `#{playerCommand} 2> /dev/null`
-          whisper("Player command finished", 3)
+          whisper("Player command finished, status #{playerStatus}", 3)
+          playerStatus = 0 if forceSunnyDisposition
           afterPlayer.call if afterPlayer
         else
           playerStatus = nil
@@ -3283,7 +3286,7 @@ module Tunewich
       response
     end
 
-    def exitPlayerCommand hard = true
+    def exitPlayerCommand hard = false
       whisper("exiting player: #{@playerApplication}", 3)
       case @playerApplication
       when PLAYER_APP_DEFAULT
@@ -4665,6 +4668,10 @@ module Tunewich
 
       parser.on("-a", "--add-track YOUTUBE_URLS", "Add tracks to the library, and to a playlist, if specified. Takes a comma-separated list of YouTube URLs or IDs.", " ") do |urls|
         output[:newTracks] = getTracksFromURLs urls.split(',')
+      end
+
+      parser.on("--all", "Use the entire library, rather than just the tracks queued up when last closed.", " ") do
+        deleteTempFile('tracks')
       end
 
       parser.on("-d", "--download", "Enable downloading files when encountering a file that is not already download.", " ") do |keep|
