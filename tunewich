@@ -560,7 +560,8 @@ module Tunewich
       if @configuredVerbosity >= effectiveVerbosity
         if @shouldShowPlaybackInfo
           @shouldShowPlaybackInfo = false
-          printRepeat "#{formattedMessage}\n"
+          printRepeat "" # clear the line
+          puts "#{formattedMessage}\n"
           @shouldShowPlaybackInfo = true
         else
           STDERR.print "\n#{formattedMessage}\n"
@@ -1233,7 +1234,7 @@ module Tunewich
                 else
                   shouldGetAllTracks = true
                   urls = [@library['playlists'][chosenName]['src']]
-                  newTracks = getTracksFromURLs(urls, shouldGetAllTracks)
+                  newTracks = createTracksFromURLs(urls, shouldGetAllTracks)
 
                   @library['playlists'][chosenName]['tracks'] ||= []
                   initialListLength = @library['playlists'][chosenName]['tracks'].length
@@ -1313,7 +1314,8 @@ module Tunewich
                 tracks = getSoundcloudRecommendations(@currentTrack['link'] || @currentTrack['src'])
                 enablePlaybackInfo
               else
-                putsRealtime "The /more currently only supports YouTube and Soundcloud tracks."
+                putsRealtime "Getting related tracks is currently only supported for YouTube or Soundcloud tracks."
+                # TODO: generic scrape, maybe using youtube-dl
               end
 
               if tracks
@@ -1545,7 +1547,7 @@ module Tunewich
               saveAsList = (getAllVideos && inputParts[:option] == 'list')
               whisper("urls: #{urls}\ntags: #{tags}", 3)
               if urls && urls.length > 0
-                tracks = getTracksFromURLs urls, getAllVideos
+                tracks = createTracksFromURLs urls, getAllVideos
                 if saveAsList
                   playlistHTMLTitle = `curl -sL "#{urls[0]}" | grep '<title>'`
                   playlistName = playlistHTMLTitle.sub(/.*<title>(.*?)( - YouTube)?<\/title>.*/, '\1').chomp if playlistHTMLTitle && playlistHTMLTitle.kind_of?(String)
@@ -4667,7 +4669,7 @@ module Tunewich
       parser = OptionParser.new
 
       parser.on("-a", "--add-track YOUTUBE_URLS", "Add tracks to the library, and to a playlist, if specified. Takes a comma-separated list of YouTube URLs or IDs.", " ") do |urls|
-        output[:newTracks] = getTracksFromURLs urls.split(',')
+        output[:newTracks] = createTracksFromURLs urls.split(',')
       end
 
       parser.on("--all", "Use the entire library, rather than just the tracks queued up when last closed.", " ") do
@@ -4958,7 +4960,7 @@ module Tunewich
       end
     end
 
-    def getTracksFromURLs(urls, getAll = false)
+    def createTracksFromURLs(urls, getAll = false)
       tracks = []
 
       getHTTPHeaderByPattern = Proc.new { |head, pattern|
@@ -5094,7 +5096,7 @@ module Tunewich
             if trackinfo
               whisper("loadBandcamp: trackinfo is valid JSON", 3)
               trackinfo.each { |bandcampTrack|
-                if bandcampTrack.has_key?('file') && bandcampTrack['file'].has_key?('mp3-128')
+                if bandcampTrack && bandcampTrack['file'] && bandcampTrack['file'].has_key?('mp3-128')
                   whisper("loadBandcamp: found track file #{bandcampTrack['file']['mp3-128']}", 3)
                   fileURL = bandcampTrack['file']['mp3-128']
                   fileURL = "http:#{fileURL}" if fileURL.match(/^\/\//)
