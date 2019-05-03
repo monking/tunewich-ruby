@@ -260,7 +260,7 @@ module Tunewich
     def sendMpvCommand command, playerIndex = nil
       case command.chomp.strip
       when 'q'
-        exitPlayerCommand # 1hEaID
+        exitPlayerCommand
       end
 
       ## TODO: get interactive input to mpv working
@@ -278,7 +278,15 @@ module Tunewich
       when PLAYER_APP_TERMUX
         @isPlayerPlaying = !@isPlayerPlaying
         if @hasMpv
-          sendMpvCommand ' '
+          if @isPlayerPlaying
+            setUserMode MODES['play']
+          else
+            @currentTrack = matchExistingLibraryTrack @currentTrack
+            addMarkToTrack @currentTrack, [@currentPlayerTime,0].max
+            setNextTrackIndex(@currentTrack)
+            setUserMode MODES['edit']
+            exitPlayerCommand
+          end
         else
           `termux-media-player #{@isPlayerPlaying ? 'pause' : 'play'}`
         end
@@ -945,7 +953,7 @@ module Tunewich
           'play' => {
             'description' => 'Start playing (enter "play" mode).',
             'action' => Proc.new {
-              setUserMode 'play'
+              setUserMode MODES['play']
               false
             }
           },
@@ -2178,12 +2186,7 @@ module Tunewich
           'again' => {
             'description' => "Play this track again, next.",
             'action' => Proc.new { |input, command|
-              @trackIndex = @tracks.index @currentTrack
-              if !@trackIndex
-                useTracks [@currentTrack]
-                @trackIndex = @tracks.length - 1
-                # TODO 1gG4iz: add @currentTrack to queue
-              end
+              setNextTrackIndex(@currentTrack)
               {:chainedInput => input}
             }
           },
@@ -2392,7 +2395,7 @@ module Tunewich
         timeMessage << " / #{track['duration']}"
         timeMessage << " (#{@speed}x)" if @speed != 1
         if @currentPlayerTime && @currentTrack.has_key?('chapters')
-          chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], @currentPlayerTime
+          chapterIndex = getNoteIndexAtTime @currentTrack['chapters'], [@currentPlayerTime, 0].max
           if chapterIndex > -1
             timeMessage << "\n   chapter : #{@currentTrack['chapters'][chapterIndex]['text']}"
           end
@@ -2481,7 +2484,7 @@ module Tunewich
       else
         noteIndexOffset = getOffsetFromInputString input
         if noteIndexOffset
-          referenceIndex ||= getNoteIndexAtTime notes, @currentPlayerTime
+          referenceIndex ||= getNoteIndexAtTime notes, [@currentPlayerTime, 0].max
           noteIndex = referenceIndex + noteIndexOffset
         else
           chapterList = notes.map { |note| "#{note['time']} - #{note['text']}" }
@@ -2510,7 +2513,7 @@ module Tunewich
         seekTimeInSeconds = getSecondsFromDurationString seekInput
         if seekTimeInSeconds
           if relativeDirection
-            seekTimeInSeconds = @currentPlayerTime + relativeDirection * seekTimeInSeconds
+            seekTimeInSeconds = [@currentPlayerTime, 0].max + relativeDirection * seekTimeInSeconds
           end
         else
           whisper("Failed to get seconds from input '#{seekInput}'")
@@ -2525,7 +2528,7 @@ module Tunewich
 
     def isAbleToSeek seekTimeInSeconds, track = nil
       track ||= @currentTrack
-      trackFileExists?(track) || track['type'] == 'audio/mpeg' || seekTimeInSeconds > @currentPlayerTime
+      trackFileExists?(track) || track['type'] == 'audio/mpeg' || seekTimeInSeconds > [@currentPlayerTime, 0].max
     end
 
     def seek seekTimeInSeconds, fadeOutPeriod = 0.0, fadeInPeriod = 0.0
@@ -2546,7 +2549,19 @@ module Tunewich
           putsRealtime "Download the file to be able to seek backwards."
         end
       else
-        putsRealtime "Sorry, seeking is not yet implemented for #{@playerApplication}."
+        whisper("Hacky seek for #{@playerApplication}: mark time and reload player.", 1)
+        addMarkToTrack @currentTrack, seekTimeInSeconds
+        setNextTrackIndex(@currentTrack)
+        exitPlayerCommand
+      end
+    end
+
+    def setNextTrackIndex(track)
+      track = matchExistingLibraryTrack(track)
+      @trackIndex = @tracks.index(track)
+      if !@trackIndex
+        useTracks([track])
+        @trackIndex = @tracks.length - 1
       end
     end
 
@@ -3162,7 +3177,7 @@ module Tunewich
       playerTimeupdateHandler = Proc.new {
         ['chapters', 'notes'].each { |noteType|
           if @currentTrack.has_key?(noteType)
-            newIndex = getNoteIndexAtTime @currentTrack[noteType], @currentPlayerTime
+            newIndex = getNoteIndexAtTime @currentTrack[noteType], [@currentPlayerTime, 0].max
             if newIndex > -1 && @currentNoteIndex[noteType] != newIndex
               @currentNoteIndex[noteType] = newIndex
               eventName = noteType.sub(/s$/, '_change')
@@ -3241,7 +3256,7 @@ module Tunewich
       trigger 'time_update' # @currentPlayerTime set above, ~ 2878
 
       # @bandaid for delayed start for mpv in termux @fix: json-ipc
-      if @currentPlayerTime == 0 && @playerApplication != PLAYER_APP_DEFAULT
+      if @playerApplication != PLAYER_APP_DEFAULT
         @currentPlayerTime -= streaming ? 6 : 1.5 # found experimentally
       end
 
@@ -3302,7 +3317,6 @@ module Tunewich
         setCurrentVolume @volume if @currentVolume != @volume
       end
 
-      ## 1hEaID: in termux, with mpv, killing the player threads causes tunewich to break the main loop. This is a hacky workaround for that problem.
       if hard
         # @future: only kill active thread; currently players don't overlap.
         @playerApplicationThreads.each { |thread|
