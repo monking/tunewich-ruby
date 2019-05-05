@@ -2409,6 +2409,7 @@ module Tunewich
       else
         outputMessageLines << "  duration : #{track['duration']}" if alreadyHas[:duration]
       end
+      outputMessageLines << "      mark : #{track['mark']}" if track.has_key?('mark')
 
       trackFilePaths = findTrackFiles(track)
       outputMessageLines << "downloaded : #{trackFilePaths.length > 0}"
