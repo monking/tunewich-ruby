@@ -1,1 +1,1 @@
--novideo -volume 50 -af scaletempo=stride=30:overlap=1:search=30 -geometry 100%:100% -xy 300 -ontop
+-novideo -volume 50 -af scaletempo=stride=15:overlap=1:search=15 -geometry 100%:100% -xy 300 -ontop

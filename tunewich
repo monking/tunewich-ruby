@@ -274,7 +274,11 @@ module Tunewich
       case @playerApplication
       when PLAYER_APP_DEFAULT
         # @isPlayerPlaying is set in sendMplayerCommand
-        sendMplayerCommand @isPlayerPlaying ? 'pause' : 'play'
+        if @userMode != MODES['play']
+          setUserMode MODES['play']
+        else
+          sendMplayerCommand @isPlayerPlaying ? 'pause' : 'play'
+        end
       when PLAYER_APP_TERMUX
         @isPlayerPlaying = !@isPlayerPlaying
         if @hasMpv
@@ -2324,6 +2328,7 @@ module Tunewich
             'description' => 'Stop playing (enter "edit" mode).',
             'action' => Proc.new { |input, command|
               setUserMode MODES['edit']
+              @trackIndex = @tracks.index @currentTrack # ditto 'again' cmd
               exitPlayerCommand
 
               false
@@ -2532,27 +2537,31 @@ module Tunewich
     end
 
     def seek seekTimeInSeconds, fadeOutPeriod = 0.0, fadeInPeriod = 0.0
-      if @playerApplication == PLAYER_APP_DEFAULT
-        if isAbleToSeek(seekTimeInSeconds, @currentTrack)
-          @currentlySeeking = true
-          fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
+      if @isPlayerPlaying
+        if @playerApplication == PLAYER_APP_DEFAULT
+          if isAbleToSeek(seekTimeInSeconds, @currentTrack)
+            @currentlySeeking = true
+            fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
 
-          sendMplayerCommand "seek #{seekTimeInSeconds} 2"
+            sendMplayerCommand "seek #{seekTimeInSeconds} 2"
 
-          fadeVolume 'in', fadeInPeriod, @currentPlayerIndex if fadeInPeriod > 0
+            fadeVolume 'in', fadeInPeriod, @currentPlayerIndex if fadeInPeriod > 0
 
-          Thread.new {
-            sleep 1
-            @currentlySeeking = false
-          }
+            Thread.new {
+              sleep 1
+              @currentlySeeking = false
+            }
+          else
+            putsRealtime "Download the file to be able to seek backwards."
+          end
         else
-          putsRealtime "Download the file to be able to seek backwards."
+          whisper("Hacky seek for #{@playerApplication}: mark time and reload player.", 1)
+          addMarkToTrack @currentTrack, seekTimeInSeconds
+          setNextTrackIndex(@currentTrack)
+          exitPlayerCommand
         end
       else
-        whisper("Hacky seek for #{@playerApplication}: mark time and reload player.", 1)
-        addMarkToTrack @currentTrack, seekTimeInSeconds
-        setNextTrackIndex(@currentTrack)
-        exitPlayerCommand
+        @currentPlayerTime = seekTimeInSeconds
       end
     end
 
@@ -2930,7 +2939,15 @@ module Tunewich
         playerStdoutFile = getTempFilePath playerStdoutName
 
         # https://mplayerhq.hu/DOCS/tech/slave.txt
-        playerStartupOptions.concat(["-slave", "-quiet", "-input file=\"#{playerInputFile}\""])
+        playerStartupOptions.concat([
+          "-slave", # 1gnyIc: this also supposedly causes mplayer to ignore keyboard events.
+          "-quiet",
+          # "-idle", # would be useful if we can reliably tell that a track has finished
+          "-nomouseinput",
+          # "-pausing 2", # pausing_keep: what to do after a command has finished
+          "-noconsolecontrols", # 1gnyIc: no effect - this should prevent lost keys when mplayer is paused, but it doesn't
+          "-input file=\"#{playerInputFile}\""
+        ])
 
         playerAction = Proc.new { |command|
           sendMplayerCommand command
@@ -2939,9 +2956,9 @@ module Tunewich
       when PLAYER_APP_TERMUX
         if @hasMpv
           # try to get slave mode to work, or use alternatives (e.g. https://mpv.io/manual/master/#lua-scripting)
-          playerInputStreamName = "#{MPV_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
-          deleteStream playerInputStreamName
-          playerInputFile = makeStream playerInputStreamName
+          # playerInputStreamName = "#{MPV_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
+          # deleteStream playerInputStreamName
+          # playerInputFile = makeStream playerInputStreamName
 
           playerStdoutName = "#{MPV_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
           playerStdoutFile = getTempFilePath playerStdoutName
@@ -2967,7 +2984,7 @@ module Tunewich
       end
 
       markTime = getSecondsFromDurationString(track['mark']) if track.has_key?('mark')
-      @currentPlayerTime = 0
+      @currentPlayerTime = 0 if not @currentPlayerTime
       if @chapterQuery && track.has_key?('chapters')
         chapterIndex = getNoteIndexByQuery(track['chapters'], @chapterQuery)
         @chapterQuery = nil
@@ -3281,6 +3298,7 @@ module Tunewich
       end
 
       @breakLoop = false
+      @currentPlayerTime = nil
 
       # @playerApplicationThreads[@currentPlayerIndex].join
       whisper("killing user input thread (again)", 4)
@@ -5339,6 +5357,7 @@ module Tunewich
     end
 
     def handleInputCharacter inputCharacter, prompt, commands, leftoverAction
+      whisper("input: '#{inputCharacter}'", 5)
       result = true
 
       begin
@@ -5353,12 +5372,14 @@ module Tunewich
             result = false
           end
         elsif inputCharacter == " " && (!@commandUserInput || @commandUserInput.length == 0) # first space
+          result = false if @userMode != MODES['play'] # skip having to hit enter
           togglePlay
         elsif inputCharacter == "" # control-c character
           result = false
           case @userMode
           when MODES['play']
             setUserMode MODES['edit']
+            @trackIndex = @tracks.index @currentTrack # ditto 'again' cmd
             exitPlayerCommand
           when MODES['edit']
             kill
