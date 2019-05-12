@@ -1335,6 +1335,10 @@ module Tunewich
                 @trackIndex = @tracks.length
                 @trackFilters = nil
                 useTracks tracks, true # and set track index to the first
+                if @shuffle
+                  whisper("Disabling shuffle to play new tracks in added order.", 1)
+                  @shuffle = false
+                end
               end
               {:chainedInput => input}
             }
