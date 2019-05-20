@@ -5107,7 +5107,7 @@ module Tunewich
           newTrack = createTrack(enclosure.attribute('url').to_s.gsub('&amp;', '&'), enclosure.attribute('type').to_s || 'audio/mpeg')
           newTrack['title'] = REXML::XPath.first(itemElement, 'title').text.chomp
           descriptionElement = REXML::XPath.first(itemElement, 'itunes:summary') || REXML::XPath.first(itemElement, 'description')
-          newTrack['description'] = descriptionElement.text.chomp
+          newTrack['description'] = descriptionElement.text.chomp if descriptionElement && descriptionElement.text
           durationElement = REXML::XPath.first(itemElement, 'itunes:duration')
           newTrack['duration'] = durationElement.text.chomp if durationElement
           linkElement = REXML::XPath.first(itemElement, 'link')
