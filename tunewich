@@ -1857,10 +1857,14 @@ module Tunewich
                   end
                 }
               when "current"
+                queuedTrackIdMap = {}
+                @tracks.each { |track|
+                  queuedTrackIdMap[track['id']] = nil
+                }
                 Dir.entries(@mediaDirectoryPath).each { |file|
                   if !filesToIgnore.include? file
                     id = getIdFromFileName file
-                    if !id || !@tracks.include?(id)
+                    if id && queuedTrackIdMap.has_key?(id)
                       filesToDelete << file
                     end
                   end
