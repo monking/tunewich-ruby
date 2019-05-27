@@ -45,6 +45,17 @@ module Tunewich
     MPV_STDOUT_BUFFER_NAME = 'mpv-stdout'
     MPV_INPUT_FIFO_NAME = 'mpv-input'
     UNAME = `uname`.chomp
+    VERBOSITY = {
+      'quiet' => -1, # shouldn't use for whisper, just here for reference
+      'default' => 0,
+      'verbose' => 1,
+      'very verbose' => 2,
+      'errors' => 3,
+      'debug' => 4,
+      'realtime' => 5,
+      'realtime+' => 6,
+      'realtime++' => 7
+    }
 
     DEFAULT_INTERACTIVE_INPUT_PATTERN = /^(?<query>.*?)( +(?<remainder>\/.*))?$/
     # DEFAULT_INTERACTIVE_INPUT_PATTERN = /^(?<query>[^\/].*?)( +(?<remainder>\/.*))?$/ # leading '/' means next command, so query may not begin with '/'
@@ -130,7 +141,7 @@ module Tunewich
 
       trackTitleListFromLastSession = readTempFile('tracks', false)
       if trackTitleListFromLastSession && trackTitleListFromLastSession.length > 0
-        whisper("Using tracks from last session.", 1)
+        whisper("Using tracks from last session.", VERBOSITY['verbose'])
         useTracks(getTracksFromTitleList(trackTitleListFromLastSession.strip.lines))
       else
         useTracks(@library['tracks'].values)
@@ -144,21 +155,21 @@ module Tunewich
         end
 
         if @trackIndex
-          whisper("Going to track #{@trackIndex + 1}, #{@tracks[@trackIndex]['title']}.", 2)
+          whisper("Going to track #{@trackIndex + 1}, #{@tracks[@trackIndex]['title']}.", VERBOSITY['very verbose'])
         else
-          whisper("Could not find track by query '#{@trackQuery}'.", 0)
+          whisper("Could not find track by query '#{@trackQuery}'.", VERBOSITY['default'])
         end
         @trackQuery = nil
       elsif @library["lastMarked"]
         markedTrack = @library["tracks"][@library["lastMarked"]]
         if markedTrack && markedTrack["mark"]
           if @tracks.include?(markedTrack)
-            whisper("Returning to last marked track.", 1)
+            whisper("Returning to last marked track.", VERBOSITY['verbose'])
             @trackIndex = @tracks.index(markedTrack)
             @library.delete "lastMarked"
             writeLibraryToFile
           else
-            whisper("A track was marked, but is not in the current queue. It will remain marked until it is played again.", 0)
+            whisper("A track was marked, but is not in the current queue. It will remain marked until it is played again.", VERBOSITY['default'])
           end
         end
       end
@@ -177,7 +188,7 @@ module Tunewich
 
       @speed = 1.0
       @speed = getMplayerConfigNumericProperty('speed', 1.0)
-      whisper("@speed: #{@speed}", 3)
+      whisper("@speed: #{@speed}", VERBOSITY['errors'])
       @currentSpeed = @speed
       trigger 'speed_change'
 
@@ -232,7 +243,7 @@ module Tunewich
         streamData = volumeData[streamIndex] if streamIndex
         if streamData
           @volumeMultipliers['system_max'] = streamData['max_volume'].to_f / 100.0 if streamData.has_key?('max_volume')
-          whisper("Got _actual_ system volume: #{streamData['volume']}", 5)
+          whisper("Got _actual_ system volume: #{streamData['volume']}", VERBOSITY['debug'])
           configuredVolume = streamData['volume'].to_f
         end
       end
@@ -253,7 +264,7 @@ module Tunewich
         end
         putInTempFile "#{MPLAYER_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
       when PLAYER_APP_TERMUX
-        whisper("Not (yet) supported with termux: #{command}", 5)
+        whisper("Not (yet) supported with termux: #{command}", VERBOSITY['debug'])
       end
     end
 
@@ -264,13 +275,26 @@ module Tunewich
       end
 
       ## TODO: get interactive input to mpv working
-      # whisper("sending to mpv: '#{command}'", 4)
+      # whisper("sending to mpv: '#{command}'", VERBOSITY['debug'])
       # playerIndex ||= @currentPlayerIndex
       # putInTempFile "#{MPV_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
     end
 
+    def setFuzzyVerbosity input
+      if input.match(/^[0-9]+$/)
+        @configuredVerbosity = input.to_i
+      else
+        verbosityTerm = firstFuzzyMatchValue(input, VERBOSITY.keys)
+        if verbosityTerm
+          @configuredVerbosity = VERBOSITY[verbosityTerm]
+        else
+          whisper("Invalid verbosity setting '#{input}'.", VERBOSITY['default'])
+        end
+      end
+    end
+
     def togglePlay
-      whisper("before togglePlay, @isPlayerPlaying: #{@isPlayerPlaying}", 2)
+      whisper("before togglePlay, @isPlayerPlaying: #{@isPlayerPlaying}", VERBOSITY['very verbose'])
       case @playerApplication
       when PLAYER_APP_DEFAULT
         # @isPlayerPlaying is set in sendMplayerCommand
@@ -338,7 +362,7 @@ module Tunewich
             end
 
             if !@networkEnabled && !trackFileExists?(@currentTrack)
-              whisper("Network is disabled, but this track is not downloaded. Entering 'edit' mode.", 0)
+              whisper("Network is disabled, but this track is not downloaded. Entering 'edit' mode.", VERBOSITY['default'])
               setUserMode MODES['edit']
             end
           end
@@ -372,24 +396,24 @@ module Tunewich
                 @currentTrack['lastPlayed'] = playerOutput[:endTime].to_i
                 @currentTrack['playCount'] ||= 0
                 @currentTrack['playCount'] += 1
-                whisper("listened for #{playerOutput[:playTime]} (>= min #{minimumPlayTime}): bumping play count to #{@currentTrack['playCount']}", 1)
+                whisper("listened for #{playerOutput[:playTime]} (>= min #{minimumPlayTime}): bumping play count to #{@currentTrack['playCount']}", VERBOSITY['verbose'])
               else
                 @currentTrack['skipCount'] ||= 0
                 @currentTrack['skipCount'] += 1
-                whisper("listened for #{playerOutput[:playTime]} (< min #{minimumPlayTime}): bumping SKIP count to #{@currentTrack['skipCount']}", 1)
+                whisper("listened for #{playerOutput[:playTime]} (< min #{minimumPlayTime}): bumping SKIP count to #{@currentTrack['skipCount']}", VERBOSITY['verbose'])
               end
               writeLibraryToFile
             end
           end
         else
-          whisper("Empty tracklist", 3)
+          whisper("Empty tracklist", VERBOSITY['errors'])
           emptyAction = Proc.new { |input| false } # break command loop after any non-command input
-          whisper("empty (index '#{@trackIndex}' not found among #{@tracks.length} tracks.", 0)
+          whisper("empty (index '#{@trackIndex}' not found among #{@tracks.length} tracks.", VERBOSITY['default'])
           commandPrompt "empty", interactiveCommands, emptyAction
         end
 
         if shouldExitMainLoop
-          whisper("Exiting player loop", 3)
+          whisper("Exiting player loop", VERBOSITY['errors'])
           break
         end
       end
@@ -399,7 +423,7 @@ module Tunewich
 
     def handleTrackChangeDuringPlayback trackA, trackB
       if (@bpmGlideDelay > 0 || @bpmGlideDuration > 0) && trackA.has_key?('bpm') && trackB.has_key?('bpm')
-        whisper("gliding bpm for #{@bpmGlideDuration} seconds (after #{@bpmGlideDelay} seconds) seconds between #{trackA['bpm']} and #{trackB['bpm']} (adjust for current speed #{@speed}).", 2)
+        whisper("gliding bpm for #{@bpmGlideDuration} seconds (after #{@bpmGlideDelay} seconds) seconds between #{trackA['bpm']} and #{trackB['bpm']} (adjust for current speed #{@speed}).", VERBOSITY['very verbose'])
         initialSpeed = @speed
         # TODO: ramp to the nearest multiple: e.g. if going from 60bpm to 120, do nothing. If going from 60 to 140, ramp to 70; from 140 to 60, ramp to 120.
         # This is already implemented in getSoftBPMRatio
@@ -414,15 +438,20 @@ module Tunewich
     end
 
     def trigger eventName, data = nil
+      whisperMessage = "trigger #{eventName}"
+      whisperMessage += "(#{data})" if data
       if @eventBindings.has_key? eventName
-        whisper("trigger #{eventName}, #{@eventBindings[eventName].length} handlers bound", 5)
-        @eventBindings[eventName].each { |handlerId|
-          whisper("event #{eventName}, calling handler handler #{handlerId}", 5)
-          result = @eventBindingsIndex[handlerId][:handler].call(eventName, data)
-          break if result == false
-        }
+        if @eventBindings[eventName].length > 0
+          @eventBindings[eventName].each { |handlerId|
+            whisper("#{whisperMessage}, calling #{@eventBindingsIndex[handlerId][:handler].to_s.sub(/^.*(?=:\d)/, '')}", VERBOSITY['realtime'])
+            result = @eventBindingsIndex[handlerId][:handler].call(eventName, data)
+            break if result == false # stop event propagation
+          }
+        else
+          whisper("#{whisperMessage} (no handlers bound)", VERBOSITY['realtime+'])
+        end
       else
-        whisper("trigger #{eventName} (no handlers bound)", 5)
+        whisper("#{whisperMessage} (no handlers bound)", VERBOSITY['realtime+'])
       end
     end
 
@@ -455,7 +484,7 @@ module Tunewich
           @eventBindingGroups[handlerGroup] << handlerId
         end
 
-        whisper("bind, #{eventName}, #{handlerGroup}, #{handlerId}", 5)
+        whisper("bind, #{eventName}, #{handlerGroup}, #{handlerId}", VERBOSITY['debug'])
       end
 
       handlerId
@@ -489,11 +518,11 @@ module Tunewich
 
     def unbindGroup groupName
       if @eventBindingGroups.has_key? groupName
-        whisper("Unbinding: #{@eventBindingGroups[groupName].length} handlers in binding group '#{groupName}'", 3)
+        whisper("Unbinding: #{@eventBindingGroups[groupName].length} handlers in binding group '#{groupName}'", VERBOSITY['errors'])
         @eventBindingGroups[groupName].each { |handlerId| unbind handlerId }
         @eventBindingGroups.delete groupName
       else
-        whisper("Unbinding: No bindings assigned to group '#{groupName}'", 3)
+        whisper("Unbinding: No bindings assigned to group '#{groupName}'", VERBOSITY['errors'])
       end
     end
 
@@ -545,12 +574,12 @@ module Tunewich
 
     def enablePlaybackInfo
       @shouldShowPlaybackInfo = true
-      whisper("ENABLING realtime playback info", 3)
+      whisper("ENABLING realtime playback info", VERBOSITY['errors'])
     end
 
     def disablePlaybackInfo
       @shouldShowPlaybackInfo = false
-      whisper("DISABLING realtime playback info", 3)
+      whisper("DISABLING realtime playback info", VERBOSITY['errors'])
     end
 
     def putsRealtime message
@@ -562,12 +591,8 @@ module Tunewich
     end
 
     def whisper message, verbosity = 1
-      # 0: basically like puts, with the benefit of optional logging
-      # 1: verbose user output
-      # 2: very verbose user output
-      # 3: errors
-      # 4: debug
-      formattedMessage = "#{"-" * verbosity} #{message}"
+      # TODO: check verbosity before even composing message, to avoid runaway CPU usage in loops
+      formattedMessage = "#{message} (v:#{verbosity})"
       effectiveVerbosity = verbosity - @verbosityBoost
       if @configuredVerbosity >= effectiveVerbosity
         if @shouldShowPlaybackInfo
@@ -614,13 +639,13 @@ module Tunewich
       if ENV.key? 'TUNEWICH_DIR'
         setLibraryMediaPath ENV['TUNEWICH_DIR']
       else
-        whisper("Please add `export TUNEWICH_DIR=\"<path/to/your/music/directory>\"` to your ~/.profile or similar file.", 0)
+        whisper("Please add `export TUNEWICH_DIR=\"<path/to/your/music/directory>\"` to your ~/.profile or similar file.", VERBOSITY['default'])
       end
 
       if ENV.key? 'TUNEWICH_CMD_BEFORE_TRACK'
         @commandBeforePlayer = ENV['TUNEWICH_CMD_BEFORE_TRACK']
       else
-        whisper("No per-track pre-play command set.", 2)
+        whisper("No per-track pre-play command set.", VERBOSITY['very verbose'])
       end
 
       # assume volume is not logarithmic for player on Mac
@@ -631,9 +656,9 @@ module Tunewich
       # TODO: 1gG4Ve
       ratio = 1
       if not firstTrack.has_key? 'bpm'
-        whisper("The first track being compared doesn't have BPM set.", 2)
+        whisper("The first track being compared doesn't have BPM set.", VERBOSITY['very verbose'])
       elsif secondTrack.has_key? 'bpm'
-        whisper("The second track being compared doesn't have BPM set.", 2)
+        whisper("The second track being compared doesn't have BPM set.", VERBOSITY['very verbose'])
       else
         ratio = secondTrack['bpm'].to_f / firstTrack['bpm'].to_f
         if ratio >= 2.0
@@ -655,7 +680,10 @@ module Tunewich
     end
 
     def editNotes notes, emphasizeNoteIndex = nil
-      formattedNotes = getFormattedNoteList notes, emphasizeNoteIndex, "# ^ current"
+      formattedNotes = getFormattedNoteList notes, false, 8, emphasizeNoteIndex, "# ^ current"
+      formattedNotes << "" # empty line below list
+      formattedNotes << "# To create a loop, add (loop to \"TARGET\") at the end,"
+      formattedNotes << "# where TARGET is the name of another entry, or a time code."
       editedFormattedNotes = editListInVim formattedNotes
       editedNotes = editedFormattedNotes.map { |l|
         bits = l.match(/^\s*(skip)?\s*([0-9.:]+)\s+(.*?)( \(loop to "(.*)"\))?$/)
@@ -670,7 +698,7 @@ module Tunewich
         end
       }
       editedNotes.keep_if { |note| note }
-      whisper("from:\n#{JSON.pretty_generate(notes)}\nto:\n#{JSON.pretty_generate(editedNotes)}", 3)
+      whisper("from:\n#{JSON.pretty_generate(notes)}\nto:\n#{JSON.pretty_generate(editedNotes)}", VERBOSITY['errors'])
       editedNotes
     end
 
@@ -683,7 +711,7 @@ module Tunewich
     def getCommandInputParts(input, pattern = nil)
       pattern ||= DEFAULT_INTERACTIVE_INPUT_PATTERN
       matches = input.match(pattern)
-      whisper("input: '#{input}', matches: #{matches} (from pattern '#{pattern}", 3)
+      whisper("input: '#{input}', matches: #{matches} (from pattern '#{pattern}", VERBOSITY['errors'])
       matches
     end
 
@@ -715,7 +743,7 @@ module Tunewich
             putsRealtime "\n#{heading}\n================\n#{matchingTitlesAndIds.slice(0, 10).join("\n")}"
           end
         rescue Exception => e
-          whisper(e.message, 3)
+          whisper(e.message, VERBOSITY['errors'])
         end
 
         input
@@ -757,12 +785,12 @@ module Tunewich
       }
 
       noteCommandDefaults = {
-        'args' => ['go', 'new', 'edit', 'rm', 'skip']
+        'options' => ['go', 'new', 'edit', 'rm', 'skip']
       }
-      noteCommandDefaults['inputPattern'] = Regexp.new("^(?<option>#{noteCommandDefaults['args'].join('|')})?( *(?<offset>[+-][0-9.]+))?( *(?<query>.*?))?( +(?<remainder>\/.*))?$")
+      noteCommandDefaults['inputPattern'] = Regexp.new("^(?<option>#{noteCommandDefaults['options'].join('|')})?( *(?<offset>[+-][0-9.]+))?( *(?<query>.*?))?( +(?<remainder>\/.*))?$")
       generateNoteCommand = Proc.new { |noteType, description|
         {
-          'args' => noteCommandDefaults['args'],
+          'options' => noteCommandDefaults['options'],
           'inputPattern' => noteCommandDefaults['inputPattern'],
           'action' => Proc.new { |input, command|
             inputParts = getCommandInputParts(input, command['inputPattern'])
@@ -780,10 +808,10 @@ module Tunewich
               end
             end
 
-            whisper("note command - input: #{input}", 3)
-            whisper("inputParts: '#{inputParts}'", 3)
-            whisper("offset: '#{inputParts[:offset]}', option: '#{inputParts[:option]}', query: '#{inputParts[:query]}', remainder: '#{inputParts[:remainder]}'", 3)
-            whisper("chosenOption: '#{chosenOption}'", 3)
+            whisper("note command - input: #{input}", VERBOSITY['errors'])
+            whisper("inputParts: '#{inputParts}'", VERBOSITY['errors'])
+            whisper("offset: '#{inputParts[:offset]}', option: '#{inputParts[:option]}', query: '#{inputParts[:query]}', remainder: '#{inputParts[:remainder]}'", VERBOSITY['errors'])
+            whisper("chosenOption: '#{chosenOption}'", VERBOSITY['errors'])
 
             loadLibrary
             @currentTrack = matchExistingLibraryTrack @currentTrack
@@ -793,14 +821,14 @@ module Tunewich
                 if inputParts[:query] && inputParts[:query].length > 0
                   noteIndex = getNoteIndexByQuery(@currentTrack[noteType], inputParts[:query])
                 else
-                  putsRealtime getFormattedNoteList(@currentTrack[noteType], @currentNoteIndex[noteType], "# ^ current").join("\n")
+                  putsRealtime getFormattedNoteList(@currentTrack[noteType], true, 0, @currentNoteIndex[noteType], "# ^ current").join("\n")
                 end
               else
                 putsRealtime "No #{noteType} on the current track."
               end
 
               if noteIndex && noteIndex >= 0 && noteIndex < @currentTrack[noteType].length
-                whisper("Done with #{noteType} selection. Resulting #{noteType} index: #{noteIndex}", 3)
+                whisper("Done with #{noteType} selection. Resulting #{noteType} index: #{noteIndex}", VERBOSITY['errors'])
                 note = @currentTrack[noteType][noteIndex]
                 seekSeconds = getSecondsFromDurationString note['time']
                 offsetSeconds = inputParts[:offset].to_f if inputParts[:offset]
@@ -820,7 +848,7 @@ module Tunewich
                   writeLibraryToFile
                 end
               else
-                whisper("No current track / current time; can't tell which #{noteType} to remove.", 0)
+                whisper("No current track / current time; can't tell which #{noteType} to remove.", VERBOSITY['default'])
               end
             end
 
@@ -833,7 +861,7 @@ module Tunewich
                   seekToNextPlayableNoteOrSkip @currentTrack[noteType], @currentNoteIndex[noteType]
                 end
               else
-                whisper("No current track / current time; can't tell which #{noteType} to skip.", 0)
+                whisper("No current track / current time; can't tell which #{noteType} to skip.", VERBOSITY['default'])
               end
             end
 
@@ -863,17 +891,13 @@ module Tunewich
                 end
               end
               writeLibraryToFile
-              whisper("#{noteType} changes written to library file", 3)
+              whisper("#{noteType} changes written to library file", VERBOSITY['errors'])
             end
 
             {:chainedInput => inputParts[:remainder]}
           },
           'tabComplete' => Proc.new { |input, command|
             inputParts = getCommandInputParts(input, command['inputPattern'])
-            whisper("noteType: '#{noteType}'", 3)
-            whisper("pattern: '#{command['inputPattern']}'", 3)
-            whisper("inputParts: #{inputParts}", 3)
-            whisper("offset: '#{inputParts[:offset]}', option: '#{inputParts[:option]}', query: '#{inputParts[:query]}', remainder: '#{inputParts[:remainder]}'", 3)
 
             if @currentTrack.has_key?(noteType)
               if inputParts[:query] && inputParts[:query].length > 0
@@ -887,7 +911,7 @@ module Tunewich
                 end
               else
                 # TODO 1gzoGh: it'd be nice to put in a space if inputParts[:offset] is given
-                putsRealtime getFormattedNoteList(@currentTrack[noteType], @currentNoteIndex[noteType], "# ^ current").join("\n")
+                putsRealtime getFormattedNoteList(@currentTrack[noteType], true, 0, @currentNoteIndex[noteType], "# ^ current").join("\n")
               end
             end
 
@@ -899,7 +923,7 @@ module Tunewich
       generateVisualCommand = Proc.new { |property|
         {
           'description' => "#{property.upcase} [DURATION] - Blend to #{property}",
-          'args' => ['out', 'in'],
+          'options' => ['out', 'in'],
           'showStatus' => Proc.new { |input, command|
             putsRealtime "#{property}: #{@currentVisualEffects[property]}"
           },
@@ -914,7 +938,7 @@ module Tunewich
                 targetValue = 0 # normal Value
               else
                 targetValue = inputParts[:target].to_f
-                whisper("turning '#{inputParts[:target]}' to  '#{targetValue}'", 3)
+                whisper("turning '#{inputParts[:target]}' to  '#{targetValue}'", VERBOSITY['errors'])
               end
             end
 
@@ -929,7 +953,7 @@ module Tunewich
                 when PLAYER_APP_DEFAULT
                   sendMplayerCommand "#{property} #{x} 1"
                 when PLAYER_APP_TERMUX
-                  whisper('no support for visual effects with termux-media-player', 5)
+                  whisper('no support for visual effects with termux-media-player', VERBOSITY['debug'])
                 end
                 @currentVisualEffects[property] = x
               }
@@ -963,7 +987,7 @@ module Tunewich
           },
           'wait' => {
             'description' => '[EVENT | random [RANGE [ + MINIMUM]]] Wait for an event, or some number of seconds, to execute following chained commands. Random defaults are RANGE: 25, MINIMUM: 5. Events: chapter_change, play_start, play_end, fade_start, fade_end, speed_ramp_start, speed_ramp_end, download_end. You may use fuzzy substrings of the event names, e.g. "ch" will match "chapter_change", and "ple" will match "play_end". Yout can also wait a random',
-            'args' => [
+            'options' => [
               'chapter_change',
               'play_start',
               'play_end',
@@ -998,17 +1022,17 @@ module Tunewich
                   end
 
                   if waitTime
-                    whisper("Waiting for #{waitTime} seconds", 2)
+                    whisper("Waiting for #{waitTime} seconds", VERBOSITY['very verbose'])
                     waitEvent = "timed_wait_in_player_#{@currentPlayerIndex}"
                     Thread.new {
                       sleep waitTime
-                      whisper("triggering #{waitEvent}", 3)
+                      whisper("triggering #{waitEvent}", VERBOSITY['errors'])
                       trigger waitEvent
                     }
                   else
-                    waitEvent = firstFuzzyMatchValue waitInput.strip.downcase, command['args']
+                    waitEvent = firstFuzzyMatchValue waitInput.strip.downcase, command['options']
                     if !waitEvent
-                      putsRealtime "Unknown event '#{waitInput}'. Not waiting. Available events: #{command['args'].join ', '}"
+                      putsRealtime "Unknown event '#{waitInput}'. Not waiting. Available events: #{command['options'].join ', '}"
                     end
                   end
                 else
@@ -1028,7 +1052,7 @@ module Tunewich
           },
           'macro' => {
             'description' => "[save] NAME [COMMANDS] - Save or run some command, or chain of commands. With the 'save' keyword, this command cannot be chained into any other commands, as it will take all following commands as part of the macro.",
-            'args' => ['save'],
+            'options' => ['save'],
             'inputPattern' => /^((?<save>save) )?(?<name>\w*)(?<guff>.*?)( +(?<remainder>\/.*))?$/,
             'action' => Proc.new { |input, command|
               output = {}
@@ -1135,12 +1159,17 @@ module Tunewich
             'showStatus' => Proc.new { |command|
               putsRealtime "BPM: #{@currentTrack.has_key?('bpm') ? @currentTrack['bpm'] : "none"}"
             },
+            'options' => ['clear'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
               commitBPM = false
 
               if inputParts[:query].length > 0
-                bpm = inputParts[:query].to_f
+                if inputParts[:query] == 'clear'
+                  bpm = 0 # i.e. remove bpm record
+                else
+                  bpm = inputParts[:query].to_f
+                end
                 commitBPM = true
               else
                 bpm = getUserInputBPM
@@ -1178,7 +1207,7 @@ module Tunewich
                 command['showStatus'].call
               else
                 tagsToAdd = inputParts[:query].split(/[, ]+/)
-                whisper("all tags given: #{tagsToAdd}", 2)
+                whisper("all tags given: #{tagsToAdd}", VERBOSITY['very verbose'])
                 tagsToRemove = []
                 tagsToRemove.replace(tagsToAdd).keep_if {|name| name.match(/^-/)}
                 tagsToRemove.map! {|name| name.sub(/^-/, '')}
@@ -1221,7 +1250,7 @@ module Tunewich
           },
           'list' => {
             'description' => "Load, save, update, or remove a playlist.",
-            'args' => ['save', 'rm', 'update'],
+            'options' => ['save', 'rm', 'update'],
             'inputOptions' => Proc.new { @library['playlists'].keys },
             'inputPattern' => /^((?<action>(save|rm|update)) *)?(?<query>.*?)?(?<remainder> \/.*)?$/,
             'action' => Proc.new { |input, command|
@@ -1286,7 +1315,7 @@ module Tunewich
           },
           'tracks' => {
             'description' => 'Edit playing tracklist in Vim.',
-            'args' => ['clear'],
+            'options' => ['clear'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
 
@@ -1315,7 +1344,7 @@ module Tunewich
           },
           'more' => {
             'description' => "Play all tracks linked from this media's source page (e.g. recommended videos on YouTube.com).",
-            # 'args' => ['creator'], # TODO: enable jumping off from other related pages/lists
+            # 'options' => ['creator'], # TODO: enable jumping off from other related pages/lists
             'action' => Proc.new { |input, command|
               if @currentTrack['type'] == 'youtube'
                 disablePlaybackInfo
@@ -1336,7 +1365,7 @@ module Tunewich
                 @trackFilters = nil
                 useTracks tracks, true # and set track index to the first
                 if @shuffle
-                  whisper("Disabling shuffle to play new tracks in added order.", 1)
+                  whisper("Disabling shuffle to play new tracks in added order.", VERBOSITY['verbose'])
                   @shuffle = false
                 end
               end
@@ -1345,7 +1374,7 @@ module Tunewich
           },
           'info' => {
             'description' => "Show track info. Track is: without input = currently playing track; with '>' = the track that will play next; with numeric input = the track at that position in the track list; any other input = the track with the title that best matches that input",
-            'args' => ['all', 'update'],
+            'options' => ['all', 'update'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input, /^((?<args>(all|update| )+)( +|$))?(?<query>.*?)( (?<remainder>\/.*))?$/)
               tracks = []
@@ -1361,7 +1390,7 @@ module Tunewich
                     tracks << @tracks[trackIndex]
                     trackIndexes[@tracks[trackIndex]['id']] = trackIndex
                   else
-                    whisper("TODO: search all tracks for term, and confirm with user to use it", 1)
+                    whisper("TODO: search all tracks for term, and confirm with user to use it", VERBOSITY['verbose'])
                   end
                 end
               else
@@ -1413,7 +1442,7 @@ module Tunewich
           },
           'net' => {
             'description' => 'Toggle network enabled.',
-            'args' => ['on', 'off'],
+            'options' => ['on', 'off'],
             'showStatus' => Proc.new {
               putsRealtime "network: #{@networkEnabled ? 'on' : 'off'}"
             },
@@ -1429,7 +1458,7 @@ module Tunewich
           },
           'download' => {
             'description' => "OPTIONS\nget: show the command, or the path to the file if already downloaded.\nauto: download any file upon playing.\nWith no options, downloads the current track for faster play in the future.",
-            'args' => ['get', 'auto', 'all'],
+            'options' => ['get', 'auto', 'all'],
             'showStatus' => Proc.new {
               putsRealtime "Auto download: #{@autoDownload ? 'on' : 'off'}"
             },
@@ -1499,7 +1528,7 @@ module Tunewich
           },
           'transcode' => {
             'description' => "[FORMAT] [FFMPEG_OPTIONS]  Transcode downloaded file to another format (default Ogg/Vorbis). This is the same as doing '/format FORMAT /download'.",
-            'args' => ['vorbis'],
+            'options' => ['vorbis'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input, /^(?<format>\w+)?( (?<options>[^\/].*?))?( *(?<remainder>\/.*))?$/)
 
@@ -1554,14 +1583,14 @@ module Tunewich
           },
           'add' => {
             'description' => '[all] <URL>[,<URL>,...] [<TAG>[,<TAG>,...]] - Add a new track to the play queue. URLs: comma-separated URLs or YouTube IDs (Some URLs will add multiple tracks, like a bandcamp album (or TODO: YouTube playliist); tags: comma-separated tags to add to the tracks.',
-            'args' => ['all', 'list'],
+            'options' => ['all', 'list'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input, /^((?<option>(all|list)) *)?(?<query>[^ ]*?)(?<tags> .*?)?(?<remainder> \/.*)?$/)
               urls = inputParts[:query].split ',' if inputParts[:query]
               tags = inputParts[:tags].split ',' if inputParts[:tags]
               getAllVideos = (inputParts[:option] && inputParts[:option].length > 0)
               saveAsList = (getAllVideos && inputParts[:option] == 'list')
-              whisper("urls: #{urls}\ntags: #{tags}", 3)
+              whisper("urls: #{urls}\ntags: #{tags}", VERBOSITY['errors'])
               if urls && urls.length > 0
                 tracks = createTracksFromURLs urls, getAllVideos
                 if saveAsList
@@ -1634,7 +1663,7 @@ module Tunewich
                 end
               else
                 putsRealtime "No feeds to choose from. Add one with /add."
-                whisper("@library.keys: #{@library.keys}", 3)
+                whisper("@library.keys: #{@library.keys}", VERBOSITY['errors'])
               end
 
               {:chainedInput => inputParts[:remainder]}
@@ -1652,7 +1681,7 @@ module Tunewich
                 putsRealtime "No filters"
               end
             },
-            'args' => ['clear'],
+            'options' => ['clear'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
               if inputParts[:query] && inputParts[:query].length > 0
@@ -1709,14 +1738,15 @@ module Tunewich
             }
           },
           'verbose' => {
-            'description' => 'Set level of verbosity: -1 (silent) to 5 (extra debugging).',
+            'description' => "Set level of verbosity: #{VERBOSITY.keys.join(', ')}.",
             'showStatus' => Proc.new {
               putsRealtime "verbosity set to #{@configuredVerbosity}"
             },
+            'options' => VERBOSITY.keys,
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
               if inputParts[:query] && inputParts[:query].length > 0
-                @configuredVerbosity = inputParts[:query].to_i
+                setFuzzyVerbosity(inputParts[:query])
               end
               command['showStatus'].call
 
@@ -1728,7 +1758,7 @@ module Tunewich
             'showStatus' => Proc.new {
               putsRealtime "preferred file format: #{@preferredFileFormat}"
             },
-            'args' => ['get', 'm4a', 'mp4', 'bestaudio', 'bestvideo', '[height=720]'],
+            'options' => ['get', 'm4a', 'mp4', 'bestaudio', 'bestvideo', '[height=720]'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
               if inputParts[:query].length > 0
@@ -1796,7 +1826,7 @@ module Tunewich
           },
           'rm' => {
             'description' => 'Remove selected tracks from the library. You\'ll be prompted to edit the list before they are deleted.',
-            'args' => ['this', 'current', 'all'],
+            'options' => ['this', 'current', 'all'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
 
@@ -1831,7 +1861,7 @@ module Tunewich
           },
           'rmfile' => {
             'description' => 'Remove files: (options: this (default), unknown (files not referenced by the library), current (files for all selected tracks), all (what it sounds like), You\'ll be prompted with a list to edit; clear the list if you want to cancel the operation.',
-            'args' => ['this', 'unknown', 'current', 'all'],
+            'options' => ['this', 'unknown', 'current', 'all'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
               setDescriptor = inputParts[:query] && inputParts[:query].length > 0 ? inputParts[:query] : 'this'
@@ -1876,7 +1906,7 @@ module Tunewich
                   end
                 }
               else
-                putsRealtime "\nUnrecognized option '#{setDescriptor}'. Use one of #{command['args'].join(", ")}"
+                putsRealtime "\nUnrecognized option '#{setDescriptor}'. Use one of #{command['options'].join(", ")}"
               end
 
               filesToDelete = editListInVim filesToDelete, "remove any files you don't want to delete" if filesToDelete.length > 0
@@ -2028,7 +2058,7 @@ module Tunewich
           },
           'loop' => {
             'description' => '/loop [COUNT]: Set the loop limit, or toggle looping off/on, or toggle only inner loops, or \'reset\' the loop counters.',
-            'args' => ['off', 'on', 'inner', 'break', 'reset'],
+            'options' => ['off', 'on', 'inner', 'all', 'break', 'reset'],
             'showStatus' => Proc.new {
               statusMessage = "Looping: #{@loop ? 'on' : 'off'}"
               statusExtras = []
@@ -2047,19 +2077,28 @@ module Tunewich
             },
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
-              if inputParts[:query].match(/^[0-9]+$/)
-                loopLimit = inputParts[:query].to_i
-                @loop = true
-                @loopLimit = loopLimit
-              elsif inputParts[:query] == 'reset'
-                @loopHistory = {}
-                @breakLoop = false
-              elsif inputParts[:query] == 'inner'
-                @innerLoopsOnly = getToggledValueByInput.call(@innerLoopsOnly)
-              elsif inputParts[:query] == 'break'
-                @breakLoop = getToggledValueByInput.call(@breakLoop)
+              if inputParts[:query].length > 0
+                inputParts[:query].split(/\s+/).each { |arg|
+                  case arg
+                  when 'reset'
+                    @loopHistory = {}
+                    @breakLoop = false
+                  when 'inner'
+                    @innerLoopsOnly = true
+                  when 'all'
+                    @innerLoopsOnly = false
+                  when 'break'
+                    @breakLoop = getToggledValueByInput.call(@breakLoop)
+                  else
+                    if arg.match(/^[0-9]+$/)
+                      loopLimit = arg.to_i
+                      @loop = true
+                      @loopLimit = loopLimit
+                    end
+                  end
+                }
               else
-                @loop = getToggledValueByInput.call(@loop, inputParts[:query])
+                @loop = getToggledValueByInput.call(@loop, arg)
               end
 
               command['showStatus'].call
@@ -2069,7 +2108,7 @@ module Tunewich
           },
           'shuffle' => {
             'description' => 'Toggle shuffle.',
-            'args' => ['on', 'off'],
+            'options' => ['on', 'off'],
             'showStatus' => Proc.new {
               putsRealtime "shuffle: #{@shuffle ? 'on' : 'off'}"
             },
@@ -2083,7 +2122,7 @@ module Tunewich
           },
           'eq' => {
             'description' => 'Set EQ, or save a new preset (/eq [PRESET | save NEW_NAME]). If no preset is given, a list of presets is shown, along with an interactive EQ display, which can by changed using the arrow keys.',
-            'args' => ['save'],
+            'options' => ['save'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
               loadLibrary
@@ -2208,18 +2247,18 @@ module Tunewich
           'speed' => generateMacroCommand.call('/ramp INPUT 0', 'SPEED - Set the playback speed.'),
           'fade' => {
             'description' => '/fade VOLUME [DURATION]; VOLUME can be "out" or "in", which will fade from or to the last explicit volume set.',
-            'args' => ['out', 'in'],
+            'options' => ['out', 'in'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts input, /^(?<target>out|in|[0-9.]+x?)( (?<duration>[0-9.]+))?[^\/]*(?<remainder>.*)$/
               output = {:chainedInput => inputParts[:remainder]}
-              whisper("fade command", 4)
+              whisper("fade command", VERBOSITY['debug'])
               fadeDuration = inputParts[:duration] && inputParts[:duration].length > 0 ? inputParts[:duration].to_f : 2.0
               targetFadeVolume = inputParts[:target]
               if output[:chainedInput] && output[:chainedInput].length > 0
-                whisper("fade in main thread", 4)
+                whisper("fade in main thread", VERBOSITY['debug'])
                 fadeVolume targetFadeVolume, fadeDuration, @currentPlayerIndex
               else
-                whisper("fade in separate thread", 4)
+                whisper("fade in separate thread", VERBOSITY['debug'])
                 Thread.new {
                   fadeVolume targetFadeVolume, fadeDuration, @currentPlayerIndex
                 }
@@ -2236,7 +2275,7 @@ module Tunewich
               if inputParts
                 output = {:chainedInput => inputParts[:remainder]}
                 rampDuration = inputParts[:duration] && inputParts[:duration].length > 0 ? inputParts[:duration].to_f : 0.3
-                whisper('without -af scaletempo[=speed=tempo], min and max limited by the system (~1/8 and ~4.5 on my Mac Mini)', 1)
+                whisper('without -af scaletempo[=speed=tempo], min and max limited by the system (~1/8 and ~4.5 on my Mac Mini)', VERBOSITY['verbose'])
                 targetRampSpeed = inputParts[:target]
                 if inputParts[:bpm] == 'bpm'
                   targetRampBPM = getUserInputBPM
@@ -2249,12 +2288,12 @@ module Tunewich
                 if targetRampSpeed
                   targetRampSpeed = determineRelativeSpeed targetRampSpeed, @currentTrack, true
                   if output[:chainedInput] && output[:chainedInput].length > 0
-                    whisper("ramping speed in the main thread", 4)
+                    whisper("ramping speed in the main thread", VERBOSITY['debug'])
                     rampSpeed targetRampSpeed, rampDuration, @currentPlayerIndex
-                    whisper("Waiting 1 second for buffered sound to play", 2)
+                    whisper("Waiting 1 second for buffered sound to play", VERBOSITY['very verbose'])
                     sleep 1.0
                   else
-                    whisper("ramping speed in a separate thread", 4)
+                    whisper("ramping speed in a separate thread", VERBOSITY['debug'])
                     Thread.new {
                       rampSpeed targetRampSpeed, rampDuration, @currentPlayerIndex
                     }
@@ -2298,7 +2337,7 @@ module Tunewich
           },
           'seek' => {
             'description' => 'Seek to a time code. Prefix with "+" or "-" to seek relative to current play position. use "/seek mark" to seek to a time marked with the "/mark" command."',
-            'args' => ['mark'],
+            'options' => ['mark'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
 
@@ -2322,7 +2361,7 @@ module Tunewich
                 :chainedInput => inputParts[:remainder]
               }
               if inputParts[:query] && inputParts[:query].length > 0
-                whisper("Running player action (#{input})", 3)
+                whisper("Running player action (#{input})", VERBOSITY['errors'])
                 output[:action] = inputParts[:query]
               end
 
@@ -2400,7 +2439,7 @@ module Tunewich
         timeMessage << "      time : #{getDurationStringFromSeconds @currentPlayerTime}" if @currentPlayerTime
         if !alreadyHas[:duration] || getSecondsFromDurationString(track['duration']) == 0
           durationResponseFromPlayer = getMplayerProperty('get_time_length', /^(ANS_LENGTH=)(.*?)(\?)?$/, 0.1)
-          whisper("Got duration from player: '#{durationResponseFromPlayer}'", 2)
+          whisper("Got duration from player: '#{durationResponseFromPlayer}'", VERBOSITY['very verbose'])
           if durationResponseFromPlayer
             track['duration'] = getDurationStringFromSeconds durationResponseFromPlayer.to_f
           end
@@ -2438,15 +2477,16 @@ module Tunewich
       end
       outputMessageLines << "      link : #{info['link']}" if info
 
+      outputMessageLines << "      mark : #{track['mark']}" if track.has_key?('mark')
       outputMessageLines << "     index : #{trackIndex + 1}/#{@tracks.length}" if trackIndex
       outputMessageLines << "    volume : #{@volume}/100" if track == @currentTrack
 
       if @configuredVerbosity > 1 && tagNames.length > 0
-        whisper("about to loop through tagNames", 4)
+        whisper("about to loop through tagNames", VERBOSITY['debug'])
         tagNames.each { |tagName|
-          whisper("digging up ancestors of #{tagName}", 4)
+          whisper("digging up ancestors of #{tagName}", VERBOSITY['debug'])
           ancestorTags = getAncestorTagNames tagName
-          whisper("ancestors of tag '#{tagName}': #{ancestorTags}", 1) if ancestorTags.length > 0
+          whisper("ancestors of tag '#{tagName}': #{ancestorTags}", VERBOSITY['verbose']) if ancestorTags.length > 0
         }
       end
 
@@ -2462,12 +2502,12 @@ module Tunewich
     def getNoteIndexAtTime notes, seconds
       noteIndex = -1 # @confirm: -1 instead of nil, so that adding 1 gets you a valid next index (the first one)
       if !seconds
-        whisper("getNoteIndexAtTime: nil seconds", 3)
+        whisper("getNoteIndexAtTime: nil seconds", VERBOSITY['errors'])
       else
         notes.each_with_index { |note, index|
           noteSeconds = getSecondsFromDurationString note['time']
           if !noteSeconds
-            whisper("unable to get seconds from note time '#{note['time']}'", 3)
+            whisper("unable to get seconds from note time '#{note['time']}'", VERBOSITY['errors'])
           elsif noteSeconds <= seconds
             noteIndex = index
           else
@@ -2505,7 +2545,7 @@ module Tunewich
           noteIndex = firstFuzzyMatchIndex input, chapterList
         end
       end
-      whisper("Choosing note #{noteIndex}", 2)
+      whisper("Choosing note #{noteIndex}", VERBOSITY['very verbose'])
 
       noteIndex
     end
@@ -2564,7 +2604,7 @@ module Tunewich
             putsRealtime "Download the file to be able to seek backwards."
           end
         else
-          whisper("Hacky seek for #{@playerApplication}: mark time and reload player.", 1)
+          whisper("Hacky seek for #{@playerApplication}: mark time and reload player.", VERBOSITY['verbose'])
           addMarkToTrack @currentTrack, seekTimeInSeconds
           setNextTrackIndex(@currentTrack)
           exitPlayerCommand
@@ -2622,7 +2662,7 @@ module Tunewich
     end
 
     def getMultipliedVolume newVolume
-      whisper("@volumeMultipliers: #{@volumeMultipliers}", 4)
+      whisper("@volumeMultipliers: #{@volumeMultipliers}", VERBOSITY['debug'])
       @volumeMultipliers.each { |key, m|
         newVolume *= m
       }
@@ -2648,13 +2688,13 @@ module Tunewich
         sendMplayerCommand "volume #{@actualVolume} 1", playerIndex
       when PLAYER_APP_TERMUX
         volumeCommand = "termux-volume music #{@actualVolume.round}"
-        whisper("volumeCommand", 5)
+        whisper("volumeCommand", VERBOSITY['debug'])
         spawn(volumeCommand) # async
       end
     end
 
     def tween a, b, duration, onStep, interval = nil, curve = 'linear'
-      whisper("tween from #{a} to #{b}", 3)
+      whisper("tween from #{a} to #{b}", VERBOSITY['errors'])
       interval ||= @playerApplication == PLAYER_APP_DEFAULT ? 0.02 : 0.34
       stepCount = (duration.to_f / interval).to_i
       transitionValue = a
@@ -2691,27 +2731,27 @@ module Tunewich
     def fadeVolume targetFadeVolume, duration, playerIndex
       trigger 'fade_start'
       @isFadingVolume = true
-      whisper("fadeVolume(targetFadeVolume:#{targetFadeVolume}, duration:#{duration}, playerIndex:#{playerIndex})", 4)
+      whisper("fadeVolume(targetFadeVolume:#{targetFadeVolume}, duration:#{duration}, playerIndex:#{playerIndex})", VERBOSITY['debug'])
       # @volumeMultipliers['fade'] ||= 1 # TODO 1gzQHH: I haven't worked this out yet
       transitionVolume = @currentVolume
       if targetFadeVolume == 'out'
-        whisper("fading out volume", 4)
+        whisper("fading out volume", VERBOSITY['debug'])
         targetFadeVolume = 0
       elsif targetFadeVolume == 'in'
         targetFadeVolume = @volume
-        whisper("fading in volume (to #{targetFadeVolume})", 4)
+        whisper("fading in volume (to #{targetFadeVolume})", VERBOSITY['debug'])
       elsif targetFadeVolume.match(/x$/)
         multiplier = targetFadeVolume.to_f
         targetFadeVolume = transitionVolume * multiplier
         @volume = targetFadeVolume
-        whisper("fading volume #{multiplier}x (to #{targetFadeVolume})", 4)
+        whisper("fading volume #{multiplier}x (to #{targetFadeVolume})", VERBOSITY['debug'])
       else
         targetFadeVolume = targetFadeVolume.to_f
         @volume = targetFadeVolume
-        whisper("fading to volume #{targetFadeVolume}", 4)
+        whisper("fading to volume #{targetFadeVolume}", VERBOSITY['debug'])
       end
       targetFadeVolume = [[targetFadeVolume, 0].max, 100].min
-      whisper("fading from #{transitionVolume} to #{targetFadeVolume} in #{duration} seconds (playerIndex: #{playerIndex})", 4)
+      whisper("fading from #{transitionVolume} to #{targetFadeVolume} in #{duration} seconds (playerIndex: #{playerIndex})", VERBOSITY['debug'])
       curve = @isVolumeAlreadyLogarithmic ? 'linear' : 'logarithmic'
       tween(
         transitionVolume,
@@ -2731,7 +2771,7 @@ module Tunewich
 
     def rampSpeed targetRampSpeed, duration, playerIndex
       isValidInput = false
-      whisper("ramp speed to #{targetRampSpeed} over #{duration} seconds", 2)
+      whisper("ramp speed to #{targetRampSpeed} over #{duration} seconds", VERBOSITY['very verbose'])
       if targetRampSpeed
         transitionSpeed = @currentSpeed
         if targetRampSpeed == 'out'
@@ -2783,10 +2823,10 @@ module Tunewich
       end
 
       if verifiedTagName
-        whisper("found tag '#{verifiedTagName}' by #{meansToFindTag} '#{query}'", 2)
+        whisper("found tag '#{verifiedTagName}' by #{meansToFindTag} '#{query}'", VERBOSITY['very verbose'])
         return @library['tags'][verifiedTagName]
       else
-        whisper("no tag found by query '#{query}'", 2)
+        whisper("no tag found by query '#{query}'", VERBOSITY['very verbose'])
         return false
       end
     end
@@ -2797,13 +2837,13 @@ module Tunewich
       # 'composer:vangelis' will create/add to the tag of that name, and assign
       # that tags parents to be 'composer' and 'vangelis', creating those tags
       # as necessary).
-      whisper("adding tags (input): #{tagNames}", 3)
+      whisper("adding tags (input): #{tagNames}", VERBOSITY['errors'])
       tagNames.each { |tagName|
-        whisper("about to add to tag '#{tagName}'", 4)
+        whisper("about to add to tag '#{tagName}'", VERBOSITY['debug'])
         matchingTag = findTag(tagName) || createTag(tagName)
-        whisper("matchingTag: #{matchingTag}", 4)
+        whisper("matchingTag: #{matchingTag}", VERBOSITY['debug'])
         matchingTag['tracks'] ||= []
-        whisper("adding track to tag #{tagName}", 4)
+        whisper("adding track to tag #{tagName}", VERBOSITY['debug'])
         matchingTag['tracks'] << track['id']
 
         matchingTag['score'] ||= {}
@@ -2815,7 +2855,7 @@ module Tunewich
     end
 
     def removeTagsFromTrack(track, tagNames)
-      whisper("removing tags: #{tagNames}", 3)
+      whisper("removing tags: #{tagNames}", VERBOSITY['errors'])
       tagNames.each { |tagName|
         matchingTag = findTag tagName
         if matchingTag && matchingTag['tracks']
@@ -2844,7 +2884,7 @@ module Tunewich
       baseTag = findTag baseTagName
 
       if baseTag && tagNames.length > 0
-        whisper("merging #{tagNames.join ', '} into #{baseTagName}", 3)
+        whisper("merging #{tagNames.join ', '} into #{baseTagName}", VERBOSITY['errors'])
         tagNames.each { |collapsingTagName|
           collapsingTag = findTag collapsingTagName
           if collapsingTag && collapsingTag != baseTag
@@ -2868,7 +2908,7 @@ module Tunewich
     end
 
     def createTag(tagName)
-      whisper("creating tag '#{tagName}'", 3)
+      whisper("creating tag '#{tagName}'", VERBOSITY['errors'])
       @library['tags'][tagName] = {}
       @library['tags'][tagName]
     end
@@ -2921,9 +2961,9 @@ module Tunewich
 
       bindingGroupName = 'play'
 
-      whisper("playing track: #{track}", 3)
+      whisper("playing track: #{track}", VERBOSITY['errors'])
       @currentPlayerIndex = 1 - @currentPlayerIndex
-      whisper("@currentPlayerIndex: #{@currentPlayerIndex}", 4)
+      whisper("@currentPlayerIndex: #{@currentPlayerIndex}", VERBOSITY['debug'])
       response = {
         :exit => true,
         :playTime => 0
@@ -2989,7 +3029,7 @@ module Tunewich
       end
 
       if @loop && track['loop'].kind_of?(Array)
-        whisper("This track has has an A/B loop (#{track['loop'].join(" - ")}. This will deprecated in favor of looping notes; for now, use looping chapters instead.", 1)
+        whisper("This track has has an A/B loop (#{track['loop'].join(" - ")}. This will deprecated in favor of looping notes; for now, use looping chapters instead.", VERBOSITY['verbose'])
       end
 
       markTime = getSecondsFromDurationString(track['mark']) if track.has_key?('mark')
@@ -2999,7 +3039,7 @@ module Tunewich
         @chapterQuery = nil
         chapterTimecode = track['chapters'][chapterIndex]['time']
         @currentPlayerTime = getSecondsFromDurationString(chapterTimecode) if chapterIndex
-        whisper("chapter start time '#{chapterTimecode} (#{@currentPlayerTime} seconds}", 3)
+        whisper("chapter start time '#{chapterTimecode} (#{@currentPlayerTime} seconds}", VERBOSITY['errors'])
       elsif markTime && isAbleToSeek(markTime, track)
         puts("Starting from mark at #{track['mark']}.", 0)
         @currentPlayerTime = markTime
@@ -3011,7 +3051,7 @@ module Tunewich
         writeLibraryToFile
       elsif firstPlayableChapterIndex && firstPlayableChapterIndex > 0
         @currentPlayerTime = getSecondsFromDurationString track['chapters'][firstPlayableChapterIndex]['time']
-        whisper("Skipping marked chapters at the beginning.", 2)
+        whisper("Skipping marked chapters at the beginning.", VERBOSITY['very verbose'])
       end
 
       if @currentPlayerTime > 0
@@ -3024,23 +3064,23 @@ module Tunewich
         downloadOptions = {}
         if streaming
           if @youtubeDLTrackTypes.include? track['type']
-            whisper("streaming youtube track", 2)
+            whisper("streaming youtube track", VERBOSITY['very verbose'])
             streamName = 'youtube-stream'
             deleteStream streamName
             downloadOptions['streamPath'] = mediaFilePath = makeStream streamName
             if not downloadTrack(track, downloadOptions)
-              whisper("could not download/stream track", 1)
+              whisper("could not download/stream track", VERBOSITY['verbose'])
               mediaFilePath = nil
             end
           else
-            whisper("streaming other type of track (#{track['type']})", 2)
+            whisper("streaming other type of track (#{track['type']})", VERBOSITY['very verbose'])
             streamName = 'mp3-stream'
             deleteStream streamName
             # mplayer 4.2.1 on Mac OS Sierra unable to stream HTTPS
             if /^https:\/\//.match track['src']
               downloadOptions['streamPath'] = mediaFilePath = makeStream streamName
               if not downloadTrack(track, downloadOptions)
-                whisper("could not download/stream track", 1)
+                whisper("could not download/stream track", VERBOSITY['verbose'])
                 mediaFilePath = nil
               end
             else
@@ -3052,7 +3092,7 @@ module Tunewich
           if downloadTrack(track, downloadOptions)
             mediaFilePath = firstTrackFile track
           else
-            whisper("could not download/stream track", 1)
+            whisper("could not download/stream track", VERBOSITY['verbose'])
             mediaFilePath = nil
           end
         end
@@ -3104,9 +3144,9 @@ module Tunewich
 
       @inputThread.kill if @inputThread
       @inputThread = Thread.new {
-        whisper("commandPrompt start (opening input thread)", 4)
+        whisper("commandPrompt start (opening input thread)", VERBOSITY['debug'])
         commandPrompt '', interactiveCommands, playerAction
-        whisper("commandPrompt end", 4)
+        whisper("commandPrompt end", VERBOSITY['debug'])
       }
       if playerAction && @playerTemporaryInteractiveCommands.length > 0
         playerAction.call @playerTemporaryInteractiveCommands.join("\n")
@@ -3149,9 +3189,9 @@ module Tunewich
               optionKey = getOptionKey.call(option)
               if optionKey
                 if mpvOptionMutations.has_key?(optionKey)
-                  whisper("Changing mplayer '#{option}'...", 4)
+                  whisper("Changing mplayer '#{option}'...", VERBOSITY['debug'])
                   mpvOptionMutations[optionKey].call(option, optionKey)
-                  whisper("...to #{option}'", 4)
+                  whisper("...to #{option}'", VERBOSITY['debug'])
                   shouldKeep = true
                 elsif mpvSupportedOptions.include?(optionKey)
                   shouldKeep = true
@@ -3186,14 +3226,14 @@ module Tunewich
         if playerCommandParts.length > 0
           playerCommandParts << " > #{playerStdoutFile}" if playerStdoutFile
           playerCommand = playerCommandParts.join ' '
-          whisper(playerCommand, 2)
+          whisper(playerCommand, VERBOSITY['very verbose'])
           playerStatus = `#{playerCommand} 2> /dev/null`
-          whisper("Player command finished, status #{playerStatus}", 3)
+          whisper("Player command finished, status #{playerStatus}", VERBOSITY['errors'])
           playerStatus = 0 if forceSunnyDisposition
           afterPlayer.call if afterPlayer
         else
           playerStatus = nil
-          whisper("No player command, or aborted: '#{@playerApplication}", 3)
+          whisper("No player command, or aborted: '#{@playerApplication}", VERBOSITY['errors'])
         end
 
         @inputThread.kill if @inputThread
@@ -3236,7 +3276,7 @@ module Tunewich
               (@loopLimit == 0 || @loopHistory[loopTarget] < @loopLimit)
             )
         )
-          whisper("looping to target '#{@currentTrack[noteType][currentIndex]['loop_target']}'", 2)
+          whisper("looping to target '#{@currentTrack[noteType][currentIndex]['loop_target']}'", VERBOSITY['very verbose'])
 
           isLooping = false
           loopTargetSeconds = getSecondsFromDurationString loopTarget
@@ -3247,7 +3287,7 @@ module Tunewich
             targetNoteIndex = getNoteIndexByQuery(@currentTrack[noteType], loopTarget)
             isLooping = true
             if targetNoteIndex
-              whisper("\nLoop #{getLoopLimitStatusMessage}", 1)
+              whisper("\nLoop #{getLoopLimitStatusMessage}", VERBOSITY['verbose'])
               seekTime = @currentTrack[noteType][targetNoteIndex]['time']
               seekSeconds = getSecondsFromDurationString seekTime
               seek seekSeconds
@@ -3269,17 +3309,17 @@ module Tunewich
         )
           seekToNextPlayableNoteOrSkip @currentTrack[noteType], currentIndex
         else
-          whisper("#{noteType[0]}: #{@currentTrack[noteType][currentIndex]['text']}", 1)
+          whisper("#{noteType[0]}: #{@currentTrack[noteType][currentIndex]['text']}", VERBOSITY['verbose'])
         end
       }
 
       bind(['chapter_change', 'note_change'], Proc.new { |eventName|
         noteType = eventName.sub(/_.*/, 's')
-        whisper("#{eventName}, doing onNoteChange with noteType '#{noteType}'", 3)
+        whisper("#{eventName}, doing onNoteChange with noteType '#{noteType}'", VERBOSITY['errors'])
         onNoteChange.call noteType
       }, bindingGroupName)
 
-      trigger 'time_update' # @currentPlayerTime set above, ~ 2878
+      trigger('time_update', @currentPlayerTime) # @currentPlayerTime set above, ~ 2878
 
       # @bandaid for delayed start for mpv in termux @fix: json-ipc
       if @playerApplication != PLAYER_APP_DEFAULT
@@ -3293,14 +3333,14 @@ module Tunewich
           playerTimeResponse = getMplayerProperty('get_time_pos', /^(ANS_TIME_POSITION=|.*Time: )(.*?)(\?)?$/, playerResponseDelay)
           if playerTimeResponse
             @currentPlayerTime = playerTimeResponse.to_f
-            trigger 'time_update'
+            trigger('time_update', @currentPlayerTime)
           end
         else
           sleep 0.1
           thisTickTime = Time.now.to_f
           tickInterval = thisTickTime - lastTickTime
           @currentPlayerTime += tickInterval * @speed
-          trigger 'time_update'
+          trigger('time_update', @currentPlayerTime)
 
           lastTickTime = thisTickTime
         end
@@ -3310,7 +3350,7 @@ module Tunewich
       @currentPlayerTime = nil
 
       # @playerApplicationThreads[@currentPlayerIndex].join
-      whisper("killing user input thread (again)", 4)
+      whisper("killing user input thread (again)", VERBOSITY['debug'])
       @inputThread.kill if @inputThread # FIXME 1gpapl: overkill?
 
       response[:endTime] = Time.now.to_f
@@ -3331,7 +3371,7 @@ module Tunewich
     end
 
     def exitPlayerCommand hard = false
-      whisper("exiting player: #{@playerApplication}", 3)
+      whisper("exiting player: #{@playerApplication}", VERBOSITY['errors'])
       case @playerApplication
       when PLAYER_APP_DEFAULT
         sendMplayerCommand "q"
@@ -3431,7 +3471,7 @@ module Tunewich
         sleep responseDelay if responseDelay
         lastPlayerOutput = tailTempFile "#{MPLAYER_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
         if lastPlayerOutput
-          whisper("read #{property} from player, output: #{lastPlayerOutput}", 5)
+          whisper("read #{property} from player, output: #{lastPlayerOutput}", VERBOSITY['realtime+'])
           matches = lastPlayerOutput.match pattern
           output = matches[2] if matches
         end
@@ -3458,7 +3498,7 @@ module Tunewich
     end
 
     def nextTrack
-      whisper("next track", 3)
+      whisper("next track", VERBOSITY['errors'])
       if @shuffle
         # FIXME 1gpalq: filterTracksOnDeck should run regardles of @shuffle, but it would mess with @trackIndex. With @shuffle == true, it doesn't matter.
         # filterTracksOnDeck() # only apply upon changing the filter or track list, for performance's sake
@@ -3497,20 +3537,20 @@ module Tunewich
     end
 
     def writeTitleChangesInTrackList tracks
-      whisper("writeTitleChangesInTrackList: say something!", 3)
+      whisper("writeTitleChangesInTrackList: say something!", VERBOSITY['errors'])
       anyChanges = false
       tracks.each { |track|
         canonicalTrack = matchExistingLibraryTrack(track)
         if track['title'] != canonicalTrack['title']
-          whisper("Updating '#{canonicalTrack['title']}' = '#{track['title']}'", 3)
+          whisper("Updating '#{canonicalTrack['title']}' = '#{track['title']}'", VERBOSITY['errors'])
           canonicalTrack['title'] = track['title']
           anyChanges = true
         else
-          whisper("Identical: '#{canonicalTrack['title']}' == '#{track['title']}'", 3)
+          whisper("Identical: '#{canonicalTrack['title']}' == '#{track['title']}'", VERBOSITY['errors'])
         end
       }
       if anyChanges then writeLibraryToFile
-      else whisper("No changes to track titles.", 3)
+      else whisper("No changes to track titles.", VERBOSITY['errors'])
       end
     end
 
@@ -3621,29 +3661,29 @@ module Tunewich
     def findTrackIndex(query, tracks = nil, referenceTrackIndex = nil)
       referenceTrackIndex ||= @trackIndex
       tracks ||= @tracks
-      whisper("findTrackIndex() searching for '#{query}' among #{tracks.length} tracks", 3)
+      whisper("findTrackIndex() searching for '#{query}' among #{tracks.length} tracks", VERBOSITY['errors'])
       newTrackIndex = referenceTrackIndex
 
       trackIndexOffset = getOffsetFromInputString query
 
       if trackIndexOffset
         newTrackIndex += trackIndexOffset
-        whisper("findTrackIndex() trackIndexOffset: #{trackIndexOffset}", 3)
+        whisper("findTrackIndex() trackIndexOffset: #{trackIndexOffset}", VERBOSITY['errors'])
       elsif query.match(/^[0-9]+$/)
-        whisper("findTrackIndex() treating query as an integer", 3)
+        whisper("findTrackIndex() treating query as an integer", VERBOSITY['errors'])
         newTrackIndex = (query.to_i - 1) % tracks.length
       else
         onDeckIds = tracks.map { |t| t['id'] }
         newTrackIndex = onDeckIds.index(query)
         if newTrackIndex
-          whisper("findTrackIndex() found by ID", 3)
+          whisper("findTrackIndex() found by ID", VERBOSITY['errors'])
         else
-          whisper("findTrackIndex() searching by title", 3)
+          whisper("findTrackIndex() searching by title", VERBOSITY['errors'])
           newTrackIndex = firstFuzzyMatchIndex(query, getTrackTitles(tracks))
         end
       end
 
-      whisper("findTrackIndex() => #{newTrackIndex}", 3)
+      whisper("findTrackIndex() => #{newTrackIndex}", VERBOSITY['errors'])
 
       newTrackIndex
     end
@@ -3670,7 +3710,7 @@ module Tunewich
           match[:density] = query.length.to_f / match[:matchLength].to_f
           match[:breadth] = match[:matchLength].to_f / match[:value].length.to_f
           match[:score] = match[:density] * 10 + match[:breadth]
-          whisper("match:score]: #{match}", 3)
+          whisper("match:score]: #{match}", VERBOSITY['errors'])
           matches << match
         end
 
@@ -3748,7 +3788,7 @@ module Tunewich
 
     def getIdFromFileName(fileName)
       id = fileName.gsub(/^tunewich.([^.]+).*$/) { $1 }
-      whisper("id: '#{id}', file: '#{fileName}'", 4)
+      whisper("id: '#{id}', file: '#{fileName}'", VERBOSITY['debug'])
       id != fileName ? id : false
     end
 
@@ -3817,13 +3857,13 @@ module Tunewich
         options['audioFormat'] ||= 'vorbis'
       end
 
-      whisper(downloadCommand, 3)
+      whisper(downloadCommand, VERBOSITY['errors'])
       if options['streamPath'] && !options['sync']
         downloadPid = spawn(downloadCommand) # spawn: non-blocking
       else
         runAndHandleDownloadCommand = Proc.new {
           trigger('download_begin', track) if !options['suppressBeginEvent'] # Unsure of the diff triggering in new thread vs. calling inline
-          whisper("download begin", 3)
+          whisper("download begin", VERBOSITY['errors'])
           downloadPid = system(downloadCommand) # system: blocking
           if trackFileExists? track, true
             loadLibrary
@@ -3832,7 +3872,7 @@ module Tunewich
             @library['x.hosts'][$hostname]['downloaded'] ||= []
             @library['x.hosts'][$hostname]['downloaded'] << track['id']
             writeLibraryToFile
-            whisper("download complete", 3)
+            whisper("download complete", VERBOSITY['errors'])
             trigger('download_success', track)
           else
             trigger('download_fail', track)
@@ -3857,7 +3897,7 @@ module Tunewich
         elsif UNAME == 'Darwin'
           clean_message = message.gsub(/"/, '\\"').gsub(/'/, "'\"'\"'"); # what a mess: escaped double-quoted string in applescript, as single-quoted arg to osascript, as double-quoted string in ruby
           notifyCommand = "osascript -e 'display notification \"#{clean_message}\" with title \"tunewich\"' &>/dev/null"
-          whisper(notifyCommand, 3);
+          whisper(notifyCommand, VERBOSITY['errors']);
           system notifyCommand
         end
       end
@@ -3900,7 +3940,7 @@ module Tunewich
     end
 
     def createTempFile(name)
-      whisper("make tmp #{name}", 4)
+      whisper("make tmp #{name}", VERBOSITY['debug'])
       putInTempFile name, ''
     end
 
@@ -3910,28 +3950,27 @@ module Tunewich
       Thread.new {
         # FIXME 1gpani: trying to put it in a new thread...maybe won't fix the problem, but it will unblock the main thread.
         writeResult = File.write(path, value)
-        whisper("#{name} << '#{value.chomp}' (#{writeResult})", 5)
+        whisper("#{name} << '#{value.chomp}' (#{writeResult})", VERBOSITY['realtime++'])
       }
       path
     end
 
     def readTempFile(name, shouldIncludeSessionID = true)
-      whisper("read tmp #{name}", 5)
+      whisper("read tmp #{name}", VERBOSITY['realtime+'])
       path = getTempFilePath(name, shouldIncludeSessionID)
 
       if File.exist? path
-        whisper("read tmp #{name}: exists", 5)
+        whisper("read tmp #{name}: exists", VERBOSITY['realtime++'])
         contents = File.read path
-        # whisper("read tmp #{name}, contents: #{contents}", 5)
+        # whisper("read tmp #{name}, contents: #{contents}", VERBOSITY['debug'])
         return contents
       else
-        whisper("read tmp #{name}: missing", 5)
+        whisper("read tmp #{name}: missing", VERBOSITY['realtime++'])
         return ''
       end
     end
 
     def tailTempFile(name, shouldIncludeSessionID = true)
-      whisper("tail tmp #{name}", 5)
       content = readTempFile(name, shouldIncludeSessionID)
       lastLine = ''
       if content && content.length > 0
@@ -3941,7 +3980,7 @@ module Tunewich
     end
 
     def deleteTempFile(name, shouldIncludeSessionID = true)
-      whisper("delete tmp #{name}", 4)
+      whisper("delete tmp #{name}", VERBOSITY['debug'])
       path = getTempFilePath(name, shouldIncludeSessionID)
 
       if File.exist? path
@@ -3954,7 +3993,7 @@ module Tunewich
 
     def makeStream(name)
       path = getTempFilePath name
-      whisper("mkfifo #{path}", 4)
+      whisper("mkfifo #{path}", VERBOSITY['debug'])
 
       if File.exist? path
         File.delete path
@@ -3993,7 +4032,7 @@ module Tunewich
             elsif looksLikeAYouTubeID?(trackReference)
               track = createTrack trackReference, 'youtube'
             else
-              whisper("Track not in library, and ID is not recognized: '#{trackReference}'", 2)
+              whisper("Track not in library, and ID is not recognized: '#{trackReference}'", VERBOSITY['very verbose'])
             end
             tracks << track if track
           end
@@ -4005,7 +4044,7 @@ module Tunewich
             "Unfortunately that is not a reversible hash, but you could hash other",
             "known URLs and use matches to repair this playlist."
           ].join(' ')
-          whisper(message, 2)
+          whisper(message, VERBOSITY['very verbose'])
         end
       end
 
@@ -4079,7 +4118,7 @@ module Tunewich
           libraryInfo = processLibraryJSON libraryJSON
           File.write(@libraryDatabasePath, libraryJSON + "\n")
           @libraryHash = libraryInfo[:hash]
-          whisper("Saved change to library file.", 2)
+          whisper("Saved change to library file.", VERBOSITY['very verbose'])
         end
       else
         whisper("Writing the library to file is disabled.", "2")
@@ -4088,7 +4127,7 @@ module Tunewich
     end
 
     def removeTrackFromLibrary(id)
-      whisper("Removing track (#{id}) from library", 2)
+      whisper("Removing track (#{id}) from library", VERBOSITY['very verbose'])
       @library['tracks'].delete id
       @library['playlists'].each { |playlistName, playlist|
         index = playlist['tracks'].index id
@@ -4120,13 +4159,13 @@ module Tunewich
 
     def determineRelativeSpeed input, track, shouldSetPlayingBPM = false
       relativeSpeed = input.to_f
-      whisper("relativeSpeed: #{input} -> #{relativeSpeed}", 3)
+      whisper("relativeSpeed: #{input} -> #{relativeSpeed}", VERBOSITY['errors'])
       if input.to_s.match(/bpm$/)
         if track.has_key? 'bpm'
           inputBPM = relativeSpeed
           if shouldSetPlayingBPM
             @playingBPM = inputBPM
-            whisper("Setting playing BPM to #{@playingBPM}", 1)
+            whisper("Setting playing BPM to #{@playingBPM}", VERBOSITY['verbose'])
           end
           relativeSpeed = inputBPM / track['bpm']
         else
@@ -4158,10 +4197,10 @@ module Tunewich
         if tag.has_key?('parents') && tag['parents'].include?(ancestorTagName)
           chainIndex = chain.index(tagName)
           if chainIndex
-            whisper("Skipping circular tag reference: #{chain[chainIndex, chain.length - chainIndex].join(" > ")} > #{tagName}", 2)
+            whisper("Skipping circular tag reference: #{chain[chainIndex, chain.length - chainIndex].join(" > ")} > #{tagName}", VERBOSITY['very verbose'])
           else
             allDescendantTags << tagName
-            whisper("#{ancestorTagName} #{">" * (chain.length)} #{tagName}", 4)
+            whisper("#{ancestorTagName} #{">" * (chain.length)} #{tagName}", VERBOSITY['debug'])
             allDescendantTags.concat(getDescendantTagNames(tagName, chain[0, chain.length])) # pass chain array value
           end
         end
@@ -4170,24 +4209,24 @@ module Tunewich
     end
 
     def getAncestorTagNames descendantTagName, depth = 0
-      whisper("getAncestorTagNames(descendantTagName:#{descendantTagName}, depth:#{depth})", 4)
+      whisper("getAncestorTagNames(descendantTagName:#{descendantTagName}, depth:#{depth})", VERBOSITY['debug'])
       allAncestorTags = []
       if @library['tags'].has_key? descendantTagName
-        whisper("tag #{descendantTagName} has a definition", 5)
+        whisper("tag #{descendantTagName} has a definition", VERBOSITY['debug'])
         thisTag = @library['tags'][descendantTagName]
         if thisTag && thisTag['parents']
-          whisper("thisTag['parents'].each ", 5)
+          whisper("thisTag['parents'].each ", VERBOSITY['debug'])
           thisTag['parents'].each { |tagName|
-            whisper("tagName: #{tagName}", 5)
+            whisper("tagName: #{tagName}", VERBOSITY['debug'])
             allAncestorTags << tagName
-            whisper("#{descendantTagName} #{"<" * (depth + 1)} #{tagName}", 4)
+            whisper("#{descendantTagName} #{"<" * (depth + 1)} #{tagName}", VERBOSITY['verbose'])
             allAncestorTags.concat(getAncestorTagNames(tagName, (depth + 1)))
           }
         end
       else
-        whisper("tag #{descendantTagName} is referenced as a parent, but has no definition of its own", 5)
+        whisper("tag #{descendantTagName} is referenced as a parent, but has no definition of its own", VERBOSITY['debug'])
       end
-      whisper("allAncestorTags.uniq", 5)
+      whisper("allAncestorTags.uniq", VERBOSITY['debug'])
       allAncestorTags.uniq
     end
 
@@ -4202,19 +4241,19 @@ module Tunewich
 
       if filters.has_key? 'rating'
         if filters['rating'] && filters['rating'].length > 0
-          whisper("filtering tracks with rating in range #{filters['rating']}", 3)
+          whisper("filtering tracks with rating in range #{filters['rating']}", VERBOSITY['errors'])
           tracks.send(action) { |t|
             matchPropertyWithRangeString filters['rating'], t, 'rating'
           }
         else
-          whisper("filtering tracks with any rating", 3)
+          whisper("filtering tracks with any rating", VERBOSITY['errors'])
           tracks.send(action) { |t| t.has_key? 'rating' }
         end
       end
 
       if filters.has_key? 'tag'
         if filters['tag']
-          whisper("filtering tracks with the tag filter #{filters['tag']}", 3)
+          whisper("filtering tracks with the tag filter #{filters['tag']}", VERBOSITY['errors'])
           # TODO: 1gG4jN: @enhancement optionally grow tag set by linking through tracks with explicitly chosen tags
           selectedTags = []
           unionTagTracks = []
@@ -4247,7 +4286,7 @@ module Tunewich
             end
           }
 
-          whisper("expanded filter tag list with descendants: #{selectedTags.map { |t| t[:name] }.join(", ")}", 4)
+          whisper("expanded filter tag list with descendants: #{selectedTags.map { |t| t[:name] }.join(", ")}", VERBOSITY['debug'])
           if selectedTags.length > 0
             # TODO 1gG4jP: make a list of IDs and filter tracks against it once, rather than filtering separately for each tag @performance
             selectedTags.each { |tagInfo|
@@ -4261,7 +4300,7 @@ module Tunewich
             whisper("No matches for \"#{filters['tag']}\". Available tags are: #{listAllTagsWithAliases.join ", "}", 0)
           end
         else
-          whisper("filtering tracks that have any tags", 3)
+          whisper("filtering tracks that have any tags", VERBOSITY['errors'])
           @library['tags'].each { |name, libraryTag|
             tracks.send(action) { |t|
               libraryTag['tracks'] && libraryTag['tracks'].index(t['id'])
@@ -4272,18 +4311,18 @@ module Tunewich
 
       if filters.has_key? 'bpm'
         if filters['bpm'] && filters['bpm'].length > 0
-          whisper("filtering tracks with bpm matching #{filters['bpm']}", 3)
+          whisper("filtering tracks with bpm matching #{filters['bpm']}", VERBOSITY['errors'])
           tracks.send(action) { |t|
             matchPropertyWithRangeString filters['bpm'], t, 'bpm'
           }
         else
-          whisper("filtering tracks with bpm data", 3)
+          whisper("filtering tracks with bpm data", VERBOSITY['errors'])
           tracks.send(action) { |t| t.has_key? 'bpm' }
         end
       end
 
       if filters['title']
-        whisper("filtering tracks with title matching #{filters['title']}", 3)
+        whisper("filtering tracks with title matching #{filters['title']}", VERBOSITY['errors'])
         matches = fuzzyStringSearchInList(filters['title'], getTrackTitles(tracks))
         matches.sort! { |a,b| b[:density] <=> a[:density] }
         matchedIds = []
@@ -4300,7 +4339,7 @@ module Tunewich
       end
 
       if filters['last']
-        whisper("filtering tracks with playtime within the last #{filters['last']}", 3)
+        whisper("filtering tracks with playtime within the last #{filters['last']}", VERBOSITY['errors'])
         now = Time.now.to_i
         watershed = now - getSecondsFromDurationString(filters['last']).to_i
         tracks.send(action) { |t|
@@ -4309,7 +4348,7 @@ module Tunewich
       end
 
       if filters['min-duration']
-        whisper("Filtering tracks with duration of at least #{filters['min-duration']}", 3)
+        whisper("Filtering tracks with duration of at least #{filters['min-duration']}", VERBOSITY['errors'])
         minDuration = getSecondsFromDurationString filters['min-duration']
         tracks.send(action) { |t|
           t['duration'] ? getSecondsFromDurationString(t['duration']) > minDuration : false
@@ -4317,7 +4356,7 @@ module Tunewich
       end
 
       if filters.has_key? 'chapters'
-        whisper("Filtering tracks with chapters", 3)
+        whisper("Filtering tracks with chapters", VERBOSITY['errors'])
         tracks.send(action) { |track|
           if track
             track.has_key? 'chapters'
@@ -4427,7 +4466,7 @@ module Tunewich
       track['link'] = trackInfo['webpage_url'] || "https://youtu.be/#{youtubeVideoID}"
       track['type'] = trackInfo['extractor']
       track['sourceTags'] = trackInfo['tags'] if trackInfo['tags']
-      whisper("sourceTags: #{trackInfo['tags']}", 2)
+      whisper("sourceTags: #{trackInfo['tags']}", VERBOSITY['very verbose'])
 
       track
     end
@@ -4452,7 +4491,7 @@ module Tunewich
       track['link'] = trackInfo['webpage_url'] || soundcloudURL
       track['type'] = trackInfo['extractor']
       track['sourceTags'] = trackInfo['tags'] if trackInfo['tags']
-      whisper("sourceTags: #{trackInfo['tags']}", 4)
+      whisper("sourceTags: #{trackInfo['tags']}", VERBOSITY['debug'])
 
       track
     end
@@ -4548,9 +4587,9 @@ module Tunewich
       end
       url = getValidYouTubeURI url
       queryResultIds = []
-      whisper("reading URL #{url}", 2)
+      whisper("reading URL #{url}", VERBOSITY['very verbose'])
       open(url) do |handle|
-        whisper("received URL #{url}", 4)
+        whisper("received URL #{url}", VERBOSITY['debug'])
         html = []
         handle.each_line { |line| html << line }
 
@@ -4570,7 +4609,7 @@ module Tunewich
         if id && id.kind_of?(String)
           track = matchExistingLibraryTrack createTrack(id, 'youtube')
           resultTracks << track
-          whisper("starting a new thread to get track info for #{track['id']}", 4)
+          whisper("starting a new thread to get track info for #{track['id']}", VERBOSITY['debug'])
           threads << Thread.new {
             if not updateTrackInfo track
               resultTracks.delete track
@@ -4581,7 +4620,7 @@ module Tunewich
         end
       end
 
-      whisper("joining 'update info' threads", 4)
+      whisper("joining 'update info' threads", VERBOSITY['debug'])
       threads.each { |thread| thread.join }
       print "\n"
 
@@ -4616,7 +4655,7 @@ module Tunewich
       queryResultURLs.each_with_index do |recommendedURL, index|
         track = matchExistingLibraryTrack createTrack(recommendedURL, 'soundcloud')
         resultTracks << track
-        whisper("starting a new thread to get track info for #{track['src']}", 4)
+        whisper("starting a new thread to get track info for #{track['src']}", VERBOSITY['debug'])
         threads << Thread.new {
           if not updateTrackInfo track
             resultTracks.delete track
@@ -4626,7 +4665,7 @@ module Tunewich
         }
       end
 
-      whisper("joining 'update info' threads", 4)
+      whisper("joining 'update info' threads", VERBOSITY['debug'])
       threads.each { |thread| thread.join }
       print "\n"
 
@@ -4646,7 +4685,7 @@ module Tunewich
         if sourceLine && sourceLine.length > 0
           match = sourceLine[0].match sourcePattern
           source = match[1]
-          whisper("source: #{source}", 4)
+          whisper("source: #{source}", VERBOSITY['debug'])
         end
       end
 
@@ -4763,7 +4802,7 @@ module Tunewich
 
       parser.on("--loglevel LEVEL", "Set the log verbosity, as with -v, but applying only to logs. By default, all messages are logged.", " ") do |level|
         @logVerbosity = level ? level.to_i : 1
-        whisper("Log level: #{@logVerbosity}", 1)
+        whisper("Log level: #{@logVerbosity}", VERBOSITY['verbose'])
       end
 
       parser.on("--readonly", "Do not write any changes to the library file.", " ") do
@@ -4808,7 +4847,7 @@ module Tunewich
           streamingServerType = 'homebrew'
         end
         @streamingServerType = streamingServerType
-        whisper("streamingServerType: #{streamingServerType}", 2)
+        whisper("streamingServerType: #{streamingServerType}", VERBOSITY['very verbose'])
         isRadioConfigured = true
         whisper("Preparing to start radio (#{streamingServerType}).", 0)
         if streamingServerType == 'homebrew'
@@ -4825,7 +4864,7 @@ module Tunewich
             isRadioConfigured = false
           end
         else
-          whisper("Playing to jack server", 2)
+          whisper("Playing to jack server", VERBOSITY['very verbose'])
           @playerOverrideCommands << "-ao alsa"
           jackAudioDeviceAndOptions = "alsa"
         end
@@ -4849,10 +4888,10 @@ module Tunewich
               isRadioConfigured = false
             end
           else
-            whisper("Radio is configured. Ready to play.", 2)
+            whisper("Radio is configured. Ready to play.", VERBOSITY['very verbose'])
           end
         else
-          whisper("Radio is NOT configured. Ready to play.", 2)
+          whisper("Radio is NOT configured. Ready to play.", VERBOSITY['very verbose'])
         end
 
         # Currently 2 methods of doing radio:
@@ -4878,21 +4917,21 @@ module Tunewich
             puts "#" * 40
           end
           if streamingServerType == 'homebrew'
-            whisper("starting jackd (to capture audio)", 2)
+            whisper("starting jackd (to capture audio)", VERBOSITY['very verbose'])
             registerServiceThread Thread.new { `sudo jackd -d #{jackAudioDeviceAndOptions}` }
-            whisper("starting icecast (to stream audio to listeners)", 2)
+            whisper("starting icecast (to stream audio to listeners)", VERBOSITY['very verbose'])
             if UNAME == 'Darwin'
               registerServiceThread Thread.new { `icecast -c "#{icecastConfigFile}"` }
             else
               registerServiceThread Thread.new { `icecast2 -c "#{icecastConfigFile}"` }
             end
             darkiceStartDelay = 5.0
-            whisper("waiting #{darkiceStartDelay} seconds to start darkice", 2)
+            whisper("waiting #{darkiceStartDelay} seconds to start darkice", VERBOSITY['very verbose'])
             sleep darkiceStartDelay
-            whisper("starting darkice (to encode and push audio to streaming server)", 2)
+            whisper("starting darkice (to encode and push audio to streaming server)", VERBOSITY['very verbose'])
             registerServiceThread Thread.new { `sudo darkice -v 10 -c "#{darkiceConfigFile}"` }
           else
-            whisper("continue to Nicecast server", 2)
+            whisper("continue to Nicecast server", VERBOSITY['very verbose'])
           end
         else
           whisper("Unable to configure radio server.", 0)
@@ -4920,8 +4959,8 @@ module Tunewich
       end
 
       parser.on("-v [LEVEL]", "--verbose", "Chatter about what's going on (more detailed or frequent messages are in levels 2 or 3.", " ") do |level|
-        @configuredVerbosity = level ? level.to_i : 1
-        whisper("Verbosity level: #{@configuredVerbosity}", 1)
+        setFuzzyVerbosity(level)
+        whisper("Verbosity level: #{@configuredVerbosity}", VERBOSITY['default'])
       end
 
       parser.on("-w", "--write [SECONDS]", "Save changes to the library. If SECONDS are given, only tracks played that many seconds will be written.", " ") do |seconds|
@@ -4934,7 +4973,7 @@ module Tunewich
       end
 
       unparsedOptions = parser.parse(ARGV)
-      whisper("unparsed options: #{unparsedOptions}", 4)
+      whisper("unparsed options: #{unparsedOptions}", VERBOSITY['debug'])
 
       output
     end
@@ -4946,10 +4985,10 @@ module Tunewich
 
     def killRegiseredServiceThreads
       if @services && @services.length > 0
-        whisper("Exiting: killing #{@services.length} services", 2)
+        whisper("Exiting: killing #{@services.length} services", VERBOSITY['very verbose'])
         @services.each { |thread| thread.kill if thread.alive? }
       else
-        whisper("Exiting: no services running", 2)
+        whisper("Exiting: no services running", VERBOSITY['very verbose'])
       end
     end
 
@@ -5033,7 +5072,7 @@ module Tunewich
           urlHTTPHead = `curl -sL --head "#{url}"`
           urlContentType = getHTTPHeaderByPattern.call(urlHTTPHead, /^Content-Type: ([^;]*).*/i)
           cookieDomain = getHTTPHeaderByPattern.call(urlHTTPHead, /^Set-Cookie:.*domain=([^;]*).*/i)
-          whisper("urlContentType: #{urlContentType}, cookieDomain: #{cookieDomain}", 3)
+          whisper("urlContentType: #{urlContentType}, cookieDomain: #{cookieDomain}", VERBOSITY['errors'])
           if 'text/html' == urlContentType && (cookieDomain == '.bandcamp.com' || url.match(/(https?:\/\/)([^\.]+)\.bandcamp\.com.*/))
             whisper("WIP: scraping bandcamp page")
             urlCanBeScraped = false
@@ -5050,13 +5089,13 @@ module Tunewich
             tracks.concat(podcastTracks) if podcastTracks
           elsif urlContentType.match(/^audio\//)
             urlCanBeScraped = false
-            whisper("assuming that URL is an audio file. Adding as a track", 3)
+            whisper("assuming that URL is an audio file. Adding as a track", VERBOSITY['errors'])
             track = createTrack(url, urlContentType)
-            whisper("track: #{track}", 3)
+            whisper("track: #{track}", VERBOSITY['errors'])
             track = matchExistingLibraryTrack(track)
-            whisper("track (after matching existing): #{track}", 3)
+            whisper("track (after matching existing): #{track}", VERBOSITY['errors'])
             tracks << track
-            whisper("added: #{tracks.last}", 3)
+            whisper("added: #{tracks.last}", VERBOSITY['errors'])
           end
         end
 
@@ -5070,7 +5109,7 @@ module Tunewich
         end
       }
 
-      whisper("Added these tracks: #{tracks.join(', ')}", 3)
+      whisper("Added these tracks: #{tracks.join(', ')}", VERBOSITY['errors'])
       tracks
     end
 
@@ -5086,8 +5125,8 @@ module Tunewich
       feedXML = `curl -sL "#{url}"`
       feedDoc = REXML::Document.new(feedXML)
       if not feedDoc
-        whisper("bad feed XML", 3)
-        whisper(feedXML, 4)
+        whisper("bad feed XML", VERBOSITY['errors'])
+        whisper(feedXML, VERBOSITY['debug'])
         return nil
       end
       channel = REXML::XPath.first(feedDoc, '//rss/channel')
@@ -5099,13 +5138,13 @@ module Tunewich
           'type' => 'podcast',
           'dateAdded' => Time.now.to_i
         }
-        whisper("Adding feed: #{podcastFeed}", 3)
+        whisper("Adding feed: #{podcastFeed}", VERBOSITY['errors'])
         @library['feeds'] << podcastFeed
         writeLibraryToFile
       end
       podcastTracks = []
       REXML::XPath.each(channel, 'item') { |itemElement|
-        whisper("itemElement: #{itemElement}", 4)
+        whisper("itemElement: #{itemElement}", VERBOSITY['debug'])
         enclosure = REXML::XPath.first(itemElement, 'enclosure')
         if enclosure
           newTrack = createTrack(enclosure.attribute('url').to_s.gsub('&amp;', '&'), enclosure.attribute('type').to_s || 'audio/mpeg')
@@ -5116,29 +5155,29 @@ module Tunewich
           newTrack['duration'] = durationElement.text.chomp if durationElement
           linkElement = REXML::XPath.first(itemElement, 'link')
           newTrack['link'] = linkElement.text.chomp if linkElement
-          whisper("newTrack: #{newTrack}", 4)
+          whisper("newTrack: #{newTrack}", VERBOSITY['debug'])
           podcastTracks << newTrack
         else
-          whisper("This RSS item does not have an enclosure, i.e. no link to the audio", 3)
+          whisper("This RSS item does not have an enclosure, i.e. no link to the audio", VERBOSITY['errors'])
         end
       }
       podcastTracks.reverse # put the oldest ones first
     end
 
     def loadBandcamp url
-      whisper("loadBandcamp #{url}", 3)
+      whisper("loadBandcamp #{url}", VERBOSITY['errors'])
       tracks = []
       open(url) do |handle|
         handle.each_line { |line|
           matchResults = line.match(/^\s*trackinfo: (.*?),?$/)
           if matchResults
-            whisper("loadBandcamp: found trackinfo: #{matchResults[1]}", 3)
+            whisper("loadBandcamp: found trackinfo: #{matchResults[1]}", VERBOSITY['errors'])
             trackinfo = JSON.parse matchResults[1]
             if trackinfo
-              whisper("loadBandcamp: trackinfo is valid JSON", 3)
+              whisper("loadBandcamp: trackinfo is valid JSON", VERBOSITY['errors'])
               trackinfo.each { |bandcampTrack|
                 if bandcampTrack && bandcampTrack['file'] && bandcampTrack['file'].has_key?('mp3-128')
-                  whisper("loadBandcamp: found track file #{bandcampTrack['file']['mp3-128']}", 3)
+                  whisper("loadBandcamp: found track file #{bandcampTrack['file']['mp3-128']}", VERBOSITY['errors'])
                   fileURL = bandcampTrack['file']['mp3-128']
                   fileURL = "http:#{fileURL}" if fileURL.match(/^\/\//)
                   track = createTrack(fileURL, 'audio/mpeg')
@@ -5158,9 +5197,9 @@ module Tunewich
     end
 
     def loadSoundcloud url
-      whisper("loadSoundcloud #{url}", 3)
+      whisper("loadSoundcloud #{url}", VERBOSITY['errors'])
       tracks = [createTrack(url, 'soundcloud')]
-      whisper("tracks: #{tracks}", 3)
+      whisper("tracks: #{tracks}", VERBOSITY['errors'])
       tracks
     end
 
@@ -5226,7 +5265,7 @@ module Tunewich
 
       deleteTempFile editListName
 
-      whisper(list, 4)
+      whisper(list, VERBOSITY['debug'])
 
       enablePlaybackInfo if scopedShouldShowRealtimeOutput
       @configuredVerbosity = scopedVerbosity
@@ -5242,7 +5281,7 @@ module Tunewich
       outputHash = {}
       editedOutput.each { |line|
         parts = line.match(/^([^:]+): (.*)/)
-        whisper("edited map line: name='#{parts[1]}',	value='#{parts[2]}'", 3)
+        whisper("edited map line: name='#{parts[1]}',	value='#{parts[2]}'", VERBOSITY['errors'])
         outputHash[parts[1]] = parts[2]
       }
       outputHash
@@ -5257,7 +5296,7 @@ module Tunewich
       commandInfo = []
       maxCommandNameLength = 0
       sortedCommandList = []
-      whisper("gathering command info", 3)
+      whisper("gathering command info", VERBOSITY['errors'])
       commands.each { |name, command|
         sortedCommandList << {:name => name, :command => command}
         maxCommandNameLength = name.length if name.length > maxCommandNameLength
@@ -5277,7 +5316,7 @@ module Tunewich
 
     def processCommandsWithInput commandLoopInput, commands, leftoverAction
       while commandLoopInput && !commandLoopInput.empty? && commandLoopInput[0] == '/'
-        whisper("parsing commands, input: #{commandLoopInput}", 3)
+        whisper("parsing commands, input: #{commandLoopInput}", VERBOSITY['debug'])
         commandName = nil
         commandInput = nil
         inputParts = commandLoopInput.match(/^\/(?<name>[^\s]*)\s*(?<input>.*)/)
@@ -5287,19 +5326,35 @@ module Tunewich
           if !commands.has_key? commandName
             possibleCommands = fuzzyStringSearchInList(commandName, commands.keys).keep_if{ |c| c[:starts] }.map { |c| c[:value] }
             if possibleCommands.length == 1
-              whisper("matched #{commandName} -> #{possibleCommands[0]}", 1)
+              whisper("matched #{commandName} -> #{possibleCommands[0]}", VERBOSITY['verbose'])
               commandName = possibleCommands[0]
+            elsif @library.has_key?('commandMacros')
+              whisper("considering macros", VERBOSITY['debug'])
+              possibleMacros = fuzzyStringSearchInList(commandName, @library['commandMacros'].keys).keep_if{ |c| c[:starts] }.map { |c| c[:value] }
+              if possibleMacros.length == 1
+                commandName = "macro"
+                commandInput = "#{possibleMacros[0]} #{commandInput}"
+              else
+                commandName = nil
+                commandLoopInput = nil
+                possibleCommands += possibleMacros
+              end
             else
-              commandName = ''
+              commandName = nil
+              commandLoopInput = nil
+            end
+
+            if possibleCommands.length > 1
+              commandName = nil
               commandLoopInput = nil
               putsRealtime "Did you mean #{possibleCommands.join ", or "}?" if possibleCommands.length > 1
             end
           end
         else
-          commandName = ''
+          commandName = nil
         end
 
-        if commands.has_key? commandName
+        if commandName && commands.has_key?(commandName)
           commandInfo = {
             :name => commandName,
             :commandLoopInput => commandInput,
@@ -5309,21 +5364,21 @@ module Tunewich
             commandInfo[:output] = commands[commandName]['action'].call(commandInput, commands[commandName])
           rescue Exception => e
             putsRealtime "There was a problem running '#{commandName}' with input '#{commandInput}'"
-            whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 3)
+            whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", VERBOSITY['errors'])
           end
-          whisper("command info: #{commandInfo}", 3)
+          whisper("command info: #{commandInfo}", VERBOSITY['errors'])
           if commandInfo[:output] && commandInfo[:output][:action]
-            whisper("chained command calling action (#{commandInfo[:output][:action]})", 3)
+            whisper("chained command calling action (#{commandInfo[:output][:action]})", VERBOSITY['errors'])
             leftoverAction.call commandInfo[:output][:action]
           end
           if commandInfo[:output] && commandInfo[:output][:chainedInput] && commandInfo[:output][:chainedInput].length > 0
-            whisper("chained commandLoopInput: #{commandInfo[:output][:chainedInput]}", 3)
+            whisper("chained commandLoopInput: #{commandInfo[:output][:chainedInput]}", VERBOSITY['errors'])
             if commandInfo[:output][:bindChainToEvent]
               commandLoopInput = nil
-              whisper("binding deferred chained commands to event '#{commandInfo[:output][:bindChainToEvent]}'", 3)
+              whisper("binding deferred chained commands to event '#{commandInfo[:output][:bindChainToEvent]}'", VERBOSITY['errors'])
               bindOnce commandInfo[:output][:bindChainToEvent], Proc.new {
-                whisper("running deferred chained commands", 1)
-                whisper("deferred commands: #{commandInfo[:output][:chainedInput]}", 2)
+                whisper("running deferred chained commands", VERBOSITY['verbose'])
+                whisper("deferred commands: #{commandInfo[:output][:chainedInput]}", VERBOSITY['very verbose'])
                 commandLoopInput = processCommandsWithInput(commandInfo[:output][:chainedInput], commands, leftoverAction)
               }, commandInfo[:output][:bindingGroupName]
               break
@@ -5331,14 +5386,16 @@ module Tunewich
               commandLoopInput = commandInfo[:output][:chainedInput]
             end
           else
-            whisper("no chained commandLoopInput", 3)
+            whisper("no chained commandLoopInput", VERBOSITY['errors'])
             commandLoopInput = nil
             break
           end
+        else
+          whisper("No matching command or macro '#{inputParts[:name]}'.", VERBOSITY['default'])
         end
       end
 
-      whisper("no more commands to execute (for now)", 3)
+      whisper("no more commands to execute (for now)", VERBOSITY['errors'])
 
       commandLoopInput
     end
@@ -5348,25 +5405,25 @@ module Tunewich
       enablePlaybackInfo
 
       begin
-        whisper("received input: #{inputLine}", 3)
+        whisper("received input: #{inputLine}", VERBOSITY['errors'])
         if commands
           inputLine = processCommandsWithInput(inputLine, commands, leftoverAction)
         end
 
         handledActionResponse = true
         if leftoverAction && inputLine && inputLine.length > 0
-          whisper("input left over after commands: passing to action (#{inputLine})", 3)
+          whisper("input left over after commands: passing to action (#{inputLine})", VERBOSITY['errors'])
           handledActionResponse = leftoverAction.call inputLine
         end
       rescue Exception => e
-        whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 3)
+        whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", VERBOSITY['errors'])
       end
 
       handledActionResponse
     end
 
     def handleInputCharacter inputCharacter, prompt, commands, leftoverAction
-      whisper("input: '#{inputCharacter}'", 5)
+      whisper("input: '#{inputCharacter}'", VERBOSITY['debug'])
       result = true
 
       begin
@@ -5455,11 +5512,11 @@ module Tunewich
 
             printRepeat @commandUserInput
           elsif inputCharacter == "\e[C" # right arrow
-            whisper("TODO: move cursor right", 3)
+            whisper("TODO: move cursor right", VERBOSITY['errors'])
           elsif inputCharacter == "\e[D" # left arrow
-            whisper("TODO: move cursor left", 3)
+            whisper("TODO: move cursor left", VERBOSITY['errors'])
           elsif inputCharacter == "	" # tab
-            whisper("tab completion (TODO: repeat tab to step through matches)", 3)
+            whisper("tab completion (TODO: repeat tab to step through matches)", VERBOSITY['errors'])
             tailNotice = nil
             if @commandUserInput[0] == "/"
               inputCommands = @commandUserInput.sub(/^\//, '').split(/ \//)
@@ -5469,6 +5526,13 @@ module Tunewich
                 commandParts = getCommandInputParts(inputCommands[lastCommandIndex], /^(?<command>\w*)( +(?<input>.*))?/)
                 if commandParts
                   commandKeys = commands.keys
+
+                  macroKeys = []
+                  if @library.has_key?('commandMacros')
+                    macroKeys = @library['commandMacros'].keys
+                    commandKeys += macroKeys
+                  end
+
                   commandName = commandParts[:command]
                   if (
                       commandName &&
@@ -5489,15 +5553,15 @@ module Tunewich
                       if commands[commandName].has_key?('showStatus')
                         modifiedCommandInput = commands[commandName]['showStatus'].call(commands[commandName])
                       end
-                      if commands[commandName].has_key?('args')
-                        tailNotice = "options: #{commands[commandName]['args'].join(", ")}"
+                      if commands[commandName].has_key?('options')
+                        tailNotice = "options: #{commands[commandName]['options'].join(", ")}"
                       end
                     end
 
-                    if commands[commandName].has_key?('args')
+                    if commands[commandName].has_key?('options')
                       inputParts = getCommandInputParts(commandInput)
                       if inputParts && inputParts[:query] && inputParts[:query].length > 0
-                        guessArg = firstFuzzyMatchValue(inputParts[:query], commands[commandName]['args'])
+                        guessArg = firstFuzzyMatchValue(inputParts[:query], commands[commandName]['options'])
                         if guessArg && guessArg.length > 0
                           commandInput = commandInput.sub!(inputParts[:query], guessArg)
                         end
@@ -5509,12 +5573,12 @@ module Tunewich
                       commandInput = modifiedCommandInput if modifiedCommandInput
                     elsif commands[commandName].has_key?('inputOptions')
                       genericTabComplete = Proc.new { |input, command|
-                        whisper("generic tab complete for command '#{commandName}'", 3)
+                        whisper("generic tab complete for command '#{commandName}'", VERBOSITY['errors'])
                         inputPattern = command['inputPattern'] if command.has_key?('inputPattern')
                         inputParts = getCommandInputParts(input, inputPattern)
                         inputOptions = command['inputOptions'].call
                         options = []
-                        options.concat(command['args']) if command.has_key?('args')
+                        options.concat(command['options']) if command.has_key?('options')
                         options.concat(inputOptions) if inputOptions
 
                         if inputParts[:query] && inputParts[:query].length > 0
@@ -5537,6 +5601,8 @@ module Tunewich
                       modifiedCommandInput = genericTabComplete.call(commandInput, commands[commandName])
                       commandInput = modifiedCommandInput if modifiedCommandInput
                     end
+                  elsif macroKeys.include?(commandName)
+                    putsRealtime "\n#{commandName}: macro for '#{@library['commandMacros'][commandName]}'"
                   end
 
                   inputCommands[lastCommandIndex] = "#{commandName} #{commandInput}"
@@ -5555,7 +5621,7 @@ module Tunewich
           printRepeat @commandUserInput
         end
       rescue Exception => e
-        whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 3)
+        whisper("Exception: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", VERBOSITY['errors'])
       end
 
       result
@@ -5567,7 +5633,7 @@ module Tunewich
         whisper "before_exit: break command loop", 3
         shouldBreakCommandLoop = true
       }
-      whisper("opening command prompt (commandLoopExitBinding: #{commandLoopExitBinding})", 3)
+      whisper("opening command prompt (commandLoopExitBinding: #{commandLoopExitBinding})", VERBOSITY['errors'])
 
       prompt = Proc.new {
         print "#{message} " if message
@@ -5575,7 +5641,7 @@ module Tunewich
       }
       prompt.call
 
-      whisper("waiting for user input on STDIN", 3)
+      whisper("waiting for user input on STDIN", VERBOSITY['errors'])
       @commandHistoryIndex = nil
 
       @commandUserInput = nil
@@ -5585,7 +5651,7 @@ module Tunewich
         false # stop propagation of event
       }, nil, true);
       externalCommandHandlerId = bind('external_command', Proc.new { |eventName, extInput|
-        whisper("external_command: #{extInput}", 3)
+        whisper("external_command: #{extInput}", VERBOSITY['errors'])
         handleInputLine(extInput, commands, action) if extInput
         false # stop propagation of event
       }, nil, true);
@@ -5604,7 +5670,7 @@ module Tunewich
         :input => @commandHistory[@commandHistory.length - 1] # FIXME: @hack
       }
 
-      whisper("closing command \"#{message}\" prompt (response #{response})", 3)
+      whisper("closing command \"#{message}\" prompt (response #{response})", VERBOSITY['errors'])
 
       response
     end
@@ -5645,10 +5711,18 @@ module Tunewich
       selectedListName
     end
 
-    def getFormattedNoteList notes, emphasizeNoteIndex = nil, emphasisLine = "# ^"
-      formattedNotes = notes.map { |note|
+    def getFormattedNoteList notes, prependIndex = false, numLeadingSpaces = 0, emphasizeNoteIndex = nil, emphasisLine = "# ^"
+      formattedNotes = notes.each_with_index.map { |note, index|
         time = note['time'].to_s
-        output = "#{" " * ([16-time.length, 0].max)}#{time} #{note['text']}"
+        if prependIndex
+          indexString = "#{index + 1})"
+          indexString = "#{" " * [4-indexString.length, 0].max}#{indexString}"
+        else
+          indexString = ''
+        end
+        leadingSpaces = "#{" " * numLeadingSpaces}"
+        output = "#{leadingSpaces}#{indexString}#{" " * [8 - time.length, 0].max}#{time} #{note['text']}"
+        whisper("chapter index: #{index}", VERBOSITY['debug']) # XXX
 
         if note.has_key?('skip')
           output = "#{note.has_key?('skip') && note['skip'] ? 'skip' : '    '}" + output
@@ -5727,7 +5801,7 @@ module Tunewich
       shouldListenForExternalCommands = true
       Thread.new {
         externalCommandStream = makeStream streamName
-        whisper("external command stream: #{externalCommandStream}", 2)
+        whisper("external command stream: #{externalCommandStream}", VERBOSITY['very verbose'])
         File.open(externalCommandStream, 'r') { |externalCommandStreamHandle|
           # externalCommand = ""
           while shouldListenForExternalCommands do
