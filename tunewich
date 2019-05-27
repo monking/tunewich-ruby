@@ -443,7 +443,7 @@ module Tunewich
       if @eventBindings.has_key? eventName
         if @eventBindings[eventName].length > 0
           @eventBindings[eventName].each { |handlerId|
-            whisper("#{whisperMessage}, calling #{@eventBindingsIndex[handlerId][:handler].to_s.sub(/^.*(?=:\d)/, '')}", VERBOSITY['realtime'])
+            whisper("#{whisperMessage}, calling #{@eventBindingsIndex[handlerId][:handler].to_s.sub(/^.*(:\d+).*/, '\1')}", VERBOSITY['realtime'])
             result = @eventBindingsIndex[handlerId][:handler].call(eventName, data)
             break if result == false # stop event propagation
           }
@@ -1740,7 +1740,7 @@ module Tunewich
           'verbose' => {
             'description' => "Set level of verbosity: #{VERBOSITY.keys.join(', ')}.",
             'showStatus' => Proc.new {
-              putsRealtime "verbosity set to #{@configuredVerbosity}"
+              putsRealtime "verbosity set to '#{VERBOSITY.invert[@configuredVerbosity]}'"
             },
             'options' => VERBOSITY.keys,
             'action' => Proc.new { |input, command|
@@ -2089,6 +2089,10 @@ module Tunewich
                     @innerLoopsOnly = false
                   when 'break'
                     @breakLoop = getToggledValueByInput.call(@breakLoop)
+                  when 'off'
+                    @loop = false
+                  when 'on'
+                    @loop = true
                   else
                     if arg.match(/^[0-9]+$/)
                       loopLimit = arg.to_i
@@ -2098,7 +2102,7 @@ module Tunewich
                   end
                 }
               else
-                @loop = getToggledValueByInput.call(@loop, arg)
+                @loop = getToggledValueByInput.call(@loop)
               end
 
               command['showStatus'].call
@@ -2500,7 +2504,7 @@ module Tunewich
     end
 
     def getNoteIndexAtTime notes, seconds
-      noteIndex = -1 # @confirm: -1 instead of nil, so that adding 1 gets you a valid next index (the first one)
+      noteIndex = -1 # using -1 instead of nil, so that adding 1 gets you a valid next index (the first one)
       if !seconds
         whisper("getNoteIndexAtTime: nil seconds", VERBOSITY['errors'])
       else
@@ -3243,11 +3247,11 @@ module Tunewich
       playerTimeupdateHandler = Proc.new {
         ['chapters', 'notes'].each { |noteType|
           if @currentTrack.has_key?(noteType)
-            newIndex = getNoteIndexAtTime @currentTrack[noteType], [@currentPlayerTime, 0].max
-            if newIndex > -1 && @currentNoteIndex[noteType] != newIndex
+            newIndex = getNoteIndexAtTime(@currentTrack[noteType], [@currentPlayerTime, 0].max)
+            if @currentNoteIndex[noteType] != newIndex
               @currentNoteIndex[noteType] = newIndex
               eventName = noteType.sub(/s$/, '_change')
-              trigger eventName
+              trigger eventName, newIndex
             end
           else
             @currentNoteIndex[noteType] = nil
@@ -3261,8 +3265,10 @@ module Tunewich
 
       @loopHistory = {};
 
-      onNoteChange = Proc.new { |noteType|
-        # check if we need to skip
+      bind(['chapter_change', 'note_change'], Proc.new { |eventName|
+        noteType = eventName.sub(/_.*/, 's')
+        whisper("Handling note change with noteType '#{noteType}'", VERBOSITY['debug'])
+
         currentIndex = @currentNoteIndex[noteType]
         loopTarget = @currentTrack[noteType][currentIndex]['loop_target'] if @currentTrack[noteType][currentIndex].has_key?('loop_target')
         if (
@@ -3311,12 +3317,6 @@ module Tunewich
         else
           whisper("#{noteType[0]}: #{@currentTrack[noteType][currentIndex]['text']}", VERBOSITY['verbose'])
         end
-      }
-
-      bind(['chapter_change', 'note_change'], Proc.new { |eventName|
-        noteType = eventName.sub(/_.*/, 's')
-        whisper("#{eventName}, doing onNoteChange with noteType '#{noteType}'", VERBOSITY['errors'])
-        onNoteChange.call noteType
       }, bindingGroupName)
 
       trigger('time_update', @currentPlayerTime) # @currentPlayerTime set above, ~ 2878
@@ -4959,8 +4959,9 @@ module Tunewich
       end
 
       parser.on("-v [LEVEL]", "--verbose", "Chatter about what's going on (more detailed or frequent messages are in levels 2 or 3.", " ") do |level|
+        level = '1' if !level || level.length == 0
         setFuzzyVerbosity(level)
-        whisper("Verbosity level: #{@configuredVerbosity}", VERBOSITY['default'])
+        whisper("Verbosity level: #{VERBOSITY.invert[@configuredVerbosity]}", VERBOSITY['default'])
       end
 
       parser.on("-w", "--write [SECONDS]", "Save changes to the library. If SECONDS are given, only tracks played that many seconds will be written.", " ") do |seconds|
