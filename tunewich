@@ -2322,7 +2322,7 @@ module Tunewich
             }
           },
           'mark' => {
-            'description' => 'Mark the point at which to play this track next time.',
+            'description' => '/mark [clear | TIME]- Mark the point at which to play this track next time. Without a TIME given, the mark will be set to the player time when the user began typing the command.',
             'options' => ['clear'],
             'action' => Proc.new { |input, command|
               inputParts = getCommandInputParts(input)
@@ -2333,7 +2333,12 @@ module Tunewich
               if inputParts[:query] && inputParts[:query] == 'clear'
                 removeMarkFromTrack @currentTrack
               else
-                addMarkToTrack @currentTrack, @commandinputStartPlayerTime
+                markTime = @commandinputStartPlayerTime
+                if inputParts[:query]
+                  inputTime = getSecondsFromDurationString(inputParts[:query])
+                  markTime = inputTime if inputTime
+                end
+                addMarkToTrack @currentTrack, markTime
               end
               writeLibraryToFile
               {:chainedInput => input}
