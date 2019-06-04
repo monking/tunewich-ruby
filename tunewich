@@ -1266,12 +1266,12 @@ module Tunewich
                 if !chosenName || !@library['playlists'].has_key?(chosenName)
                   shouldShowPlaylistNames = true
                   if !inputParts[:query]
-                    whisper("No list name given.", 0)
+                    whisper("No list name given.", VERBOSITY['default'])
                   else
-                    whisper("No list found by name '#{inputParts[:query]}'.", 0)
+                    whisper("No list found by name '#{inputParts[:query]}'.", VERBOSITY['default'])
                   end
                 elsif !@library['playlists'][chosenName]['src'] || @library['playlists'][chosenName]['src'].length == 0
-                  whisper("Unable to update list '#{inputParts[:query]}': no source URL.", 0)
+                  whisper("Unable to update list '#{inputParts[:query]}': no source URL.", VERBOSITY['default'])
                 else
                   shouldGetAllTracks = true
                   urls = [@library['playlists'][chosenName]['src']]
@@ -1282,7 +1282,7 @@ module Tunewich
                   @library['playlists'][chosenName]['tracks'].concat(newTracks.map { |t| t['id'] })
                   @library['playlists'][chosenName]['tracks'].uniq!
                   lengthDiff = @library['playlists'][chosenName]['tracks'].length - initialListLength
-                  whisper("Added #{lengthDiff} tracks to playlist '#{chosenName}'", 0)
+                  whisper("Added #{lengthDiff} tracks to playlist '#{chosenName}'", VERBOSITY['default'])
                   writeLibraryToFile
                 end
               elsif inputParts[:action] && inputParts[:action] == 'save'
@@ -1393,7 +1393,8 @@ module Tunewich
                     whisper("TODO: search all tracks for term, and confirm with user to use it", VERBOSITY['verbose'])
                   end
                 end
-              else
+              elsif @currentTrack
+                @currentTrack = matchExistingLibraryTrack(@currentTrack)
                 tracks << @currentTrack
                 trackIndexes[@currentTrack] = @trackIndex if @tracks[@trackIndex] === @currentTrack
                 # ^ the user may have altered the track list, so that it no longer includes the currently playing track
@@ -1498,7 +1499,7 @@ module Tunewich
                 perTrackAction = Proc.new { |track|
                   trackFiles = @forceStreaming ? [] : findTrackFiles(track)
                   if trackFiles.length > 0
-                    whisper(trackFiles.join("\n"), 0)
+                    whisper(trackFiles.join("\n"), VERBOSITY['default'])
                   else
                     putsRealtime getDownloadCommand(track, downloadOptions)
                   end
@@ -1671,6 +1672,56 @@ module Tunewich
           },
           'chapter' => generateNoteCommand.call('chapters', 'Skip to a chapter, or show chapter list. Input: [optional seconds offset], number or name of chapter; or "<" or ">" to go back or forward, multiples to go further.'),
           'note' => generateNoteCommand.call('notes', "Make a note on this track, with a timestamp taken from the time you type '/' to begin the command (so that you can take your time composing the note without worrying about the moment passing)."),
+          'description' => {
+            'description' => 'Edit or fetch the description of a track.',
+            'showStatus' => Proc.new { |command|
+              putsRealtime @currentTrack['description'] if @currentTrack && @currentTrack.has_key?('description')
+            },
+            'options' => ['get', 'clear'],
+            'action' => Proc.new { |input, command|
+              inputParts = getCommandInputParts(input)
+
+              if @currentTrack
+                @currentTrack = matchExistingLibraryTrack(@currentTrack)
+                trackSigBefore = Digest::MD5.hexdigest(JSON.generate(@currentTrack))
+
+                case inputParts[:query]
+                when 'get'
+                  info = getTrackInfo(@currentTrack)
+                  updateTrackInfo(@currentTrack, info) if info
+                when 'clear'
+                  @currentTrack.delete('description') if @currentTrack.has_key?('description')
+                else
+                  descriptionList = @currentTrack.has_key?('description') && @currentTrack['description'] ? @currentTrack['description'].lines : []
+                  descriptionList = editListInVim(descriptionList)
+                  description = descriptionList.join("\n")
+                  if description.length > 0
+                    @currentTrack['description'] = description
+                  elsif @currentTrack.has_key?('description') && confirm("Remove description?")
+                    @currentTrack.delete('description')
+                  end
+                end
+
+                trackSigAfter = Digest::MD5.hexdigest(JSON.generate(@currentTrack))
+                writeLibraryToFile if trackSigBefore != trackSigAfter
+              end
+
+              {:chainedInput => inputParts[:remainder]}
+            },
+            'tabComplete' => Proc.new { |input|
+              if input.match(/tag=[^=]*$/)
+                tagListString = input.sub(/tag=([^=]*)$/, '\1')
+                lastTag = tagListString.split(/(,|\s)+/).pop
+                if lastTag && lastTag.length > 0
+                  lastTag.sub!(/^\+/, '')
+                  pattern = Regexp.new("#{lastTag}$") # assign before calling tagTabComplete
+                  tabCompletedTag = tagTabComplete.call(lastTag) # alters lastTag by reference
+                  input = input.sub(pattern, tabCompletedTag) if tabCompletedTag
+                end
+              end
+              input
+            }
+          },
           'filter' => {
             'description' => 'Set filters (same as -f/--filter). With no arguments, the filters are edited in Vim.',
             'showStatus' => Proc.new { |command|
@@ -1793,7 +1844,7 @@ module Tunewich
                     whiper("There was a problem with relating the tags. Your changes were not saved.", 0)
                   end
                 else
-                  whisper("Unable to parse tag names from command input.", 0)
+                  whisper("Unable to parse tag names from command input.", VERBOSITY['default'])
                 end
               end
 
@@ -1963,7 +2014,7 @@ module Tunewich
               inputParts = getCommandInputParts(input)
               loadLibrary
               updateMediaFilePathCache
-              @currentTrack = matchExistingLibraryTrack @currentTrack
+              @currentTrack = matchExistingLibraryTrack(@currentTrack)
               {:chainedInput => inputParts[:remainder]}
             }
           },
@@ -2023,7 +2074,7 @@ module Tunewich
               loudness = inputParts[:query].to_f
               if loudness > 0.0
                 loadLibrary
-                @currentTrack = matchExistingLibraryTrack @currentTrack
+                @currentTrack = matchExistingLibraryTrack(@currentTrack)
 
                 @currentTrack['loudness'] = loudness
                 @volumeMultipliers['track_loudness'] = loudness
@@ -2328,7 +2379,7 @@ module Tunewich
               inputParts = getCommandInputParts(input)
 
               loadLibrary
-              @currentTrack = matchExistingLibraryTrack @currentTrack
+              @currentTrack = matchExistingLibraryTrack(@currentTrack)
 
               if inputParts[:query] && inputParts[:query] == 'clear'
                 removeMarkFromTrack @currentTrack
@@ -2429,13 +2480,12 @@ module Tunewich
 
       outputMessageLines = []
       info = {}
-      if !alreadyHas[:title] || !alreadyHas[:duration]
-        if track['type'] === 'youtube'
-          info = getYouTubeTrackInfo track['src']
-        elsif track['type'] === 'soundcloud'
-          info = getSoundcloudTrackInfo track['src']
+      if !alreadyHas[:title] || !alreadyHas[:duration] || !alreadyHas[:description]
+        fetchedTrackInfo = getTrackInfo(track)
+        if fetchedTrackInfo
+          info = fetchedTrackInfo
+          updateTrackInfo(track, info)
         end
-        updateTrackInfo track, info
       end
       outputMessageLines << "     title : #{track['title']}" if track.has_key? 'title'
       outputMessageLines << "      tags : #{tagNames.join ', '}" if tagNames.length > 0
@@ -2944,10 +2994,10 @@ module Tunewich
       if nextPlayableIndex
         note = notes[nextPlayableIndex]
         seekSeconds = getSecondsFromDurationString note['time']
-        whisper("Skipping #{noteType} #{fromIndex + 1}, to #{nextPlayableIndex + 1} (#{note['time']}, #{seekSeconds}).", 0)
+        whisper("Skipping #{noteType} #{fromIndex + 1}, to #{nextPlayableIndex + 1} (#{note['time']}, #{seekSeconds}).", VERBOSITY['default'])
         seek seekSeconds, 0, 0
       else
-        whisper("Skipping #{noteType} #{fromIndex + 1}; no more playable #{noteType}s; skipping track.", 0)
+        whisper("Skipping #{noteType} #{fromIndex + 1}; no more playable #{noteType}s; skipping track.", VERBOSITY['default'])
         fadeVolume 'out', 0.25, @currentPlayerIndex
         exitPlayerCommand
       end
@@ -2961,7 +3011,7 @@ module Tunewich
         if @networkEnabled
 
         else
-          whisper("No local file to play, and network is disabled", 0)
+          whisper("No local file to play, and network is disabled", VERBOSITY['default'])
           return response
         end
       end
@@ -3227,7 +3277,7 @@ module Tunewich
               }
             else
               playerCommandParts = []
-              whisper("termux-media-player doesn't wait around for nobody, and this track won't tell us how long to wait in its stead.", 0)
+              whisper("termux-media-player doesn't wait around for nobody, and this track won't tell us how long to wait in its stead.", VERBOSITY['default'])
             end
           end
         end
@@ -3592,7 +3642,7 @@ module Tunewich
     def setLibraryMediaPath libraryDirectoryPath
       @libraryDirectory = libraryDirectoryPath
       if not Dir.exist? @libraryDirectory
-        whisper("Please create the directory '#{@libraryDirectory}'.", 0)
+        whisper("Please create the directory '#{@libraryDirectory}'.", VERBOSITY['default'])
         kill
       end
 
@@ -3848,7 +3898,7 @@ module Tunewich
     # @returns integer PID of download process, or nil if download failed
     def downloadTrack(track, options = nil)
       if !@networkEnabled
-        whisper("not downloading --no-network", 0)
+        whisper("not downloading --no-network", VERBOSITY['default'])
         return
       end
 
@@ -4076,7 +4126,7 @@ module Tunewich
       begin
         libraryData[:data] = JSON.parse(json)
       rescue
-        whisper("Invalid JSON.", 0)
+        whisper("Invalid JSON.", VERBOSITY['default'])
       end
 
 
@@ -4107,7 +4157,7 @@ module Tunewich
       end
     end
 
-    def writeLibraryToFile shouldPrompt = false
+    def writeLibraryToFile shouldPrompt = false, writeEvenIfHashIsUnchanged = false
       if @writeEnabled
         if shouldPrompt && !@yesToConfirmPropts
           return if !confirm("Write changes to library?")
@@ -4118,15 +4168,19 @@ module Tunewich
           putsRealtime "Sorry! The loaded library has been corrupted. Please restart the player if you want to save any changes to your library."
           return
         end
-        libraryOnFile = processLibraryJSON File.read(@libraryDatabasePath) # since we're writing, no need to check for libraryOnFile[:data], right?
-        if @libraryHash == libraryOnFile[:hash] || confirm("Library file has changed since last load. Overwrite?")
-          libraryInfo = processLibraryJSON libraryJSON
-          File.write(@libraryDatabasePath, libraryJSON + "\n")
-          @libraryHash = libraryInfo[:hash]
-          whisper("Saved change to library file.", VERBOSITY['very verbose'])
+        libraryInfo = processLibraryJSON(libraryJSON)
+        if writeEvenIfHashIsUnchanged || @libraryHash != libraryInfo[:hash]
+          libraryOnFile = processLibraryJSON File.read(@libraryDatabasePath) # since we're writing, no need to check for libraryOnFile[:data], right?
+          if @libraryHash == libraryOnFile[:hash] || confirm("Library file has changed since last load. Overwrite?")
+            File.write(@libraryDatabasePath, libraryJSON + "\n")
+            @libraryHash = libraryInfo[:hash]
+            whisper("Saved change to library file.", VERBOSITY['very verbose'])
+          end
+        else
+          whisper("There is no change since last writing. Pass 'writeEvenIfHashIsUnchanged = true' to force write.", VERBOSITY['debug'])
         end
       else
-        whisper("Writing the library to file is disabled.", "2")
+        whisper("Writing the library to file is disabled.", VERBOSITY['very verbose'])
         return
       end
     end
@@ -4156,10 +4210,10 @@ module Tunewich
       if confirm confirmMsg, commands
         writeLibraryToFile
       else
-        whisper("No changes saved.", 0)
+        whisper("No changes saved.", VERBOSITY['default'])
       end
 
-      whisper("Cleanup finished.", 0)
+      whisper("Cleanup finished.", VERBOSITY['default'])
     end
 
     def determineRelativeSpeed input, track, shouldSetPlayingBPM = false
@@ -4302,7 +4356,7 @@ module Tunewich
               tracks.sort! { |a, b| unionTagTracks.count(b['id']) <=> unionTagTracks.count(a['id']) }
             end
           else
-            whisper("No matches for \"#{filters['tag']}\". Available tags are: #{listAllTagsWithAliases.join ", "}", 0)
+            whisper("No matches for \"#{filters['tag']}\". Available tags are: #{listAllTagsWithAliases.join ", "}", VERBOSITY['default'])
           end
         else
           whisper("filtering tracks that have any tags", VERBOSITY['errors'])
@@ -4458,7 +4512,7 @@ module Tunewich
         'id' => youtubeVideoID
       }
       if !@networkEnabled
-        whisper("no getYouTubeTrackInfo --no-network", 0)
+        whisper("no getYouTubeTrackInfo --no-network", VERBOSITY['default'])
         return track
       end
       json = `youtube-dl -j -- #{youtubeVideoID} 2>/dev/null` # suppress errors
@@ -4483,7 +4537,7 @@ module Tunewich
         'id' => Digest::MD5.hexdigest(soundcloudURL).to_s
       }
       if !@networkEnabled
-        whisper("no getSoundcloudTrackInfo --no-network", 0)
+        whisper("no getSoundcloudTrackInfo --no-network", VERBOSITY['default'])
         return track
       end
       json = `youtube-dl -j -- #{soundcloudURL} 2>/dev/null` # suppress errors
@@ -4501,12 +4555,23 @@ module Tunewich
       track
     end
 
-    def updateTrackInfo track, trackInfo = nil, force = false
+    def getTrackInfo track
+      info = nil
+
       if track['type'] === 'youtube'
-        trackInfo ||= getYouTubeTrackInfo track['id']
+        info = getYouTubeTrackInfo track['src']
       elsif track['type'] === 'soundcloud'
-        trackInfo ||= getSoundcloudTrackInfo track['src']
+        info = getSoundcloudTrackInfo track['src']
+      else
+        whisper("Unable to get info for track of type #{track['type']}", VERBOSITY['very verbose'])
       end
+
+      info
+    end
+
+    def updateTrackInfo track, trackInfo = nil, force = false
+      trackInfo ||= getTrackInfo(track)
+
       if trackInfo
         track['title'] = trackInfo['title'] if (!track['title'] || track['title'].strip.length == 0 || force) && trackInfo['title'] && trackInfo['title'].length > 0
 
@@ -4550,9 +4615,9 @@ module Tunewich
       if !@library['playlists'][playlistName].has_key?('tracks') || !@library['playlists'][playlistName]['tracks'].include?(trackReference)
         @library['playlists'][playlistName]['tracks'] ||= []
         @library['playlists'][playlistName]['tracks'] << trackReference
-        whisper("Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'", 0)
+        whisper("Saved '#{track['title']}' (#{trackReference}) to playlist '#{playlistName}'", VERBOSITY['default'])
       else
-        whisper("Track '#{track['title']}' (#{trackReference}) is already in playlist '#{playlistName}'", 0)
+        whisper("Track '#{track['title']}' (#{trackReference}) is already in playlist '#{playlistName}'", VERBOSITY['default'])
       end
     end
 
@@ -4573,7 +4638,7 @@ module Tunewich
 
     def searchYouTube query, offset = 0, count = 20
       # FIXME 1gpaoG: sometimes the STDIN is not editable after this
-      whisper("Searching YouTube for '#{query}'", 0)
+      whisper("Searching YouTube for '#{query}'", VERBOSITY['default'])
       resultsPerPage = 20
       page = (offset.to_f / resultsPerPage.to_f).to_i + 1
       queryParameter = URI::encode(query)
@@ -4587,7 +4652,7 @@ module Tunewich
 
     def getYouTubeTracksFromPage url
       if !@networkEnabled
-        whisper("no getYouTubeTracksFromPage --no-network", 0)
+        whisper("no getYouTubeTracksFromPage --no-network", VERBOSITY['default'])
         return false
       end
       url = getValidYouTubeURI url
@@ -4634,7 +4699,7 @@ module Tunewich
 
     def getSoundcloudRecommendations url
       if !@networkEnabled
-        whisper("no getSoundcloudRecommendations --no-network", 0)
+        whisper("no getSoundcloudRecommendations --no-network", VERBOSITY['default'])
         return false
       end
       url = "#{url}/recommended"
@@ -4680,7 +4745,7 @@ module Tunewich
     def getOCRemixSource(url)
       source = nil
       if !@networkEnabled
-        whisper("no getOCRemixSource --no-network", 0)
+        whisper("no getOCRemixSource --no-network", VERBOSITY['default'])
         return false
       end
 
@@ -4854,9 +4919,9 @@ module Tunewich
         @streamingServerType = streamingServerType
         whisper("streamingServerType: #{streamingServerType}", VERBOSITY['very verbose'])
         isRadioConfigured = true
-        whisper("Preparing to start radio (#{streamingServerType}).", 0)
+        whisper("Preparing to start radio (#{streamingServerType}).", VERBOSITY['default'])
         if streamingServerType == 'homebrew'
-          whisper("About to prompt you for your password, so that the darkice server can be run as root.", 0)
+          whisper("About to prompt you for your password, so that the darkice server can be run as root.", VERBOSITY['default'])
           `sudo ls &>/dev/null`
         end
         if UNAME == "Darwin"
@@ -4865,7 +4930,7 @@ module Tunewich
             @playerOverrideCommands << "-ao coreaudio:device_id=#{audioDeviceID}"
             jackAudioDeviceAndOptions = "coreaudio -d SoundflowerEngine:0"
           else
-            whisper("Please install Soundflower (https://github.com/mattingalls/Soundflower)", 0)
+            whisper("Please install Soundflower (https://github.com/mattingalls/Soundflower)", VERBOSITY['default'])
             isRadioConfigured = false
           end
         else
@@ -4886,10 +4951,10 @@ module Tunewich
             darkiceConfigFile = "#{$serviceConfigDir}/darkice.cfg"
 
             if not File.exist? icecastConfigFile
-              whisper("Please create the icecast config file at #{icecastConfigFile}.", 0)
+              whisper("Please create the icecast config file at #{icecastConfigFile}.", VERBOSITY['default'])
               isRadioConfigured = false
             elsif not File.exist? darkiceConfigFile
-              whisper("Please create the darkice config file at #{darkiceConfigFile}.", 0)
+              whisper("Please create the darkice config file at #{darkiceConfigFile}.", VERBOSITY['default'])
               isRadioConfigured = false
             end
           else
@@ -4939,7 +5004,7 @@ module Tunewich
             whisper("continue to Nicecast server", VERBOSITY['very verbose'])
           end
         else
-          whisper("Unable to configure radio server.", 0)
+          whisper("Unable to configure radio server.", VERBOSITY['default'])
         end
       end
 
@@ -5000,7 +5065,7 @@ module Tunewich
 
     def doOptionSecondaryActions optionsOutput
       if not @mediaDirectoryPath
-        whisper("please specify an input directory with -i", 0)
+        whisper("please specify an input directory with -i", VERBOSITY['default'])
         kill
       end
 
@@ -5025,7 +5090,7 @@ module Tunewich
 
         if playlistName
           if not @library['playlists'].has_key? playlistName
-            whisper("Creating new playlist: #{playlistName}", 0)
+            whisper("Creating new playlist: #{playlistName}", VERBOSITY['default'])
             createPlaylist playlistName
             writeLibraryToFile
           end
@@ -5064,7 +5129,7 @@ module Tunewich
         urlCanBeScraped = true # assuming this for now
         if url.match(/ocremix\.org\/remix/)
           tracks << matchExistingLibraryTrack(createTrack(url, 'ocremix'))
-          whisper("This URL contains an OC Remix ID. Adding.", 0)
+          whisper("This URL contains an OC Remix ID. Adding.", VERBOSITY['default'])
         elsif looksLikeAYouTubeID? url
           youtubeId = url
         else
@@ -5073,7 +5138,7 @@ module Tunewich
 
         if youtubeId
           tracks << updateTrackInfo(matchExistingLibraryTrack(createTrack(youtubeId, 'youtube')))
-          whisper("This URL contains a YouTube ID. Adding.", 0)
+          whisper("This URL contains a YouTube ID. Adding.", VERBOSITY['default'])
         else
           urlHTTPHead = `curl -sL --head "#{url}"`
           urlContentType = getHTTPHeaderByPattern.call(urlHTTPHead, /^Content-Type: ([^;]*).*/i)
@@ -5111,7 +5176,7 @@ module Tunewich
             tracks.concat(youTubeTracks) if youTubeTracks
           end
         rescue Exception => e
-          whisper("Trouble scraping this page: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", 0) # TODO: well you give it some...Trouble.
+          whisper("Trouble scraping this page: #{e.message}\nbacktrace: #{e.backtrace.join "\n"}", VERBOSITY['default']) # TODO: well you give it some...Trouble.
         end
       }
 
@@ -5468,13 +5533,13 @@ module Tunewich
           end
         elsif inputCharacter == "" # control-z: stop job
           shouldTogglePause = @isPlayerPlaying
-          whisper("before STOP+toggle, shouldTogglePause: #{shouldTogglePause}", 0)
+          whisper("before STOP+toggle, shouldTogglePause: #{shouldTogglePause}", VERBOSITY['default'])
           togglePlay if shouldTogglePause
-          whisper("before STOP, after toggle, shouldTogglePause: #{shouldTogglePause}", 0)
+          whisper("before STOP, after toggle, shouldTogglePause: #{shouldTogglePause}", VERBOSITY['default'])
           sleep 0.1
           Process.kill("STOP", Process.pid)
           # TODO: 1gG4ko: the player usually doesn't unpause :/
-          whisper("after STOP, shouldTogglePause: #{shouldTogglePause}, @isPlayerPlaying: #{@isPlayerPlaying}", 0)
+          whisper("after STOP, shouldTogglePause: #{shouldTogglePause}, @isPlayerPlaying: #{@isPlayerPlaying}", VERBOSITY['default'])
           togglePlay if shouldTogglePause
         elsif inputCharacter == "" # control-u: clear line
           @commandUserInput = nil
@@ -5696,7 +5761,7 @@ module Tunewich
     end
 
     def promptForPlaylist
-      whisper("Please choose a playlist (leave blank to play all):\n	#{@library['playlists'].keys.join "\n	"}", 0)
+      whisper("Please choose a playlist (leave blank to play all):\n	#{@library['playlists'].keys.join "\n	"}", VERBOSITY['default'])
       selectedListName = nil
       while !selectedListName do
         playlistQuery = commandPrompt[:input]
@@ -5709,7 +5774,7 @@ module Tunewich
         selectedListName = findPlaylistName playlistQuery
 
         if not selectedListName
-          whisper("No matches. Try again", 0)
+          whisper("No matches. Try again", VERBOSITY['default'])
         end
 
       end
