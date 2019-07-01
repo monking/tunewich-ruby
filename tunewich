@@ -17,6 +17,7 @@ $hostname = ENV.has_key?('TENT_HOSTNAME') ? ENV['TENT_HOSTNAME'] : ENV['HOSTNAME
 $tunewichTmpDirectory = "#{$tunewichWorkingDirectory}/tmp"
 $serviceConfigDir = "#{$tunewichWorkingDirectory}/config"
 $uniqueId = 0
+$mpvABLoop = false # TODO: won't need this when seeking can be done without killing and relaunching mpv
 
 # Go to .tunewich directory so that any temp files are stored there.
 Dir.mkdir $tunewichWorkingDirectory if not Dir.exist? $tunewichWorkingDirectory
@@ -2646,27 +2647,27 @@ module Tunewich
 
     def seek seekTimeInSeconds, fadeOutPeriod = 0.0, fadeInPeriod = 0.0
       if @isPlayerPlaying
-        if @playerApplication == PLAYER_APP_DEFAULT
-          if isAbleToSeek(seekTimeInSeconds, @currentTrack)
-            @currentlySeeking = true
-            fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
+        if isAbleToSeek(seekTimeInSeconds, @currentTrack)
+          if @playerApplication == PLAYER_APP_DEFAULT
+              @currentlySeeking = true
+              fadeVolume 'out', fadeOutPeriod, @currentPlayerIndex if fadeOutPeriod > 0
 
-            sendMplayerCommand "seek #{seekTimeInSeconds} 2"
+              sendMplayerCommand "seek #{seekTimeInSeconds} 2"
 
-            fadeVolume 'in', fadeInPeriod, @currentPlayerIndex if fadeInPeriod > 0
+              fadeVolume 'in', fadeInPeriod, @currentPlayerIndex if fadeInPeriod > 0
 
-            Thread.new {
-              sleep 1
-              @currentlySeeking = false
-            }
+              Thread.new {
+                sleep 1
+                @currentlySeeking = false
+              }
           else
-            putsRealtime "Download the file to be able to seek backwards."
+            whisper("Hacky seek for #{@playerApplication}: mark time and reload player.", VERBOSITY['verbose'])
+            addMarkToTrack @currentTrack, seekTimeInSeconds
+            setNextTrackIndex(@currentTrack)
+            exitPlayerCommand
           end
         else
-          whisper("Hacky seek for #{@playerApplication}: mark time and reload player.", VERBOSITY['verbose'])
-          addMarkToTrack @currentTrack, seekTimeInSeconds
-          setNextTrackIndex(@currentTrack)
-          exitPlayerCommand
+          putsRealtime "Download the file to be able to seek backwards."
         end
       else
         @currentPlayerTime = seekTimeInSeconds
@@ -3259,6 +3260,32 @@ module Tunewich
               end
 
             }
+
+            if (@loop)
+              discoverLoop = Proc.new { |noteList, foundLoop = []|
+                noteList.each { |note|
+                  if foundLoop.length == 0 && note.has_key?('loop_target')
+                    foundLoop << note['loop_target']
+                    foundLoop << note['time']
+                  end
+                }
+                foundLoop
+              }
+
+              abLoop = []
+              discoverLoop.call(@currentTrack['notes'], abLoop) if @currentTrack.has_key?('notes')
+              discoverLoop.call(@currentTrack['chapters'], abLoop) if @currentTrack.has_key?('chapters')
+
+              if abLoop.length > 0
+                $mpvABLoop = true
+                playerStartupOptions << "--ab-loop-a=#{abLoop[0]} --ab-loop-b=#{abLoop[1]} "
+              else
+                $mpvABLoop = false
+              end
+            else
+              $mpvABLoop = false
+            end
+
             playerCommandParts << "mpv #{playerStartupOptions.join ' '} \"#{mediaFilePath}\""
             forceSunnyDisposition = true
 
@@ -3327,15 +3354,16 @@ module Tunewich
         currentIndex = @currentNoteIndex[noteType]
         loopTarget = @currentTrack[noteType][currentIndex]['loop_target'] if @currentTrack[noteType][currentIndex].has_key?('loop_target')
         if (
-            @loop  &&
-            !@breakLoop  &&
-            !@currentlySeeking &&
-            @currentTrack[noteType][currentIndex] &&
-            loopTarget &&
-            (
-              !@loopHistory.has_key?(loopTarget) ||
-              (@loopLimit == 0 || @loopHistory[loopTarget] < @loopLimit)
-            )
+          !$mpvABLoop &&
+          @loop &&
+          !@breakLoop &&
+          !@currentlySeeking &&
+          @currentTrack[noteType][currentIndex] &&
+          loopTarget &&
+          (
+            !@loopHistory.has_key?(loopTarget) ||
+            (@loopLimit == 0 || @loopHistory[loopTarget] < @loopLimit)
+          )
         )
           whisper("looping to target '#{@currentTrack[noteType][currentIndex]['loop_target']}'", VERBOSITY['very verbose'])
 
