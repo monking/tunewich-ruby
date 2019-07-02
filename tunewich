@@ -275,10 +275,13 @@ module Tunewich
         exitPlayerCommand
       end
 
-      ## TODO: get interactive input to mpv working
-      # whisper("sending to mpv: '#{command}'", VERBOSITY['debug'])
-      # playerIndex ||= @currentPlayerIndex
-      # putInTempFile "#{MPV_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n"
+      whisper("sending to mpv: '#{command}'", VERBOSITY['debug'])
+      playerIndex ||= @currentPlayerIndex
+      onCommandReceived = Proc.new { |response|
+        parsedResponse = JSON.parse(response)
+        whisper("sendMpvCommand response:\n#{response}\nparsed:\n#{parsedResponse}", VERBOSITY.realtime)
+      }
+      putInTempFileAndGetNextOutput("#{MPV_INPUT_FIFO_NAME}#{playerIndex}", "#{command}\n", nil, onCommandReceived)
     end
 
     def setFuzzyVerbosity input
@@ -3065,9 +3068,9 @@ module Tunewich
       when PLAYER_APP_TERMUX
         if @hasMpv
           # try to get slave mode to work, or use alternatives (e.g. https://mpv.io/manual/master/#lua-scripting)
-          # playerInputStreamName = "#{MPV_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
-          # deleteStream playerInputStreamName
-          # playerInputFile = makeStream playerInputStreamName
+          playerInputStreamName = "#{MPV_INPUT_FIFO_NAME}#{@currentPlayerIndex}"
+          deleteStream playerInputStreamName
+          playerInputFile = makeStream playerInputStreamName
 
           playerStdoutName = "#{MPV_STDOUT_BUFFER_NAME}#{@currentPlayerIndex}"
           playerStdoutFile = getTempFilePath playerStdoutName
@@ -3286,11 +3289,10 @@ module Tunewich
               $mpvABLoop = false
             end
 
+            playerStartupOptions << "--input-ipc-server=\"#{playerInputFile}\" |" if playerInputFile
+
             playerCommandParts << "mpv #{playerStartupOptions.join ' '} \"#{mediaFilePath}\""
             forceSunnyDisposition = true
-
-            # The input pipe isn't connecting to interactive input on mpv, and it's causing the command not to quit when playback is finished
-            # playerCommandParts.unshift("cat \"#{playerInputFile}\" |") if playerInputFile
           else
             durationInSeconds = nil
             if @currentTrack && @currentTrack.has_key?('duration') && @currentTrack['duration']
@@ -4025,6 +4027,15 @@ module Tunewich
     def createTempFile(name)
       whisper("make tmp #{name}", VERBOSITY['debug'])
       putInTempFile name, ''
+    end
+
+    def putInTempFileAndGetNextOutput(name, value, shouldIncludeSessionID = true, handlerProc)
+      path = getTempFilePath(name, shouldIncludeSessionID)
+      # FIXME 1gpani: why does this stall when writing to a FIFO before something is reading from it?
+      Thread.new {
+        handlerProc.call(`echo "#{value}" | socat - "#{path}"`)
+      }
+      path
     end
 
     def putInTempFile(name, value, shouldIncludeSessionID = true)
