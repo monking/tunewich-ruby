@@ -5949,3 +5949,6 @@ rescue Exception => e
   end
   player && player.kill
 end
+
+# TODO
+# {:01ieZQA} `/note` should insert a new timecode when there's no note yet.\n\nCurrently it opens an empty vim file, so you can write stuff, but _without the time codes, it's not going to be saved in notes correctly..._ Or does it save it all to 00:00? I forget.\n\n@(feature request, frustrating)
