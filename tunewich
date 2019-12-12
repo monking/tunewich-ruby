@@ -5950,5 +5950,7 @@ rescue Exception => e
   player && player.kill
 end
 
+# THOUGHTS
+# {:01ifCp1} This monolithic thing might not be worth keeping. Maybe it would be a good exercise in Ruby to do so, or maybe it should be rewritten to offer similar functionality. Refactoring would be to preserve all the bugs and bad architecture for a good while, too. I think this code is basically a demonstration of several ways _not_ to write a program.
 # TODO
 # {:01ieZQA} `/note` should insert a new timecode when there's no note yet.\n\nCurrently it opens an empty vim file, so you can write stuff, but _without the time codes, it's not going to be saved in notes correctly..._ Or does it save it all to 00:00? I forget.\n\n@(feature request, frustrating)
