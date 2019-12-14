@@ -4921,11 +4921,15 @@ module Tunewich
         @trackFilters['local'] = ''
       end
 
-      parser.on("-o OPTIONS", "--player-opts OPTIONS", "Set player options. Set interactively with the /player command. You can also add mplayer options in #{$serviceConfigDir}/mplayer.options (You can find a starting copy in the 'config' directory that came with tunewich). --player-opts will override those options.", " ") do |options|
+      parser.on("-O OPTIONS", "--player-opts OPTIONS", "Set player options. Set interactively with the /player command. You can also add mplayer options in #{$serviceConfigDir}/mplayer.options (You can find a starting copy in the 'config' directory that came with tunewich). --player-opts will override those options.", " ") do |options|
         @playerOverrideCommands.concat(options.split(' -').map.with_index { |option, index|
           option = "-#{option}" if index > 0
           option
         })
+      end
+
+      parser.on("-o FILE", "--output-playlist FILE", "Output an M3U8 format playlist from the resulting selection. If FILE doesn't have a file extension, '.m3u8' will be used.", " ") do |options|
+        # {:01igGsK} _Next_: make `filePath` relative to playlist output `outputFilePath`\n```not quite ruby\n{ |outputFilePath|\n	playlistM3u8Lines = ['#EXTM3U']\n	tracks.each { |track|\n		filePath = findTrackFile(track)\n			if (!empty(filePath)) {\n				playlistM3u8Lines.concat("#EXTINF:#{timecodeToSeconds(track.duration)},#{track.title}")\n					playlistM3u8Lines.concat(filePath)\n			}\n	}\n	file.write(outputFilePath, playlistM3u8Lines.join("\\n")+"\\n")\n}\n```\n\n[M3U format](https://en.wikipedia.org/wiki/M3U#Extended_M3U)\n\nhere's a playlist:[focus.m3u8](/home/clo/collection/music/focus.m3u8)
       end
 
       parser.on("-p", "--playlist [NAME]", "Choose or create a playlist. If no NAME/QUERY is given, a name is guessed from other input, such as a -q query", " ") do |playlistQuery|
