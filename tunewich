@@ -5959,3 +5959,4 @@ end
 # TODO
 # {:01ieZQA} `/note` should insert a new timecode when there's no note yet.\n\nCurrently it opens an empty vim file, so you can write stuff, but _without the time codes, it's not going to be saved in notes correctly..._ Or does it save it all to 00:00? I forget.\n\n@(feature request, frustrating)
 # {:01ig0sL} This saved alright, but the action didn't work. I wanted silence for between 1 and 2 minutes, after which the next song should play.\n```\n /macro save break  /wait play_end /stop /wait  random 1:00 + 30 /next /play\n```
+# {:01ij3LD} `/macro` by itself should open up the EDITOR with each macro on a separate line. They can be edited, deleted, added.\n\ne.g.\n\n```\n/a /note new a\n/b /note new (loop to "a")\n```\n\nBut actually, _first_ that "b" macro isn't working right now. I'm guessing it's either the parentheses or the quotation marks.
