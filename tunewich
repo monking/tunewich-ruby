@@ -63,7 +63,7 @@ module Tunewich
 
     def initialize
       @playerApplication = PLAYER_APP_DEFAULT
-      @userMode = MODES['play']
+      @userMode = MODES['edit']
       @library = nil
       @libraryHash = nil
       @eventBindings = {}
