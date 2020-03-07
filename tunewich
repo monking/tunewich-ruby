@@ -394,6 +394,10 @@ module Tunewich
               @currentTrack['playTime'] += playerOutput[:playTime].to_i
               minimumPlayTime = [30, trackDurationInSeconds - 10].min
               if playerOutput[:playTime] >= minimumPlayTime
+                if !@currentTrack['played']
+                  @currentTrack['played'] = []
+                end
+                @currentTrack['played'].concat([playerOutput[:endTime].to_i])
                 @currentTrack['lastPlayed'] = playerOutput[:endTime].to_i
                 @currentTrack['playCount'] ||= 0
                 @currentTrack['playCount'] += 1
@@ -873,7 +877,8 @@ module Tunewich
                 noteType,
                 {
                   'time' => getDurationStringFromSeconds(@commandinputStartPlayerTime),
-                  'text' => inputParts[:query]
+                  'text' => inputParts[:query],
+                  'datetime' => Time.now.to_i
                 }
               )
 
